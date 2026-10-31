@@ -365,9 +365,8 @@ scripts/stool.sh set mid 0P6B12000
 scripts/stool.sh set version 6.12.1540.4
 scripts/stool.sh set tamper 0
 scripts/stool.sh set secure 0|3
-scripts/stool.sh set lock                # BL magic -> locked   (S-OFF, no token)
-scripts/stool.sh set unlock              # BL magic -> unlocked (S-OFF, no token)
-scripts/stool.sh set unlock Unlock_code.bin   # or go through the htcdev token
+scripts/stool.sh lock bootloader         # BL magic -> locked   (S-OFF, no token)
+scripts/stool.sh unlock bootloader       # BL magic -> unlocked (S-OFF, no token)
 ```
 
 Every command reads the S state first. Anything that writes takes a parameter
@@ -378,7 +377,7 @@ replays byte for byte.
 `set secure 0` refuses to run while S-ON: writing the flag needs the write
 protection cleared, and clearing it is what `soff` does.
 
-`set lock` / `set unlock` write the four bytes at `pg1fs` (p2) 0x8404 directly:
+`lock bootloader` / `unlock bootloader` write the four bytes at `pg1fs` (p2) 0x8404 directly:
 `HTCU` = unlocked, `00000000` = locked. That is the same magic hboot compares at
 boot, so once the device is S-OFF no unlock token is involved. `fastboot oem lock`
 is not used either — it only produces `RELOCKED`, and hboot 3.19 has no
@@ -405,7 +404,7 @@ mfg, radio and misc as full images.
 | version | `misc` (p24) @ 0xA0 | dd |
 | tamper | `pg2fs` (p6) @ 0x511804 | dd |
 | secure | `pg1fs` (p2) @ 0x8400 | dd, S-OFF only |
-| lock / unlock | `pg1fs` (p2) @ 0x8404, `HTCU` / `00000000` | dd, S-OFF only (`set unlock <token>` also works) |
+| lock / unlock | `pg1fs` (p2) @ 0x8404, `HTCU` / `00000000` | dd, S-OFF only |
 
 ---
 

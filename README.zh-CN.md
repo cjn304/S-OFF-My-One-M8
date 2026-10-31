@@ -333,9 +333,8 @@ scripts/stool.sh set mid 0P6B12000
 scripts/stool.sh set version 6.12.1540.4
 scripts/stool.sh set tamper 0
 scripts/stool.sh set secure 0|3
-scripts/stool.sh set lock                # BL magic -> 锁定（S-OFF，不需要 token）
-scripts/stool.sh set unlock              # BL magic -> 解锁（S-OFF，不需要 token）
-scripts/stool.sh set unlock Unlock_code.bin   # 或者走 htcdev 的解锁码
+scripts/stool.sh lock bootloader         # BL magic -> 锁定（S-OFF，不需要 token）
+scripts/stool.sh unlock bootloader       # BL magic -> 解锁（S-OFF，不需要 token）
 ```
 
 每个命令都会先读 S 状态。任何写操作在动卡之前都会把全部参数快照到
@@ -345,7 +344,7 @@ scripts/stool.sh set unlock Unlock_code.bin   # 或者走 htcdev 的解锁码
 `set secure 0` 在 S-ON 状态下会直接拒绝：写 flag 需要先把写保护清掉，而清写保护正是
 `soff` 做的事。
 
-`set lock` / `set unlock` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，
+`lock bootloader` / `unlock bootloader` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，
 `00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不涉及任何
 解锁码；也不走 `fastboot oem lock` —— 那条只会得到 `RELOCKED`，而 hboot 3.19 根本
 没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
@@ -370,7 +369,7 @@ scripts/stool.sh set unlock Unlock_code.bin   # 或者走 htcdev 的解锁码
 | version | `misc`（p24）@ 0xA0 | dd |
 | tamper | `pg2fs`（p6）@ 0x511804 | dd |
 | secure | `pg1fs`（p2）@ 0x8400 | dd，仅 S-OFF |
-| lock / unlock | `pg1fs`（p2）@ 0x8404，`HTCU` / `00000000` | dd，仅 S-OFF（`set unlock <token>` 也支持） |
+| lock / unlock | `pg1fs`（p2）@ 0x8404，`HTCU` / `00000000` | dd，仅 S-OFF |
 
 ---
 

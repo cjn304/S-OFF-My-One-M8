@@ -6,11 +6,12 @@
 #   stool.sh son                    back to S-ON
 #   stool.sh backup                 snapshot all parameters to backup/<time>.txt
 #   stool.sh restore <snapshot>     write a snapshot back
+#   stool.sh lock bootloader       write the BL magic = locked   (S-OFF only)
+#   stool.sh unlock bootloader     write the BL magic = unlocked (S-OFF only)
 #   stool.sh set <param> [value]    change one parameter (backs up first)
 #
 #   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
-#           tamper <0-255> | secure <0|3> | lock | unlock [Unlock_code.bin]
-#           (lock/unlock write the pg1fs 0x8404 magic; a token file is optional)
+#           tamper <0-255> | secure <0|3>
 #
 # Every command reads the current S state first.  `set` (and soff/son) take a
 # full parameter snapshot into backup/<YYYYmmdd-HHMMSS>.txt before touching
@@ -297,13 +298,11 @@ cmd_status() {
 
 cmd_set() {
 	param=${1:-}; val=${2:-}
-	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|version|tamper|secure|lock|unlock> [value]"
+	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|version|tamper|secure> [value]"
 
 	case "$param" in
 	cid|mid|version|tamper|secure)
 		require_android
-		;;
-	lock|unlock)
 		;;
 	*)
 		die "unknown parameter: $param"
@@ -370,33 +369,34 @@ cmd_set() {
 		verify_hex pg1fs $OFF_SECURE "$hx"
 		say "ok"
 		;;
-	lock)
-		[ "$cur_st" = off ] ||
-			die "writing the BL magic needs the eMMC write protection cleared - run 'stool.sh soff'"
-		say "BL lock: $(bl_state) -> locked   (pg1fs 0x8404 = 00000000)"
-		write_hex pg1fs $OFF_BLMAGIC 00000000
-		verify_hex pg1fs $OFF_BLMAGIC 00000000
-		say "ok - reboot to the bootloader to see it"
-		;;
-	unlock)
-		# Two ways: the HTC magic (S-OFF, no token) and the htcdev token.
-		if [ -n "$val" ]; then
-			[ -f "$val" ] || die "no such file: $val"
-			say "flashing unlock token: $val"
-			"$ADB" reboot bootloader 2>/dev/null || true
-			wait_fastboot
-			"$FB" flash unlocktoken "$val"
-			"$FB" reboot
-			return 0
-		fi
-		[ "$cur_st" = off ] ||
-			die "writing the BL magic needs the eMMC write protection cleared - run 'stool.sh soff'"
-		say "BL lock: $(bl_state) -> unlocked (pg1fs 0x8404 = HTCU)"
-		write_hex pg1fs $OFF_BLMAGIC 48544355
-		verify_hex pg1fs $OFF_BLMAGIC 48544355
-		say "ok - reboot to the bootloader to see it"
-		;;
 	esac
+}
+
+# ---------------------------------------------------------------- BL lock
+
+cmd_bl() { # locked | unlocked
+	want=$1
+	require_android
+	say "== state before =="
+	print_state
+	say ""
+	say "== backup =="
+	say "saved: $(cmd_backup)"
+
+	# 0x8404 sits in the same eMMC write-protected range as the S flag.
+	[ "$(secure_state)" = off ] ||
+		die "writing the BL magic needs the eMMC write protection cleared - run 'stool.sh soff'"
+
+	if [ "$want" = locked ]; then
+		hx=00000000
+	else
+		hx=48544355
+	fi
+	say ""
+	say "BL lock: $(bl_state) -> $want   (pg1fs 0x8404 = $hx)"
+	write_hex pg1fs $OFF_BLMAGIC "$hx"
+	verify_hex pg1fs $OFF_BLMAGIC "$hx"
+	say "ok - reboot to the bootloader to see it"
 }
 
 # ---------------------------------------------------------------- soff / son
@@ -563,10 +563,8 @@ stool.sh $VERSION - HTC One (M8) S-OFF control tool
   stool.sh set version <x.y.z.w>
   stool.sh set tamper <0-255>
   stool.sh set secure <0|3>
-  stool.sh set lock
-  stool.sh set lock                write the BL magic = locked   (S-OFF only)
-  stool.sh set unlock              write the BL magic = unlocked (S-OFF only)
-  stool.sh set unlock <Unlock_code.bin>   use the htcdev token instead
+  stool.sh lock bootloader         write the BL magic = locked   (S-OFF only)
+  stool.sh unlock bootloader       write the BL magic = unlocked (S-OFF only)
 
 Every command starts by reading the current S state.  Anything that writes
 takes a full parameter snapshot into backup/<YYYYmmdd-HHMMSS>.txt first.
@@ -585,6 +583,10 @@ son)     cmd_son ;;
 backup)  cmd_backup ;;
 restore) cmd_restore "$@" ;;
 set)     cmd_set "$@" ;;
+lock)    [ "${1:-}" = bootloader ] || die "usage: stool.sh lock bootloader"
+         cmd_bl locked ;;
+unlock)  [ "${1:-}" = bootloader ] || die "usage: stool.sh unlock bootloader"
+         cmd_bl unlocked ;;
 -h|--help|help) usage ;;
 *) usage; exit 2 ;;
 esac
