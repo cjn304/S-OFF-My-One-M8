@@ -10,6 +10,7 @@
 #
 #   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
 #           tamper <0-255> | secure <0|3> | lock | unlock [Unlock_code.bin]
+#           (lock/unlock write the pg1fs 0x8404 magic; a token file is optional)
 #
 # Every command reads the current S state first.  `set` (and soff/son) take a
 # full parameter snapshot into backup/<YYYYmmdd-HHMMSS>.txt before touching
@@ -22,6 +23,7 @@
 #   version   misc       (p24) @ 0x00A0   ASCII
 #   tamper    pg2fs      (p6)  @ 0x511804 u32 LE
 #   secure    pg1fs      (p2)  @ 0x8400   u32 LE  (0 = S-OFF, 3 = S-ON)
+#   bl lock   pg1fs      (p2)  @ 0x8404   4 chars ("HTCU" = unlocked, 00000000 = locked)
 #
 # Licensed GPL-2.0.
 set -u
@@ -36,6 +38,7 @@ OFF_CID=20            # 0x0014
 OFF_MID=16384         # 0x4000
 OFF_VER=160           # 0x00A0
 OFF_SECURE=33792      # 0x8400
+OFF_BLMAGIC=33796     # 0x8404
 OFF_TAMPER=5314564    # 0x511804
 
 say()  { printf '%s\n' "$*"; }
@@ -146,8 +149,10 @@ verify_hex() { # part offset hexstring -> 0 if the card returns the same bytes
 }
 
 dump_part() { # part dest-file  (whole partition, pulled to the PC)
+	# The double slash is for Git Bash: a single leading /data/... gets
+	# rewritten into a Windows path before adb ever sees it.
 	"$ADB" shell "dd if=$DEV/$1 of=/data/local/tmp/stool_$1.img bs=4096" >/dev/null 2>&1
-	"$ADB" pull "/data/local/tmp/stool_$1.img" "$2" >/dev/null 2>&1
+	"$ADB" pull "//data/local/tmp/stool_$1.img" "$2" >/dev/null 2>&1
 	"$ADB" shell "rm -f /data/local/tmp/stool_$1.img" >/dev/null 2>&1
 	[ -s "$2" ]
 }
@@ -159,9 +164,20 @@ p_mid()     { hex2utf16 "$(hex_at mfg        $OFF_MID 18)"; }
 p_version() { hex2str   "$(hex_at misc       $OFF_VER 16)"; }
 p_tamper()  { le32      "$(hex_at pg2fs      $OFF_TAMPER 4)"; }
 p_secure()  { le32      "$(hex_at pg1fs      $OFF_SECURE 4)"; }
+p_bl()      { h=$(hex_at pg1fs $OFF_BLMAGIC 4)
+	case "$h" in 48544355) printf "HTCU (unlocked)";;
+	             00000000) printf "00000000 (locked)";;
+	             *) printf "%s" "$h";; esac; }
 
 secure_state() { # "off" | "on"
 	[ "$(p_secure)" = 0 ] && printf off || printf on
+}
+
+bl_state() { # "unlocked" | "locked"
+	case "$(hex_at pg1fs $OFF_BLMAGIC 4)" in
+	48544355) printf unlocked ;;
+	*) printf locked ;;
+	esac
 }
 
 print_state() {
@@ -174,6 +190,7 @@ print_state() {
 		st=$(secure_state)
 		if [ "$st" = off ]; then say "S state : S-OFF (secure_flag 0)"
 		else say "S state : S-ON  (secure_flag $(p_secure))"; fi
+		say "BL state: $(bl_state) (pg1fs 0x8404 = $(p_bl))"
 		;;
 	fastboot)
 		sf=$("$FB" oem readsecureflag 2>&1 | sed -n 's/.*secure_flag: //p' | tr -d '\r')
@@ -181,6 +198,12 @@ print_state() {
 		0) say "S state : S-OFF (secure_flag 0)" ;;
 		"") say "S state : unknown (could not read secure_flag)" ;;
 		*) say "S state : S-ON  (secure_flag $sf)" ;;
+		esac
+		bl=$("$FB" oem refurbish unlockstatus 2>&1 | tr -d '\r')
+		case "$bl" in
+		*"device unlocked"*) say "BL state: unlocked" ;;
+		*"device locked"*)   say "BL state: locked" ;;
+		*) say "BL state: unknown" ;;
 		esac
 		;;
 	*)
@@ -204,12 +227,14 @@ snapshot_write() { # target file
 		printf 'version=%s\n' "$(p_version)"
 		printf 'tamper=%s\n' "$(p_tamper)"
 		printf 'secure=%s\n' "$(p_secure)"
+		printf 'bl=%s\n'     "$(bl_state)"
 		printf '# raw bytes, restorable with: stool.sh restore <this file>\n'
 		printf 'raw:board_info:0x%04x=%s\n' $OFF_CID    "$(hex_at board_info $OFF_CID 8)"
 		printf 'raw:mfg:0x%04x=%s\n'        $OFF_MID    "$(hex_at mfg        $OFF_MID 18)"
 		printf 'raw:misc:0x%04x=%s\n'       $OFF_VER    "$(hex_at misc       $OFF_VER 16)"
 		printf 'raw:pg2fs:0x%x=%s\n'        $OFF_TAMPER "$(hex_at pg2fs      $OFF_TAMPER 4)"
 		printf 'raw:pg1fs:0x%x=%s\n'        $OFF_SECURE "$(hex_at pg1fs      $OFF_SECURE 4)"
+		printf 'raw:pg1fs:0x%x=%s\n'        $OFF_BLMAGIC "$(hex_at pg1fs     $OFF_BLMAGIC 4)"
 	} > "$f"
 }
 
@@ -245,6 +270,13 @@ cmd_status() {
 		printf '%-9s %s\n' MID      "$("$FB" getvar modelid 2>&1 | sed -n 's/.*modelid: //p' | tr -d '\r')"
 		printf '%-9s %s\n' version  "$("$FB" getvar version-main 2>&1 | sed -n 's/.*version-main: //p' | tr -d '\r')"
 		printf '%-9s %s\n' hboot    "$("$FB" getvar version-bootloader 2>&1 | sed -n 's/.*version-bootloader: //p' | tr -d '\r')"
+		blv=$("$FB" oem refurbish unlockstatus 2>&1 | tr -d '\r')
+		case "$blv" in
+		*"device unlocked"*) blv=unlocked ;;
+		*"device locked"*)   blv=locked ;;
+		*) blv=unknown ;;
+		esac
+		printf '%-9s %s\n' "BL lock" "$blv"
 		return 0
 	fi
 	require_android
@@ -255,6 +287,7 @@ cmd_status() {
 	printf '%-9s %-12s %s\n' version  "$(p_version)" "misc p24 @ 0xA0"
 	printf '%-9s %-12s %s\n' tamper   "$(p_tamper)"  "pg2fs p6 @ 0x511804"
 	printf '%-9s %-12s %s\n' secure   "$(p_secure)"  "pg1fs p2 @ 0x8400"
+	printf '%-9s %-12s %s\n' "BL lock" "$(bl_state)" "pg1fs p2 @ 0x8404"
 	say ""
 	printf '%-9s %s\n' modules  "$("$ADB" shell cat /proc/sys/kernel/modules_disabled 2>/dev/null | tr -d '\r') (0 = allowed)"
 	printf '%-9s %s\n' selinux  "$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')"
@@ -338,20 +371,30 @@ cmd_set() {
 		say "ok"
 		;;
 	lock)
-		say "relocking bootloader (S-OFF only)"
-		"$ADB" reboot bootloader 2>/dev/null || true
-		wait_fastboot
-		"$FB" oem lock
-		"$FB" reboot
+		[ "$cur_st" = off ] ||
+			die "writing the BL magic needs the eMMC write protection cleared - run 'stool.sh soff'"
+		say "BL lock: $(bl_state) -> locked   (pg1fs 0x8404 = 00000000)"
+		write_hex pg1fs $OFF_BLMAGIC 00000000
+		verify_hex pg1fs $OFF_BLMAGIC 00000000
+		say "ok - reboot to the bootloader to see it"
 		;;
 	unlock)
-		[ -n "$val" ] || die "usage: stool.sh set unlock <Unlock_code.bin>"
-		[ -f "$val" ] || die "no such file: $val"
-		say "flashing unlock token: $val"
-		"$ADB" reboot bootloader 2>/dev/null || true
-		wait_fastboot
-		"$FB" flash unlocktoken "$val"
-		"$FB" reboot
+		# Two ways: the HTC magic (S-OFF, no token) and the htcdev token.
+		if [ -n "$val" ]; then
+			[ -f "$val" ] || die "no such file: $val"
+			say "flashing unlock token: $val"
+			"$ADB" reboot bootloader 2>/dev/null || true
+			wait_fastboot
+			"$FB" flash unlocktoken "$val"
+			"$FB" reboot
+			return 0
+		fi
+		[ "$cur_st" = off ] ||
+			die "writing the BL magic needs the eMMC write protection cleared - run 'stool.sh soff'"
+		say "BL lock: $(bl_state) -> unlocked (pg1fs 0x8404 = HTCU)"
+		write_hex pg1fs $OFF_BLMAGIC 48544355
+		verify_hex pg1fs $OFF_BLMAGIC 48544355
+		say "ok - reboot to the bootloader to see it"
 		;;
 	esac
 }
@@ -521,7 +564,9 @@ stool.sh $VERSION - HTC One (M8) S-OFF control tool
   stool.sh set tamper <0-255>
   stool.sh set secure <0|3>
   stool.sh set lock
-  stool.sh set unlock <Unlock_code.bin>
+  stool.sh set lock                write the BL magic = locked   (S-OFF only)
+  stool.sh set unlock              write the BL magic = unlocked (S-OFF only)
+  stool.sh set unlock <Unlock_code.bin>   use the htcdev token instead
 
 Every command starts by reading the current S state.  Anything that writes
 takes a full parameter snapshot into backup/<YYYYmmdd-HHMMSS>.txt first.

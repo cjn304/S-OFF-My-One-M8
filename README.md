@@ -365,8 +365,9 @@ scripts/stool.sh set mid 0P6B12000
 scripts/stool.sh set version 6.12.1540.4
 scripts/stool.sh set tamper 0
 scripts/stool.sh set secure 0|3
-scripts/stool.sh set lock
-scripts/stool.sh set unlock Unlock_code.bin
+scripts/stool.sh set lock                # BL magic -> locked   (S-OFF, no token)
+scripts/stool.sh set unlock              # BL magic -> unlocked (S-OFF, no token)
+scripts/stool.sh set unlock Unlock_code.bin   # or go through the htcdev token
 ```
 
 Every command reads the S state first. Anything that writes takes a parameter
@@ -377,11 +378,17 @@ replays byte for byte.
 `set secure 0` refuses to run while S-ON: writing the flag needs the write
 protection cleared, and clearing it is what `soff` does.
 
+`set lock` / `set unlock` write the four bytes at `pg1fs` (p2) 0x8404 directly:
+`HTCU` = unlocked, `00000000` = locked. That is the same magic hboot compares at
+boot, so once the device is S-OFF no unlock token is involved. `fastboot oem lock`
+is not used either — it only produces `RELOCKED`, and hboot 3.19 has no
+`oem unlock` command at all (`[ERR] Command error`).
+
 What a snapshot holds:
 
 | file | content | size |
 |---|---|---|
-| `<ts>.txt` | the five parameters, plus the exact byte ranges to restore | ~0.5 KB |
+| `<ts>.txt` | every parameter, plus the exact byte ranges to restore | ~0.5 KB |
 | `<ts>.board_info.img` | whole p3 — CID, IMEI, board data | 16 KB |
 | `<ts>.mfg.img` | whole p5 — MID lives here | 256 KB |
 | `<ts>.misc.img` | whole p24 — version-main lives here | 1 MB |
@@ -398,7 +405,7 @@ mfg, radio and misc as full images.
 | version | `misc` (p24) @ 0xA0 | dd |
 | tamper | `pg2fs` (p6) @ 0x511804 | dd |
 | secure | `pg1fs` (p2) @ 0x8400 | dd, S-OFF only |
-| lock / unlock | bootloader | `fastboot oem lock` / `flash unlocktoken` |
+| lock / unlock | `pg1fs` (p2) @ 0x8404, `HTCU` / `00000000` | dd, S-OFF only (`set unlock <token>` also works) |
 
 ---
 
