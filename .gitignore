@@ -1,0 +1,23 @@
+# build artefacts
+*.o
+*.ko
+*.mod.c
+*.order
+*.symvers
+.*.cmd
+.tmp_versions/
+
+# generated per-device, never commit: it contains one kernel build's addresses
+kmod/addr.h
+
+# host tool binary
+tools/mmc_cmd
+tools/mmc_cmd.exe
+
+# device backups - these contain IMEI/CID and must stay off GitHub
+backup-*/
+*.img
+
+# misc
+*.log
+.DS_Store

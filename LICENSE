@@ -1,0 +1,18 @@
+HTC-S-OFF-M8
+
+Copyright (C) 2026 the HTC-S-OFF-M8 contributors
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; version 2 of the License.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+The full text of the GNU General Public License version 2 is available at:
+
+    https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+
+The kernel module in kmod/ is derivative work that links against the Linux
+kernel and is therefore GPL-2.0 as well.  SPDX-License-Identifier: GPL-2.0-only

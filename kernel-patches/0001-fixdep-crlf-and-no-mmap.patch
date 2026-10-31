@@ -1,0 +1,65 @@
+--- a/scripts/basic/fixdep.c
++++ b/scripts/basic/fixdep.c
+@@ -295,16 +295,22 @@
+ 		close(fd);
+ 		return;
+ 	}
+-	map = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+-	if ((long) map == -1) {
+-		perror("fixdep: mmap");
++	map = malloc(st.st_size);
++	if (!map) {
++		perror("fixdep: malloc");
++		close(fd);
++		return;
++	}
++	if (read(fd, map, st.st_size) != st.st_size) {
++		perror("fixdep: read");
++		free(map);
+ 		close(fd);
+ 		return;
+ 	}
+ 
+ 	parse_config_file(map, st.st_size);
+ 
+-	munmap(map, st.st_size);
++	free(map);
+ 
+ 	close(fd);
+ }
+@@ -334,7 +340,7 @@
+ 
+ 	first = 1;
+ 	while (m < end) {
+-		while (m < end && (*m == ' ' || *m == '\\' || *m == '\n'))
++		while (m < end && (*m == ' ' || *m == '\\' || *m == '\n' || *m == '\r'))
+ 			m++;
+ 		p = m;
+ 		while (p < end && *p != ' ') p++;
+@@ -389,16 +395,22 @@
+ 		close(fd);
+ 		return;
+ 	}
+-	map = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+-	if ((long) map == -1) {
+-		perror("fixdep: mmap");
++	map = malloc(st.st_size);
++	if (!map) {
++		perror("fixdep: malloc");
++		close(fd);
++		return;
++	}
++	if (read(fd, map, st.st_size) != st.st_size) {
++		perror("fixdep: read");
++		free(map);
+ 		close(fd);
+ 		return;
+ 	}
+ 
+ 	parse_dep_file(map, st.st_size);
+ 
+-	munmap(map, st.st_size);
++	free(map);
+ 
+ 	close(fd);
+ }

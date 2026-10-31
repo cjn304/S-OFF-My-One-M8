@@ -1,0 +1,12 @@
+* text=auto
+
+# shell scripts and python must keep LF or they break on Linux
+*.sh    text eol=lf
+*.py    text eol=lf
+*.c     text eol=lf
+*.h     text eol=lf
+*.md    text eol=lf
+*.patch text eol=lf
+Makefile text eol=lf
+.gitignore text eol=lf
+LICENSE text eol=lf
