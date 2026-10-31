@@ -7,7 +7,7 @@
 #
 # The eMMC power-on write protection must already be cleared, i.e. run this
 # right after scripts/powercycle.sh in the same boot.  If the write silently
-# does not stick, the protection is still active - see docs/recovery.md.
+# does not stick, the protection is still active - see the Recovery section of README.md.
 set -e
 
 ADB=${ADB:-adb}

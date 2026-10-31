@@ -7,7 +7,7 @@
 # file still living on /data is unreadable, and insmod would block.
 #
 # Before running this: stop the framework and get the eMMC idle
-# (`adb shell stop; adb shell sync`) - see docs/usage.md.
+# (`adb shell stop; adb shell sync`) - see README.md, Quick start.
 set -e
 
 ADB=${ADB:-adb}

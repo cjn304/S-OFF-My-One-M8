@@ -4,7 +4,7 @@
 #   scripts/build.sh <kernel-tree> [cross-compile-prefix]
 #
 # <kernel-tree> must already be configured + prepared for this exact kernel
-# build (see docs/build.md).  CROSS_COMPILE defaults to
+# build (see the Building section of README.md).  CROSS_COMPILE defaults to
 # arm-none-linux-gnueabihf- and can be overridden.
 #
 # On Windows/MSYS2 pass the kernel tree as a MSYS path (/d/...), not D:/...:
