@@ -145,6 +145,13 @@ verify_hex() { # part offset hexstring -> 0 if the card returns the same bytes
 	[ "$want" = "$got" ] || die "read-back mismatch at $1+$2: wrote $want, read $got"
 }
 
+dump_part() { # part dest-file  (whole partition, pulled to the PC)
+	"$ADB" shell "dd if=$DEV/$1 of=/data/local/tmp/stool_$1.img bs=4096" >/dev/null 2>&1
+	"$ADB" pull "/data/local/tmp/stool_$1.img" "$2" >/dev/null 2>&1
+	"$ADB" shell "rm -f /data/local/tmp/stool_$1.img" >/dev/null 2>&1
+	[ -s "$2" ]
+}
+
 # ---------------------------------------------------------------- parameters
 
 p_cid()     { hex2str   "$(hex_at board_info $OFF_CID 8)"; }
@@ -209,9 +216,19 @@ snapshot_write() { # target file
 cmd_backup() {
 	require_android
 	mkdir -p "$BACKUP_DIR"
-	f=$BACKUP_DIR/$(date +%Y%m%d-%H%M%S).txt
+	ts=$(date +%Y%m%d-%H%M%S)
+	f=$BACKUP_DIR/$ts.txt
 	snapshot_write "$f"
 	[ -s "$f" ] || die "backup failed"
+
+	# The txt only holds the bytes this tool writes.  `set cid` goes through
+	# `fastboot oem writecid`, which is opaque to us, so keep whole images of
+	# the three metadata partitions as well - they are 1.3 MB together.
+	for part in board_info mfg misc; do
+		img=$BACKUP_DIR/$ts.$part.img
+		dump_part "$part" "$img" || warn "could not dump $part"
+	done
+
 	printf '%s\n' "$f"
 }
 

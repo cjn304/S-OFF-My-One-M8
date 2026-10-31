@@ -377,6 +377,20 @@ replays byte for byte.
 `set secure 0` refuses to run while S-ON: writing the flag needs the write
 protection cleared, and clearing it is what `soff` does.
 
+What a snapshot holds:
+
+| file | content | size |
+|---|---|---|
+| `<ts>.txt` | the five parameters, plus the exact byte ranges to restore | ~0.5 KB |
+| `<ts>.board_info.img` | whole p3 — CID, IMEI, board data | 16 KB |
+| `<ts>.mfg.img` | whole p5 — MID lives here | 256 KB |
+| `<ts>.misc.img` | whole p24 — version-main lives here | 1 MB |
+
+`set cid` goes through `fastboot oem writecid`, which is opaque, so the whole p3
+image matters more than the 8 bytes in the txt. Radio (p20) is never written by
+this tool; take it once with `scripts/backup.sh`, which dumps pg1fs, board_info,
+mfg, radio and misc as full images.
+
 | parameter | storage | how |
 |---|---|---|
 | CID | `board_info` (p3) @ 0x14, 8 chars | `fastboot oem writecid` (reboots to the bootloader) |

@@ -344,6 +344,19 @@ scripts/stool.sh set unlock Unlock_code.bin
 `set secure 0` 在 S-ON 状态下会直接拒绝：写 flag 需要先把写保护清掉，而清写保护正是
 `soff` 做的事。
 
+一次快照包含：
+
+| 文件 | 内容 | 大小 |
+|---|---|---|
+| `<ts>.txt` | 五个参数的值 + 可以还原的精确字节区间 | 约 0.5 KB |
+| `<ts>.board_info.img` | 整个 p3 —— CID、IMEI、板级数据 | 16 KB |
+| `<ts>.mfg.img` | 整个 p5 —— MID 在这里 | 256 KB |
+| `<ts>.misc.img` | 整个 p24 —— version-main 在这里 | 1 MB |
+
+`set cid` 走的是 `fastboot oem writecid`，那一步对我们不透明，所以整块 p3 镜像比 txt
+里那 8 个字节更重要。radio（p20）本工具从不写入；需要的话用 `scripts/backup.sh`
+整体备份一次，它会导出 pg1fs、board_info、mfg、radio、misc 的完整镜像。
+
 | 参数 | 存储位置 | 改法 |
 |---|---|---|
 | CID | `board_info`（p3）@ 0x14，8 字符 | `fastboot oem writecid`（会重启到 bootloader） |
