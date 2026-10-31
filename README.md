@@ -77,6 +77,7 @@ adb reboot bootloader && fastboot oem readsecureflag           # expect: 0
 
 Full walkthrough with the exact expected output: [docs/usage.md](docs/usage.md).
 How and why it works: [docs/how-it-works.md](docs/how-it-works.md).
+When it goes wrong: [docs/recovery.md](docs/recovery.md).
 Captured before/after output from the reference device: [docs/evidence.md](docs/evidence.md).
 中文说明: [docs/zh-CN.md](docs/zh-CN.md).
 
