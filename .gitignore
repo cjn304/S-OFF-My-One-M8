@@ -15,8 +15,10 @@ tools/mmc_cmd
 tools/mmc_cmd.exe
 
 # device backups - these contain IMEI/CID and must stay off GitHub
+backup/
 backup-*/
 *.img
+.stool.tmp*
 
 # misc
 *.log

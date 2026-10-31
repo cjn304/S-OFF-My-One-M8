@@ -349,6 +349,45 @@ not re-applied, not because something patches it every boot.
 
 ---
 
+## stool.sh
+
+`scripts/stool.sh` wraps everything above, plus the parameters that have nothing
+to do with S-OFF.
+
+```sh
+scripts/stool.sh status                  # S state + every parameter (Android or fastboot)
+scripts/stool.sh soff                    # full S-OFF: backup, diag, power cycle, write, verify
+scripts/stool.sh son                     # back to S-ON
+scripts/stool.sh backup                  # snapshot to backup/<YYYYmmdd-HHMMSS>.txt
+scripts/stool.sh restore <snapshot>      # write a snapshot back
+scripts/stool.sh set cid BS_US001
+scripts/stool.sh set mid 0P6B12000
+scripts/stool.sh set version 6.12.1540.4
+scripts/stool.sh set tamper 0
+scripts/stool.sh set secure 0|3
+scripts/stool.sh set lock
+scripts/stool.sh set unlock Unlock_code.bin
+```
+
+Every command reads the S state first. Anything that writes takes a parameter
+snapshot into `backup/<timestamp>.txt` before touching the card; the file holds
+both a readable summary and a `raw:<part>:<offset>=<hex>` block that `restore`
+replays byte for byte.
+
+`set secure 0` refuses to run while S-ON: writing the flag needs the write
+protection cleared, and clearing it is what `soff` does.
+
+| parameter | storage | how |
+|---|---|---|
+| CID | `board_info` (p3) @ 0x14, 8 chars | `fastboot oem writecid` (reboots to the bootloader) |
+| MID | `mfg` (p5) @ 0x4000, 9 chars UTF-16LE | dd |
+| version | `misc` (p24) @ 0xA0 | dd |
+| tamper | `pg2fs` (p6) @ 0x511804 | dd |
+| secure | `pg1fs` (p2) @ 0x8400 | dd, S-OFF only |
+| lock / unlock | bootloader | `fastboot oem lock` / `flash unlocktoken` |
+
+---
+
 ## Building
 
 ### 1. Get the source
@@ -698,7 +737,7 @@ No warranty. If you brick it, you own both halves.
 ```
 kmod/              the power-cycle module (three build variants + addr.h)
 tools/             mmc_cmd: CMD31 write-protection query
-scripts/           backup, address generation, build, power cycle, flag write
+scripts/           stool.sh control tool, backup, address generation, build, power cycle
 kernel-patches/    fixes needed to build a 3.4 tree with a modern toolchain
 ```
 

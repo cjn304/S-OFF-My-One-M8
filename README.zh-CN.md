@@ -318,6 +318,43 @@ adb shell '/dev/mmc_cmd wp'
 
 ---
 
+## stool.sh
+
+`scripts/stool.sh` 把上面这些步骤包起来，另外还管那些跟 S-OFF 无关的参数。
+
+```sh
+scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
+scripts/stool.sh soff                    # 完整 S-OFF：备份、诊断、断电上电、写入、验证
+scripts/stool.sh son                     # 回到 S-ON
+scripts/stool.sh backup                  # 快照到 backup/<YYYYmmdd-HHMMSS>.txt
+scripts/stool.sh restore <snapshot>      # 用快照还原
+scripts/stool.sh set cid BS_US001
+scripts/stool.sh set mid 0P6B12000
+scripts/stool.sh set version 6.12.1540.4
+scripts/stool.sh set tamper 0
+scripts/stool.sh set secure 0|3
+scripts/stool.sh set lock
+scripts/stool.sh set unlock Unlock_code.bin
+```
+
+每个命令都会先读 S 状态。任何写操作在动卡之前都会把全部参数快照到
+`backup/<时间戳>.txt`；这个文件一半是给人看的摘要，一半是
+`raw:<分区>:<偏移>=<hex>` 形式的原始字节，`restore` 靠它逐字节写回。
+
+`set secure 0` 在 S-ON 状态下会直接拒绝：写 flag 需要先把写保护清掉，而清写保护正是
+`soff` 做的事。
+
+| 参数 | 存储位置 | 改法 |
+|---|---|---|
+| CID | `board_info`（p3）@ 0x14，8 字符 | `fastboot oem writecid`（会重启到 bootloader） |
+| MID | `mfg`（p5）@ 0x4000，9 字符 UTF-16LE | dd |
+| version | `misc`（p24）@ 0xA0 | dd |
+| tamper | `pg2fs`（p6）@ 0x511804 | dd |
+| secure | `pg1fs`（p2）@ 0x8400 | dd，仅 S-OFF |
+| lock / unlock | bootloader | `fastboot oem lock` / `flash unlocktoken` |
+
+---
+
 ## 构建
 
 ### 1. 拿源码
@@ -634,7 +671,7 @@ scripts/write_flag.sh 3 && adb reboot bootloader && fastboot oem readsecureflag
 ```
 kmod/              断电上电模块（三个变体 + addr.h）
 tools/             mmc_cmd：CMD31 写保护查询
-scripts/           备份、地址生成、编译、断电上电、写 flag
+scripts/           stool.sh 控制工具、备份、地址生成、编译、断电上电、写 flag
 kernel-patches/    用现代工具链编 3.4 树所需的修补
 ```
 
