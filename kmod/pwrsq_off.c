@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /* Stage 1: cut VCC to the eMMC.  This is what clears the eMMC power-on write
  * protection that hboot armed at boot. */
 #define STAGE 1

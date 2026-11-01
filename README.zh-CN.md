@@ -6,7 +6,7 @@
 
 这不是内存破坏漏洞。hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规范只有掉电才清除。所有用户态的通路都被堵死，所以这里用一个小内核模块在内核态把 PMIC 的电真断一次再上电，最后写 hboot 读的那一个字节。
 
-已在 HTC One (M8)，hboot 3.19.0.0000 上测试成功（其它机型见移植）。
+已在 HTC One (M8)，hboot 3.19.0.0000 上测试成功（其它机型见[移植](#7-移植)）。
 
 ```
 之前                            之后
@@ -663,16 +663,20 @@ scripts/write_flag.sh 3 && adb reboot bootloader && fastboot oem readsecureflag
 
 ## 风险
 
+仅用于**自己持有设备**上的安全研究与系统维护。在 Android 运行时切断 eMMC 供电不是受支持的操作。
+
 * 断电之前把 `/data` 挂成只读，或者至少停掉框架。`/data` 是 `errors=panic`，对死卡的一次写入就会 panic。
 * 卡如果没重新枚举，手机要手动断电才能再启动。数据不会丢，但你需要能够碰到机器。
 * `scripts/backup.sh` 之所以存在，是因为"应该不会出事"不叫恢复方案。镜像留在电脑上，不要留在手机里。
 * 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。真正没法原地撤销的是改过的 `hboot`（`noredtext`）—— 回 S-ON 之前先把 dump 的镜像写回去。
 
-没有任何担保。刷坏了自负。
+不提供任何形式的担保；作者不对数据丢失或保修失效负责。刷坏了自负。
 
 ---
 
 ## 致谢
+
+本项目相当一部分代码和文字是在 AI 协助下写成的。但每一个地址、每一个偏移、每一条声称已验证的结论，都在真机上核对过：实验、失败分析，以及保留什么、放弃什么的决定，是人做的。
 
 * HTC 公开内核源码，以及 `sdhci_msm` 里那条 `mmc_reinit_card` —— 卡不用重启就能回来。
 * XDA/ARHD 社区关于 RUU/CID/MID 的整理，本项目的判断建立在这些之上。
@@ -682,10 +686,13 @@ scripts/write_flag.sh 3 && adb reboot bootloader && fastboot oem readsecureflag
 
 ## 许可证
 
-GPL-2.0。`kmod/` 里的内核模块链接进 GPL-2.0-only 的内核并声明 `MODULE_LICENSE("GPL")`，不能再授权成别的。
+Copyright (C) 2026 the HTC-S-OFF-Tool contributors。两套许可证，按文件来源分：
 
----
+| 路径 | 许可证 | 原因 |
+|---|---|---|
+| `kmod/`、`kernel-patches/` | GPL-2.0-only（[`kmod/LICENSE`](kmod/LICENSE)、[`kernel-patches/LICENSE`](kernel-patches/LICENSE)） | 内核模块和内核补丁；3.4 树是 v2-only |
+| 其余：`tools/`、`scripts/`、`README*.md` | GPL-3.0-or-later（[`LICENSE`](LICENSE)） | 用户态程序和文字；不链接内核代码，所以许可证是选择而非约束 |
 
-## 免责声明
+`kmod/` 是 Linux 内核模块：包含 GPL-2.0-only 的内核头文件、逐字抄了 `drivers/regulator/core.c` 里的 `struct regulator`，并且被加载进 GPL-2.0-only 的内核，所以同样是 GPL-2.0-only —— 这里不能用 GPL-3.0，两个版本无法合并。它声明的是 `MODULE_LICENSE("GPL v2")`，这是内核里 v2-only 的写法；裸写 `"GPL"` 会被记成 v2-or-later。用户态那侧只通过系统调用接触内核，GPL-3.0-or-later 属于自选，不是被迫。
 
-仅用于**自己持有设备**上的安全研究与系统维护。在 Android 运行时切断 eMMC 供电不是受支持的操作，动手之前先确认你有恢复手段。不提供任何形式的担保；作者不对变砖、数据丢失或保修失效负责。
+每个源文件开头都有一行 `SPDX-License-Identifier`，逐文件看那一行就够了，上表只是索引。《工作原理》里引的 `_regulator_enable` 那段来自内核，仍是 GPL-2.0。

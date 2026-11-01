@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # Generate kmod/addr.h from the connected device.
 #
 #   scripts/gen_addr.sh [stock-module.ko]

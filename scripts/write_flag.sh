@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # Write the HTC secure flag: pg1fs offset 0x8400 = 0  (S-OFF).
 #
 #   scripts/write_flag.sh [0|3]

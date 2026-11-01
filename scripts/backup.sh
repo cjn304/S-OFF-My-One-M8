@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # Back up every partition this procedure can touch.
 #
 #   scripts/backup.sh [output-dir]

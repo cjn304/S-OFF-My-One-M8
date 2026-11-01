@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
 # out-of-tree build of the pwrsq helper modules
 #
 #   make -C <prepared-kernel-tree> M=$PWD \

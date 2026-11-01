@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # static ARM build of mmc_cmd
 #
 #   make CROSS=arm-none-linux-gnueabihf-

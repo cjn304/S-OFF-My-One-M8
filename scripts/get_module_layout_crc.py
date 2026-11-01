@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 """Read the "module_layout" crc out of a stock kernel module.
 
 A module built for a CONFIG_MODVERSIONS=y kernel must carry a __versions entry

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * mmc_cmd - tiny MMC_IOC_CMD wrapper used to inspect eMMC write protection.
  *

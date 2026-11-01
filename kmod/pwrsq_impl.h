@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * pwrsq - eMMC VCC power-cycle helper for HTC One M8 (msm8974, Linux 3.4)
  *
@@ -16,7 +17,7 @@
  *   2 = power ON the rail and trigger a card re-scan
  *   3 = diagnostic only (no side effects)
  *
- * Licensed GPL-2.0.  No warranty.  See README.md for the full procedure.
+ * Licensed GPL-2.0-only.  No warranty.  See README.md for the full procedure.
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -212,6 +213,6 @@ static void __exit pwrsq_exit(void)
 
 module_init(pwrsq_init);
 module_exit(pwrsq_exit);
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("eMMC VCC power-cycle helper (HTC One M8)");
 MODULE_AUTHOR("HTC-S-OFF-M8");

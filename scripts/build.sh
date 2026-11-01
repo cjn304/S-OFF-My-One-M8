@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # Build the three modules against a prepared kernel tree.
 #
 #   scripts/build.sh <kernel-tree> [cross-compile-prefix]
@@ -29,7 +31,10 @@ make -C "$KDIR" M="$ROOT/kmod" ARCH=arm \
 	modules
 
 for m in pwrsq_diag pwrsq_off pwrsq_on; do
-	printf '%s: ' "$m"
-	"${CROSS}nm" -u "$ROOT/kmod/$m.ko" | tr -d '\n' | sed 's/^$/(no undefined symbols)/'
-	echo
+	undef=$("${CROSS}nm" -u "$ROOT/kmod/$m.ko")
+	if [ -n "$undef" ]; then
+		printf '%s:\n%s\n' "$m" "$undef"
+	else
+		printf '%s: (no undefined symbols)\n' "$m"
+	fi
 done

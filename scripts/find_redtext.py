@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 """Locate the six "This build is for ..." lines in an hboot image on stdin.
 
 Prints the six decimal offsets on one line, or exits non-zero if any line is

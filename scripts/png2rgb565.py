@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 """Convert a PNG into the raw frame buffer format used by the M8 splash partition.
 
 The sp1 partition holds 1080x1920 little-endian RGB565 starting at offset 0

@@ -11,7 +11,8 @@ power cycle of the card. Every userspace route to cycle that rail is blocked, so
 the cycle is done from kernel context with a small module that calls the PMIC
 regulator ops directly, followed by writing the one byte hboot reads.
 
-Tested on the HTC One (M8), hboot 3.19.0.0000 (other devices: see Porting).
+Tested on the HTC One (M8), hboot 3.19.0.0000 (other devices: see
+[Porting](#7-porting)).
 
 ```
 before                          after
@@ -879,6 +880,9 @@ ever replaced it.
 
 ## Warnings
 
+Intended for security research and maintenance on devices you own. Cutting power
+to an eMMC while Android is running is not a supported operation.
+
 * Remount `/data` read-only or stop the framework before the power cycle.
   `/data` is `errors=panic`; a write to a dead card panics the kernel.
 * If the card does not re-enumerate, the phone will not boot until it is power
@@ -890,11 +894,17 @@ ever replaced it.
   in place is a modified `hboot` (`noredtext`) — put the dumped image back
   before returning to S-ON.
 
-No warranty. If you brick it, you own both halves.
+No warranty of any kind; the authors are not responsible for data loss or
+voided warranties. If you brick it, you own both halves.
 
 ---
 
 ## Credits
+
+Substantial parts of the code and prose here were written with AI assistance.
+Every address, offset, and verified claim was checked against a real device: the
+experiments, the failure analysis and the decisions about what to keep are human
+work.
 
 * HTC for publishing the kernel source, and for the `mmc_reinit_card` path that
   makes the card come back without a reboot.
@@ -905,14 +915,23 @@ No warranty. If you brick it, you own both halves.
 
 ## License
 
-GPL-2.0. The kernel module in `kmod/` links against a GPL-2.0-only kernel and
-declares `MODULE_LICENSE("GPL")`; it cannot be relicensed.
+Copyright (C) 2026 the HTC-S-OFF-Tool contributors. Two licenses, split by what
+a file is derived from:
 
----
+| path | license | why |
+|---|---|---|
+| `kmod/`, `kernel-patches/` | GPL-2.0-only ([`kmod/LICENSE`](kmod/LICENSE), [`kernel-patches/LICENSE`](kernel-patches/LICENSE)) | kernel module and kernel patches; the 3.4 tree is v2-only |
+| everything else: `tools/`, `scripts/`, `README*.md` | GPL-3.0-or-later ([`LICENSE`](LICENSE)) | userland programs and prose; nothing links them against kernel code, so the licence is a choice |
 
-## Disclaimer
+`kmod/` is a Linux kernel module. It includes GPL-2.0-only kernel headers,
+carries a verbatim copy of `struct regulator` from `drivers/regulator/core.c`
+and is loaded into a GPL-2.0-only kernel, so it is GPL-2.0-only as well — GPL-3.0
+cannot be used there, the two versions cannot be combined. It declares
+`MODULE_LICENSE("GPL v2")`, which is the kernel's tag for v2-only; bare `"GPL"`
+would mean v2-or-later. The userland side reaches the kernel only through
+syscalls, so GPL-3.0-or-later is a choice, not a constraint.
 
-For security research and maintenance on devices you own. Cutting power to an
-eMMC while Android is running is not a supported operation; make sure you have a
-recovery path before you start. No warranty of any kind; the authors are not
-responsible for bricks, data loss or voided warranties.
+Every source file starts with an `SPDX-License-Identifier` line, so the terms
+are unambiguous per file; the table above is only an index. The
+`_regulator_enable` excerpt in *How it works* is quoted from the kernel and
+stays GPL-2.0.

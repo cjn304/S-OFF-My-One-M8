@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # stool.sh - HTC One (M8) S-OFF control tool
 #
 #   stool.sh status                 show S state and every parameter

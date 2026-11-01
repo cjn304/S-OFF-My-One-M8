@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # Cut and restore VCC to the eMMC, then let the MMC core re-scan the card.
 #
 #   scripts/powercycle.sh
