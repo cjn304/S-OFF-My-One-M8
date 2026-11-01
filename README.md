@@ -27,8 +27,9 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   <- hboot stops arming 
 
 * [Unlock bootloader](http://www.htcdev.com/bootloader/). Then root, e.g. with
   Magisk or flash a firmware that ships root. The kernel has to allow module
-  loading. Temporary root without unlocking BL works too: once S-OFF the BL
-  state is yours to set.
+  loading - the LineageOS 17.1 build for this phone (`lineage-17.1-m8`) does
+  not, so it cannot be used here. Temporary root without unlocking BL works
+  too: once S-OFF the BL state is yours to set.
 * The **exact kernel source** of your build, prepared for out-of-tree modules.
   HTC publishes it on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash on
