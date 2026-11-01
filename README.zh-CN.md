@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-自从 firewater 和 Sunshine 停止服务后，缺少一个能用的 HTC S-OFF 工具。
+自从 Firewater 和 Sunshine 停止服务后，缺少一个能用的 HTC S-OFF 工具。
 
 这不是内存破坏漏洞。hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规范只有掉电才清除。所有用户态的通路都被堵死，所以这里用一个小内核模块在内核态把 PMIC 的电真断一次再上电，最后写 hboot 读的那一个字节。
 

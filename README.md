@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md)
 
-Since firewater and Sunshine stopped being available, there has been no working
+Since Firewater and Sunshine stopped being available, there has been no working
 HTC S-OFF tool.
 
 This is not a memory-corruption exploit. hboot protects the firmware partitions
