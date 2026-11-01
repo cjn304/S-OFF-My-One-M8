@@ -600,12 +600,23 @@ the module was built without `addr.h` or the struct was optimised away.
 
 ### 7. Porting
 
-Two things have to match, and they fail independently: the kernel side (struct
+Two things must match, and they fail independently: the kernel side (struct
 layouts, symbol addresses) and the model side (rail name, device name, offsets,
-partition names).
+partition names). Devices fall into four tiers.
 
-**Same generation.** Other M8 variants, and the E8 / Butterfly 2 / mini 2 built
-from the same HTC 3.4 tree, should need no more than a rebuilt `addr.h`:
+| tier | devices | work required |
+|---|---|---|
+| **A** verified | `m8_ul` on 6.31.1402.1 (`ga6393e1`) and 6.12.1540.4 (`g708019f`) | none |
+| **B** same generation | other M8 variants, E8 / Butterfly 2 / mini 2 off the same HTC 3.4 tree | `addr.h` + `module_layout` crc |
+| **C** same era, new driver layer | M7 (msm8960), M9 (msm8994, 3.10), Desire (msm8x26 / msm8x10) | structs, rail, offsets |
+| **D** HTC 10 and later | `pme` and everything after it | see below |
+
+**A. Verified.** Both firmware branches of the same phone, four months apart in
+HTC's build server. Only `addr.h` and the `module_layout` crc differ between
+them, which is exactly what `scripts/gen_addr.sh` regenerates.
+
+**B. Same generation.** The mechanism, the structures and the record layout all
+hold; what has to be re-checked is only what is spelled out per board:
 
 * `TARGET_VREG` and `TARGET_MMC_DEV` stay `8941_l20` and `msm_sdcc.1`. Both are
   board strings, not driver names: `board-8974.c` registers the `sdhci-msm`
@@ -616,8 +627,24 @@ from the same HTC 3.4 tree, should need no more than a rebuilt `addr.h`:
   bytes before writing anything.
 * `scripts/gen_addr.sh` plus a fresh `module_layout` crc is the whole job.
 
-**HTC 10 and later.** Nothing carries over unchanged. Measured against a `pme`
-partition dump:
+**C. Same era, driver layer must be redone.** The idea still applies, but four
+things change at once and each one can silently produce a module that loads and
+then does the wrong thing:
+
+1. `struct regulator` is private to `drivers/regulator/core.c`; this file carries
+   a copy, and it must be re-copied from the target tree.
+2. drvdata: this kernel stores `sdhci_host`; variants that bind the older
+   `msm_sdcc` driver store their own host struct, and reading `->mmc` off it is
+   garbage.
+3. The rail name follows the PMIC, not the SoC.
+4. Every offset in the parameter table has to be re-derived.
+
+`pwrsq_diag.ko` exists to answer 2 and 3 from the device instead of from a
+guess: it resolves the regulator, prints every consumer and the mmc_host it
+found, and writes nothing.
+
+**D. HTC 10 and later.** Nothing carries over unchanged. Measured against a
+`pme` partition dump:
 
 | item | M8 | HTC 10 |
 |---|---|---|
@@ -631,28 +658,27 @@ partition dump:
 | kernel | 3.4.0 | **3.10.84 or 3.18.20** - HTC publishes both branches |
 | panel | 1080x1920 | 1440x2560 |
 
-What that breaks, worst first:
+So this tool would have to grow, in order of severity:
 
 1. `DEV` in `stool.sh` is a fixed path; it has to be discovered
    (`ls -d /dev/block/*/by-name`).
-2. `struct regulator` is a copy of private fields from `drivers/regulator/core.c`.
-   3.10 and 3.18 differ from 3.4, and from each other.
-3. drvdata holds `sdhci_host` on this kernel. Newer ones store
-   `sdhci_pltfm_host` and expect `pltfm_host->host`; older ones store the
-   vendor's own host struct. `pwrsq_diag.ko` prints what it finds before
-   anything writes.
+2. `struct regulator` re-copied per branch - 3.10 and 3.18 differ from 3.4 and
+   from each other.
+3. drvdata: newer kernels store `sdhci_pltfm_host` and expect
+   `pltfm_host->host`.
 4. `splash` is fixed at 1080x1920. `png2rgb565.py` already accepts
    `--width/--height`; `stool.sh` does not pass them through yet.
-5. Every offset in the parameter table has to be re-derived. Only the pg1fs
-   record is likely to keep its shape.
+5. Every offset in the parameter table re-derived; only the pg1fs record is
+   likely to keep its shape.
 
-**UFS devices are out of scope.** From the U11 on, HTC ships UFS 2.1 instead of
-eMMC. There is no `mmcblk0` and no CMD28/29/31 write-protect group, so the
-mechanism this tool is built on does not exist on those phones.
+And from the U11 on, HTC ships UFS 2.1 instead of eMMC. There is no `mmcblk0` and
+no CMD28/29/31 write-protect group, so the mechanism this tool is built on does
+not exist on those phones regardless of how much of the rest is ported.
 
-**If the target arms no write protection at all**, skip the power cycle: run
-`mmc_cmd wp` on the S-ON device first. An all-zero bitmap means a plain `dd` is
-enough and the module is not needed.
+**One case needs no porting.** If the target arms no write protection in the
+first place, skip the power cycle entirely: run `mmc_cmd wp` on the S-ON device
+first. An all-zero bitmap means a plain `dd` is enough and the module is not
+needed.
 
 ---
 
