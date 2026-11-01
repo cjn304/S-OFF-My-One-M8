@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# stool.sh - HTC One (M8) S-OFF control tool
+# stool.sh - HTC One M8 S-OFF control tool
 #
 #   stool.sh status                 show S state and every parameter
 #   stool.sh soff                   full S-OFF (power cycle + write flag)
@@ -799,7 +799,7 @@ cmd_splash() {
 
 usage() {
 	cat <<EOF
-stool.sh $VERSION - HTC One (M8) S-OFF control tool
+stool.sh $VERSION - HTC One M8 S-OFF control tool
 
   stool.sh status
   stool.sh soff

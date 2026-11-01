@@ -11,7 +11,7 @@ power cycle of the card. Every userspace route to cycle that rail is blocked, so
 the cycle is done from kernel context with a small module that calls the PMIC
 regulator ops directly, followed by writing the one byte hboot reads.
 
-Tested on the HTC One (M8), hboot 3.19.0.0000 (other devices: see
+Tested on the HTC One M8, hboot 3.19.0.0000 (other devices: see
 [Porting](#7-porting)).
 
 ```
@@ -594,7 +594,7 @@ The reference build is:
 
 | item | value |
 |---|---|
-| device | HTC One (M8), `m8_ul` |
+| device | HTC One M8, `m8_ul` |
 | MID / CID as shipped | `0P6B62000` / `HTCCN703` |
 | firmware tested | 6.31.1402.1, then 6.12.1540.4 (both Android 6.0.1) |
 | kernel | `3.4.0-perf-ga6393e1` (Jan 2016) / `3.4.0-perf-g708019f` (Nov 2015) |
