@@ -5,12 +5,11 @@
 Since firewater and Sunshine stopped being available, there has been no working
 HTC S-OFF tool.
 
-This is not a new memory-corruption exploit. hboot protects the firmware
-partitions with the eMMC's **power-on write protection**, which by design only
-clears on a real power cycle of the card. Every userspace route to cycle that
-rail is blocked, so the cycle is done from kernel context with a small module
-that calls the PMIC regulator ops directly, followed by writing the one byte
-hboot reads.
+This is not a memory-corruption exploit. hboot protects the firmware partitions
+with the eMMC's power-on write protection, which by design only clears on a real
+power cycle of the card. Every userspace route to cycle that rail is blocked, so
+the cycle is done from kernel context with a small module that calls the PMIC
+regulator ops directly, followed by writing the one byte hboot reads.
 
 Tested on the HTC One (M8), hboot 3.19.0.0000.
 
