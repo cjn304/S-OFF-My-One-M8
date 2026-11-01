@@ -1,9 +1,9 @@
-# HTC-S-OFF-M8
+# HTC-S-OFF-Tool
 
 **English** | [中文](README.zh-CN.md)
 
-True **S-OFF** for the HTC One (M8) on **hboot 3.19.0.0000** — the bootloader the
-community has treated as un-S-OFF-able since 2015.
+Since firewater and Sunshine stopped being available, there has been no working
+HTC S-OFF tool.
 
 This is not a new memory-corruption exploit. hboot protects the firmware
 partitions with the eMMC's **power-on write protection**, which by design only
@@ -11,6 +11,8 @@ clears on a real power cycle of the card. Every userspace route to cycle that
 rail is blocked, so the cycle is done from kernel context with a small module
 that calls the PMIC regulator ops directly, followed by writing the one byte
 hboot reads.
+
+Tested on the HTC One (M8), hboot 3.19.0.0000.
 
 ```
 before                          after

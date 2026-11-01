@@ -1,10 +1,12 @@
-# HTC-S-OFF-M8
+# HTC-S-OFF-Tool
 
 [English](README.md) | **中文**
 
-在 HTC One (M8)、**hboot 3.19.0.0000** 上做真 S-OFF —— 这个 hboot 从 2015 年起被社区当成"没法 S-OFF"的版本。
+自从 firewater 和 Sunshine 停止服务后，缺少一个能用的 HTC S-OFF 工具。
 
 这不是又一个内存破坏漏洞。hboot 用 eMMC 的 **power-on 写保护**锁住固件分区，而这种保护按规范只有**掉电**才清除。所有用户态的通路都被堵死，所以这里用一个小内核模块在**内核态**把 PMIC 的电真断一次再上电，最后写 hboot 读的那一个字节。
+
+已在 HTC One (M8)，hboot 3.19.0.0000 测试成功。
 
 ```
 之前                            之后
