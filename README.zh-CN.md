@@ -547,11 +547,51 @@ nm -u kmod/pwrsq_on.ko                           # 什么都不输出
 
 ### 7. 移植
 
-* `kmod/pwrsq_impl.h` 里的 `TARGET_VREG` 和 `TARGET_MMC_DEV` 指定稳压器和 MMC 平台设备。
-  其它 msm8974 的 HTC 机型一般还是 `8941_l20` 和 `msm_sdcc.1`，用
-  `/sys/kernel/debug/regulator/*/consumers` 核对。
-* 换机器/换内核必须重跑 `scripts/gen_addr.sh`：地址和 crc 都跟构建绑定。
-* 如果内核开了 `CONFIG_MODULE_SIG_FORCE=y`，这条路直接死 —— 模块必须用内核信任的密钥签名。
+有两件事必须同时对上，而且它们会各自独立地失败：内核侧（结构体布局、符号地址）和
+机型侧（供电轨名、设备名、偏移、分区名）。
+
+**同一世代。** 其它 M8 变体，以及与它共用这棵 HTC 3.4 树的 E8 / Butterfly 2 /
+mini 2，理论上只需要重新生成 `addr.h`：
+
+* `TARGET_VREG` 和 `TARGET_MMC_DEV` 仍是 `8941_l20` 和 `msm_sdcc.1`。这两个都是
+  板级字符串，不是驱动名：`board-8974.c` 把 `sdhci-msm` 驱动注册的设备命名为
+  `msm_sdcc.1`，轨名则来自 `msm-pm8x41-rpm-regulator.dtsi`。
+* 安全记录结构不变 —— pg1fs 0x8400 处的 `{u32 flag; char magic[4]}`，S-ON 时读出来是
+  `03 00 00 00` + `HTCU`。写之前先核对这八个字节。
+* 整个工作就是重跑 `scripts/gen_addr.sh` 再取一次 `module_layout` 的 crc。
+
+**HTC 10 及以后。** 没有任何一项能原样沿用。下面按一台 `pme` 的分区 dump 实测：
+
+| 项目 | M8 | HTC 10 |
+|---|---|---|
+| bootloader | `hboot` | `aboot` |
+| `board_info` | p3 | **p1** |
+| `mfg` | p5 | **p2** |
+| `pg1fs` | p2 | **p3** |
+| `pg2fs` | p6 | **p4**，而且是 23.6 MB，不是几百 KB |
+| `sp1` | p12，5 MB | **p21，10 MB** |
+| by-name 路径 | `/dev/block/bootdevice/by-name` | `/dev/block/platform/soc/7464900.sdhci/by-name` |
+| 内核 | 3.4.0 | **3.10.84 或 3.18.20**，HTC 两条分支都发布 |
+| 屏幕 | 1080x1920 | 1440x2560 |
+
+由此失效的东西，按严重程度排：
+
+1. `stool.sh` 里的 `DEV` 是写死的路径，必须改成自动探测
+   （`ls -d /dev/block/*/by-name`）。
+2. `struct regulator` 是从 `drivers/regulator/core.c` 抄来的私有字段。3.10 和 3.18
+   跟 3.4 都不一样，彼此之间也不一样。
+3. 本内核的 drvdata 是 `sdhci_host`。新内核存 `sdhci_pltfm_host`，要取
+   `pltfm_host->host`；更老的存厂商自己的 host 结构体。`pwrsq_diag.ko` 会在任何写操作
+   之前先把它实际读到的东西打出来。
+4. `splash` 写死 1080x1920。`png2rgb565.py` 本来就支持 `--width/--height`，只是
+   `stool.sh` 还没把参数透传下去。
+5. 参数表里每一个偏移都要重新定位。只有 pg1fs 那条记录的形状大概能保持不变。
+
+**UFS 机型不在适用范围内。** 从 U11 这一代起，HTC 改用 UFS 2.1 而不是 eMMC。没有
+`mmcblk0`，也没有 CMD28/29/31 那套写保护组，本工具赖以成立的机制在那些机器上不存在。
+
+**如果目标机本来就不设写保护**，断电这一步可以整个跳过：先在 S-ON 状态下跑
+`mmc_cmd wp`。位图全零就说明直接 `dd` 即可，不需要模块。
 
 ---
 

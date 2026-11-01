@@ -600,14 +600,59 @@ the module was built without `addr.h` or the struct was optimised away.
 
 ### 7. Porting
 
-* `TARGET_VREG` and `TARGET_MMC_DEV` in `kmod/pwrsq_impl.h` name the rail and the
-  MMC platform device. On other msm8974 HTC devices they are usually still
-  `8941_l20` and `msm_sdcc.1`; verify with
-  `/sys/kernel/debug/regulator/*/consumers`.
-* Re-run `scripts/gen_addr.sh`; addresses and crc change with every kernel
-  build.
-* If the kernel has `CONFIG_MODULE_SIG_FORCE=y`, none of this works — the module
-  must be signed with a key the kernel trusts.
+Two things have to match, and they fail independently: the kernel side (struct
+layouts, symbol addresses) and the model side (rail name, device name, offsets,
+partition names).
+
+**Same generation.** Other M8 variants, and the E8 / Butterfly 2 / mini 2 built
+from the same HTC 3.4 tree, should need no more than a rebuilt `addr.h`:
+
+* `TARGET_VREG` and `TARGET_MMC_DEV` stay `8941_l20` and `msm_sdcc.1`. Both are
+  board strings, not driver names: `board-8974.c` registers the `sdhci-msm`
+  device under the name `msm_sdcc.1`, and the rail name comes from
+  `msm-pm8x41-rpm-regulator.dtsi`.
+* The security record keeps its shape - `{u32 flag; char magic[4]}` at pg1fs
+  0x8400, reading `03 00 00 00` + `HTCU` on an S-ON device. Check those eight
+  bytes before writing anything.
+* `scripts/gen_addr.sh` plus a fresh `module_layout` crc is the whole job.
+
+**HTC 10 and later.** Nothing carries over unchanged. Measured against a `pme`
+partition dump:
+
+| item | M8 | HTC 10 |
+|---|---|---|
+| bootloader | `hboot` | `aboot` |
+| `board_info` | p3 | **p1** |
+| `mfg` | p5 | **p2** |
+| `pg1fs` | p2 | **p3** |
+| `pg2fs` | p6 | **p4**, 23.6 MB instead of a few hundred KB |
+| `sp1` | p12, 5 MB | **p21, 10 MB** |
+| by-name | `/dev/block/bootdevice/by-name` | `/dev/block/platform/soc/7464900.sdhci/by-name` |
+| kernel | 3.4.0 | **3.10.84 or 3.18.20** - HTC publishes both branches |
+| panel | 1080x1920 | 1440x2560 |
+
+What that breaks, worst first:
+
+1. `DEV` in `stool.sh` is a fixed path; it has to be discovered
+   (`ls -d /dev/block/*/by-name`).
+2. `struct regulator` is a copy of private fields from `drivers/regulator/core.c`.
+   3.10 and 3.18 differ from 3.4, and from each other.
+3. drvdata holds `sdhci_host` on this kernel. Newer ones store
+   `sdhci_pltfm_host` and expect `pltfm_host->host`; older ones store the
+   vendor's own host struct. `pwrsq_diag.ko` prints what it finds before
+   anything writes.
+4. `splash` is fixed at 1080x1920. `png2rgb565.py` already accepts
+   `--width/--height`; `stool.sh` does not pass them through yet.
+5. Every offset in the parameter table has to be re-derived. Only the pg1fs
+   record is likely to keep its shape.
+
+**UFS devices are out of scope.** From the U11 on, HTC ships UFS 2.1 instead of
+eMMC. There is no `mmcblk0` and no CMD28/29/31 write-protect group, so the
+mechanism this tool is built on does not exist on those phones.
+
+**If the target arms no write protection at all**, skip the power cycle: run
+`mmc_cmd wp` on the S-ON device first. An all-zero bitmap means a plain `dd` is
+enough and the module is not needed.
 
 ---
 
