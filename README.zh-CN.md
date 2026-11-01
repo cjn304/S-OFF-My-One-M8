@@ -18,8 +18,8 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   ← hboot 不再设写
 
 ## 前提条件
 
-* **[解锁 BL](http://www.htcdev.com/bootloader/) 并 root**，比如用 Magisk，或刷入自带 root 的固件。内核得能加载模块：m8 的 LineageOS 17.1 就不行。不解锁 BL 找到一些办法临时 root 也可以，S-OFF 之后 BL 就随便解锁。
-* 与设备完全对应的**内核源码**，并已为外部模块 prepare 过。HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads) 发布。
+* [解锁 BL](http://www.htcdev.com/bootloader/) 并 root，比如用 Magisk，或刷入自带 root 的固件。内核得能加载模块：m8 的 LineageOS 17.1 就不行。不解锁 BL 找到一些办法临时 root 也可以，S-OFF 之后 BL 就随便解锁。
+* 与设备完全对应的内核源码，并已为外部模块 prepare 过。HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads) 发布。
 * 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows](#windows)）。
 * 备份（见[风险](#风险)）。
 
