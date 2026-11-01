@@ -1,4 +1,4 @@
-# HTC-S-OFF-Tool
+# S-OFF-My-One-M8
 
 [English](README.md) | **中文**
 
@@ -686,7 +686,7 @@ scripts/write_flag.sh 3 && adb reboot bootloader && fastboot oem readsecureflag
 
 ## 许可证
 
-Copyright (C) 2026 the HTC-S-OFF-Tool contributors。两套许可证，按文件来源分：
+Copyright (C) 2026 the S-OFF-My-One-M8 contributors。两套许可证，按文件来源分：
 
 | 路径 | 许可证 | 原因 |
 |---|---|---|

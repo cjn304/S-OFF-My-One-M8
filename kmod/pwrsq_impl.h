@@ -215,4 +215,4 @@ module_init(pwrsq_init);
 module_exit(pwrsq_exit);
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("eMMC VCC power-cycle helper (HTC One M8)");
-MODULE_AUTHOR("HTC-S-OFF-M8");
+MODULE_AUTHOR("S-OFF-My-One-M8");

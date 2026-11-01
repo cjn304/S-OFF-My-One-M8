@@ -299,7 +299,7 @@ print_state() {
 snapshot_write() { # target file
 	f=$1
 	{
-		printf '# HTC-S-OFF-M8 parameter snapshot\n'
+		printf '# S-OFF-My-One-M8 parameter snapshot\n'
 		printf '# time=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 		printf '# kernel=%s\n' "$("$ADB" shell uname -r 2>/dev/null | tr -d '\r')"
 		printf '# device=%s\n' "$("$ADB" shell getprop ro.product.device 2>/dev/null | tr -d '\r')"

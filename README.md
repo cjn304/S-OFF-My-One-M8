@@ -1,4 +1,4 @@
-# HTC-S-OFF-Tool
+# S-OFF-My-One-M8
 
 **English** | [中文](README.zh-CN.md)
 
@@ -915,7 +915,7 @@ work.
 
 ## License
 
-Copyright (C) 2026 the HTC-S-OFF-Tool contributors. Two licenses, split by what
+Copyright (C) 2026 the S-OFF-My-One-M8 contributors. Two licenses, split by what
 a file is derived from:
 
 | path | license | why |
