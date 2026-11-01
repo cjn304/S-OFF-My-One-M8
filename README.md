@@ -23,6 +23,156 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   <- hboot stops arming 
 
 ---
 
+## Requirements
+
+* **Root** with module loading: `adb shell id` -> `uid=0`,
+  `cat /proc/sys/kernel/modules_disabled` -> `0`, SELinux permissive.
+* The **exact kernel source** of your build, prepared for out-of-tree modules.
+  HTC publishes it on htcdev.com; for the 6.0.1 M8 build the tarball is
+  `m8ul-3.4.0-perf-ga6393e1.zip`.
+* A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash on
+  Windows (see [Windows](#windows)).
+* Backups. See the warning at the bottom.
+
+---
+
+## Quick start
+
+```sh
+# 0. pre-flight
+adb shell id                                     # uid=0
+adb shell getenforce                             # Permissive
+adb shell cat /proc/sys/kernel/modules_disabled  # 0
+adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
+adb shell 'mount -t debugfs none /sys/kernel/debug'
+
+# 1. backups first - pg1fs, board_info, mfg, radio, misc
+scripts/backup.sh
+
+# 2. read the symbol addresses and the module_layout crc from the phone
+scripts/gen_addr.sh
+
+# 3. build the three modules against your prepared kernel tree
+scripts/build.sh /path/to/kernel-tree
+
+# 4. make sure the plumbing is right (no side effects)
+adb push kmod/pwrsq_diag.ko /dev/
+adb shell 'dmesg -c >/dev/null; insmod /dev/pwrsq_diag.ko; dmesg | grep pwrsq'
+#    expect: rdev=... name=8941_l20 / consumer 'msm_sdcc.1' / mmc_host=...
+
+# 5. stop the framework, flush, then cut and restore VCC
+adb shell 'stop; sleep 8; sync'
+scripts/powercycle.sh
+
+# 6. confirm the write protection is gone, then set the flag
+adb push tools/mmc_cmd /dev/ && adb shell chmod 755 /dev/mmc_cmd
+adb shell '/dev/mmc_cmd wp'                      # expect all zeroes
+scripts/write_flag.sh 0
+
+# 7. verify from the bootloader
+adb reboot bootloader && fastboot oem readsecureflag   # expect: 0
+```
+
+### Step by step, with expected output
+
+**Pre-flight.** `ls /sys/kernel/debug/regulator/8941_l20/` should list
+`consumers enable force_disable mode msm_sdcc.1-vdd open_count use_count voltage`.
+If `insmod` is missing or `modules_disabled` is 1, stop: you need a rooted ROM
+with module loading enabled.
+
+**Diagnose.** Expected:
+
+```
+pwrsq: init stage=3
+pwrsq: rdev=f0326c00 name=8941_l20 use_count=4
+pwrsq: consumer 'msm_sdcc.1'
+pwrsq: mmc_host=f0032000
+pwrsq: done
+```
+
+`name=8941_l20` means the rail was found. `consumer 'msm_sdcc.1'` plus a
+non-null `mmc_host` means the rescan path will work. `Failed to create debugfs
+directory` is harmless (duplicate consumer dir). Remove with
+`adb shell rmmod pwrsq_diag`.
+
+**Quiesce.** The card is about to lose power; nothing may be writing to it.
+`adb shell stop` takes the framework down and adbd stays up (class core). Then
+`sync`. Optionally remount `/data` read-only:
+
+```sh
+adb shell 'for d in /mnt/runtime/*/emulated /data/media; do umount -l $d; done'
+adb shell 'mount -o remount,ro /data'
+```
+
+On ROMs that keep a loop-mounted `/su` this fails with `Device or resource busy`
+— then just make sure the framework is stopped and `sync` has run. `/data` is
+mounted `errors=panic`, so a write during the outage panics the kernel.
+
+**Power cycle.** `scripts/powercycle.sh` pushes both modules to `/dev` (tmpfs,
+because anything still on `/data` is unreadable once the card is gone), runs
+`pwrsq_off` then `pwrsq_on`. Expected:
+
+```
+--- power off / power on ---
+SEQ_DONE
+--- result ---
+ 179        2     121823 mmcblk0p2
+...
+pwrsq: ops->enable ret=0
+pwrsq: detect_change queued
+mmc0: mmc_reinit_card
+mmc0: mmc_reinit_card return 0
+```
+
+If `/proc/partitions` has no `mmcblk0`, wait a few seconds and re-`insmod` the
+`on` module (stage 2 is idempotent). Still nothing means a manual power cycle —
+see [Recovery](#recovery).
+
+**Write protection check.** Before the cycle `mmc_cmd wp` lists groups 0..11 as
+`power-on`. Now it must be:
+
+```
+bitmap: 00 00 00 00 00 00 00 00
+  -> no write protection at all
+```
+
+Do not continue if any group is listed.
+
+**Write.** `scripts/write_flag.sh 0`:
+
+```
+before:
+ 03 00 00 00 48 54 43 55
+after:
+ 00 00 00 00 48 54 43 55
+```
+
+The script does `dd` + `sync` + `drop_caches` before reading back, so the value
+came off the card and not out of the page cache. That distinction matters: a
+`dd` that "succeeds" against a write-protected card still updates the cache.
+
+**Verify.**
+
+```
+$ fastboot oem readsecureflag
+(bootloader) secure_flag: 0
+$ fastboot getvar all | grep -Ei 'secure|misc'
+(bootloader) version-misc: PVT SHIP S-OFF
+(bootloader) security: off
+```
+
+Boot Android again and confirm hboot no longer arms the protection:
+
+```sh
+adb shell '/dev/mmc_cmd wp'
+# bitmap: 00 00 00 00 00 00 00 00
+```
+
+That last check is the real proof: the flag persists because the protection is
+not re-applied, not because something patches it every boot.
+
+---
+
 ## Device support
 
 | item | verified value |
@@ -196,156 +346,6 @@ The kernel is built with `CONFIG_MODVERSIONS=y` and we do not have its
   (`kmod/addr.h`);
 * `module_layout` is checked unconditionally, so the module carries its own
   `__versions` entry with the crc copied from a stock `.ko` on the device.
-
----
-
-## Requirements
-
-* **Root** with module loading: `adb shell id` -> `uid=0`,
-  `cat /proc/sys/kernel/modules_disabled` -> `0`, SELinux permissive.
-* The **exact kernel source** of your build, prepared for out-of-tree modules.
-  HTC publishes it on htcdev.com; for the 6.0.1 M8 build the tarball is
-  `m8ul-3.4.0-perf-ga6393e1.zip`.
-* A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash on
-  Windows (see [Windows](#windows)).
-* Backups. See the warning at the bottom.
-
----
-
-## Quick start
-
-```sh
-# 0. pre-flight
-adb shell id                                     # uid=0
-adb shell getenforce                             # Permissive
-adb shell cat /proc/sys/kernel/modules_disabled  # 0
-adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
-adb shell 'mount -t debugfs none /sys/kernel/debug'
-
-# 1. backups first - pg1fs, board_info, mfg, radio, misc
-scripts/backup.sh
-
-# 2. read the symbol addresses and the module_layout crc from the phone
-scripts/gen_addr.sh
-
-# 3. build the three modules against your prepared kernel tree
-scripts/build.sh /path/to/kernel-tree
-
-# 4. make sure the plumbing is right (no side effects)
-adb push kmod/pwrsq_diag.ko /dev/
-adb shell 'dmesg -c >/dev/null; insmod /dev/pwrsq_diag.ko; dmesg | grep pwrsq'
-#    expect: rdev=... name=8941_l20 / consumer 'msm_sdcc.1' / mmc_host=...
-
-# 5. stop the framework, flush, then cut and restore VCC
-adb shell 'stop; sleep 8; sync'
-scripts/powercycle.sh
-
-# 6. confirm the write protection is gone, then set the flag
-adb push tools/mmc_cmd /dev/ && adb shell chmod 755 /dev/mmc_cmd
-adb shell '/dev/mmc_cmd wp'                      # expect all zeroes
-scripts/write_flag.sh 0
-
-# 7. verify from the bootloader
-adb reboot bootloader && fastboot oem readsecureflag   # expect: 0
-```
-
-### Step by step, with expected output
-
-**Pre-flight.** `ls /sys/kernel/debug/regulator/8941_l20/` should list
-`consumers enable force_disable mode msm_sdcc.1-vdd open_count use_count voltage`.
-If `insmod` is missing or `modules_disabled` is 1, stop: you need a rooted ROM
-with module loading enabled.
-
-**Diagnose.** Expected:
-
-```
-pwrsq: init stage=3
-pwrsq: rdev=f0326c00 name=8941_l20 use_count=4
-pwrsq: consumer 'msm_sdcc.1'
-pwrsq: mmc_host=f0032000
-pwrsq: done
-```
-
-`name=8941_l20` means the rail was found. `consumer 'msm_sdcc.1'` plus a
-non-null `mmc_host` means the rescan path will work. `Failed to create debugfs
-directory` is harmless (duplicate consumer dir). Remove with
-`adb shell rmmod pwrsq_diag`.
-
-**Quiesce.** The card is about to lose power; nothing may be writing to it.
-`adb shell stop` takes the framework down and adbd stays up (class core). Then
-`sync`. Optionally remount `/data` read-only:
-
-```sh
-adb shell 'for d in /mnt/runtime/*/emulated /data/media; do umount -l $d; done'
-adb shell 'mount -o remount,ro /data'
-```
-
-On ROMs that keep a loop-mounted `/su` this fails with `Device or resource busy`
-— then just make sure the framework is stopped and `sync` has run. `/data` is
-mounted `errors=panic`, so a write during the outage panics the kernel.
-
-**Power cycle.** `scripts/powercycle.sh` pushes both modules to `/dev` (tmpfs,
-because anything still on `/data` is unreadable once the card is gone), runs
-`pwrsq_off` then `pwrsq_on`. Expected:
-
-```
---- power off / power on ---
-SEQ_DONE
---- result ---
- 179        2     121823 mmcblk0p2
-...
-pwrsq: ops->enable ret=0
-pwrsq: detect_change queued
-mmc0: mmc_reinit_card
-mmc0: mmc_reinit_card return 0
-```
-
-If `/proc/partitions` has no `mmcblk0`, wait a few seconds and re-`insmod` the
-`on` module (stage 2 is idempotent). Still nothing means a manual power cycle —
-see [Recovery](#recovery).
-
-**Write protection check.** Before the cycle `mmc_cmd wp` lists groups 0..11 as
-`power-on`. Now it must be:
-
-```
-bitmap: 00 00 00 00 00 00 00 00
-  -> no write protection at all
-```
-
-Do not continue if any group is listed.
-
-**Write.** `scripts/write_flag.sh 0`:
-
-```
-before:
- 03 00 00 00 48 54 43 55
-after:
- 00 00 00 00 48 54 43 55
-```
-
-The script does `dd` + `sync` + `drop_caches` before reading back, so the value
-came off the card and not out of the page cache. That distinction matters: a
-`dd` that "succeeds" against a write-protected card still updates the cache.
-
-**Verify.**
-
-```
-$ fastboot oem readsecureflag
-(bootloader) secure_flag: 0
-$ fastboot getvar all | grep -Ei 'secure|misc'
-(bootloader) version-misc: PVT SHIP S-OFF
-(bootloader) security: off
-```
-
-Boot Android again and confirm hboot no longer arms the protection:
-
-```sh
-adb shell '/dev/mmc_cmd wp'
-# bitmap: 00 00 00 00 00 00 00 00
-```
-
-That last check is the real proof: the flag persists because the protection is
-not re-applied, not because something patches it every boot.
 
 ---
 

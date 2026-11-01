@@ -19,6 +19,146 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   ← hboot 不再设写
 
 ---
 
+## 前提条件
+
+* **已 root 且能加载模块**：`adb shell id` 是 `uid=0`，
+  `cat /proc/sys/kernel/modules_disabled` 是 `0`，SELinux Permissive。
+* 与设备完全对应的**内核源码**，并已为外部模块 prepare 过。HTC 在 htcdev.com 发布；
+  6.0.1 这一版是 `m8ul-3.4.0-perf-ga6393e1.zip`。
+* 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 Windows 上的 MSYS2/Git Bash
+  （见 [Windows](#windows)）。
+* 备份。见文末的风险一节。
+
+---
+
+## 快速开始
+
+```sh
+# 0. 前置检查
+adb shell id                                     # uid=0
+adb shell getenforce                             # Permissive
+adb shell cat /proc/sys/kernel/modules_disabled  # 0
+adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
+adb shell 'mount -t debugfs none /sys/kernel/debug'
+
+# 1. 先备份 pg1fs / board_info / mfg / radio / misc
+scripts/backup.sh
+
+# 2. 从手机读符号地址和 module_layout 的 crc
+scripts/gen_addr.sh
+
+# 3. 针对准备好的内核树编译三个模块
+scripts/build.sh /path/to/kernel-tree
+
+# 4. 先跑诊断版，确认链路正确（无副作用）
+adb push kmod/pwrsq_diag.ko /dev/
+adb shell 'dmesg -c >/dev/null; insmod /dev/pwrsq_diag.ko; dmesg | grep pwrsq'
+#    期望：rdev=... name=8941_l20 / consumer 'msm_sdcc.1' / mmc_host=...
+
+# 5. 停框架、sync，然后断电再上电
+adb shell 'stop; sleep 8; sync'
+scripts/powercycle.sh
+
+# 6. 确认写保护已消失，再写 flag
+adb push tools/mmc_cmd /dev/ && adb shell chmod 755 /dev/mmc_cmd
+adb shell '/dev/mmc_cmd wp'                      # 必须全 0
+scripts/write_flag.sh 0
+
+# 7. 从 bootloader 验证
+adb reboot bootloader && fastboot oem readsecureflag   # 应为 0
+```
+
+### 逐条说明与期望输出
+
+**前置检查。** `ls /sys/kernel/debug/regulator/8941_l20/` 应当列出
+`consumers enable force_disable mode msm_sdcc.1-vdd open_count use_count voltage`。
+如果没有 `insmod`，或 `modules_disabled` 是 1，就到此为止：需要一台能加载模块的 root ROM。
+
+**诊断。** 期望：
+
+```
+pwrsq: init stage=3
+pwrsq: rdev=f0326c00 name=8941_l20 use_count=4
+pwrsq: consumer 'msm_sdcc.1'
+pwrsq: mmc_host=f0032000
+pwrsq: done
+```
+
+`name=8941_l20` 说明稳压器找到了；`consumer 'msm_sdcc.1'` 加上非空的 `mmc_host` 说明
+重扫这条路能用。`Failed to create debugfs directory` 是无害的（重复的 consumer 目录）。
+卸载：`adb shell rmmod pwrsq_diag`。
+
+**让 eMMC 静下来。** 卡马上要断电，不能有人正在写。`adb shell stop` 停掉框架，adbd 属于
+class core 会留着；然后 `sync`。可选地把 `/data` 挂成只读：
+
+```sh
+adb shell 'for d in /mnt/runtime/*/emulated /data/media; do umount -l $d; done'
+adb shell 'mount -o remount,ro /data'
+```
+
+有些 ROM 把 `/su` 挂在 loop 上，这条会以 `Device or resource busy` 失败 —— 那就只保证
+框架停了、`sync` 跑过。`/data` 是 `errors=panic` 挂载的，断电期间任何一次写入都会 panic。
+
+**断电上电。** `scripts/powercycle.sh` 先把两个模块推到 `/dev`（tmpfs —— 卡一没，
+还在 `/data` 上的文件就读不到了），然后依次 `insmod` off 和 on。期望：
+
+```
+--- power off / power on ---
+SEQ_DONE
+--- result ---
+ 179        2     121823 mmcblk0p2
+...
+pwrsq: ops->enable ret=0
+pwrsq: detect_change queued
+mmc0: mmc_reinit_card
+mmc0: mmc_reinit_card return 0
+```
+
+如果 `/proc/partitions` 里没有 `mmcblk0`，等几秒再 `insmod` 一次 `on`（stage 2 是幂等的）。
+还是不行就只能手动断电重启，见[故障处理](#故障处理)。
+
+**查写保护。** 循环之前 `mmc_cmd wp` 会把 group 0..11 列成 `power-on`，现在必须是：
+
+```
+bitmap: 00 00 00 00 00 00 00 00
+  -> no write protection at all
+```
+
+只要还有任何一组被列出来，就不要往下走。
+
+**写 flag。** `scripts/write_flag.sh 0`：
+
+```
+before:
+ 03 00 00 00 48 54 43 55
+after:
+ 00 00 00 00 48 54 43 55
+```
+
+脚本在回读之前做了 `dd` + `sync` + `drop_caches`，所以你看到的值来自卡，不是页缓存。
+这个区别很关键：写保护状态下 `dd` 也会"成功"，因为它只更新了缓存。
+
+**验证。**
+
+```
+$ fastboot oem readsecureflag
+(bootloader) secure_flag: 0
+$ fastboot getvar all | grep -Ei 'secure|misc'
+(bootloader) version-misc: PVT SHIP S-OFF
+(bootloader) security: off
+```
+
+回到 Android 再确认一次 hboot 不再设保护：
+
+```sh
+adb shell '/dev/mmc_cmd wp'
+# bitmap: 00 00 00 00 00 00 00 00
+```
+
+最后这一步才是真凭据：flag 之所以持久，是因为保护不再被设置，而不是因为每次开机有人去补。
+
+---
+
 ## 设备支持
 
 | 项目 | 实测值 |
@@ -175,146 +315,6 @@ power-on 写保护**。所以 S-OFF 设备上第二次 `CMD31` 返回全 0，`pg
   编译时从 `/proc/kallsyms` 生成（`kmod/addr.h`）；
 * `module_layout` 是无条件检查的 —— 所以模块自带一条 `__versions` 记录，crc 从设备上
   原厂 `.ko` 里抄出来。
-
----
-
-## 前提条件
-
-* **已 root 且能加载模块**：`adb shell id` 是 `uid=0`，
-  `cat /proc/sys/kernel/modules_disabled` 是 `0`，SELinux Permissive。
-* 与设备完全对应的**内核源码**，并已为外部模块 prepare 过。HTC 在 htcdev.com 发布；
-  6.0.1 这一版是 `m8ul-3.4.0-perf-ga6393e1.zip`。
-* 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 Windows 上的 MSYS2/Git Bash
-  （见 [Windows](#windows)）。
-* 备份。见文末的风险一节。
-
----
-
-## 快速开始
-
-```sh
-# 0. 前置检查
-adb shell id                                     # uid=0
-adb shell getenforce                             # Permissive
-adb shell cat /proc/sys/kernel/modules_disabled  # 0
-adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
-adb shell 'mount -t debugfs none /sys/kernel/debug'
-
-# 1. 先备份 pg1fs / board_info / mfg / radio / misc
-scripts/backup.sh
-
-# 2. 从手机读符号地址和 module_layout 的 crc
-scripts/gen_addr.sh
-
-# 3. 针对准备好的内核树编译三个模块
-scripts/build.sh /path/to/kernel-tree
-
-# 4. 先跑诊断版，确认链路正确（无副作用）
-adb push kmod/pwrsq_diag.ko /dev/
-adb shell 'dmesg -c >/dev/null; insmod /dev/pwrsq_diag.ko; dmesg | grep pwrsq'
-#    期望：rdev=... name=8941_l20 / consumer 'msm_sdcc.1' / mmc_host=...
-
-# 5. 停框架、sync，然后断电再上电
-adb shell 'stop; sleep 8; sync'
-scripts/powercycle.sh
-
-# 6. 确认写保护已消失，再写 flag
-adb push tools/mmc_cmd /dev/ && adb shell chmod 755 /dev/mmc_cmd
-adb shell '/dev/mmc_cmd wp'                      # 必须全 0
-scripts/write_flag.sh 0
-
-# 7. 从 bootloader 验证
-adb reboot bootloader && fastboot oem readsecureflag   # 应为 0
-```
-
-### 逐条说明与期望输出
-
-**前置检查。** `ls /sys/kernel/debug/regulator/8941_l20/` 应当列出
-`consumers enable force_disable mode msm_sdcc.1-vdd open_count use_count voltage`。
-如果没有 `insmod`，或 `modules_disabled` 是 1，就到此为止：需要一台能加载模块的 root ROM。
-
-**诊断。** 期望：
-
-```
-pwrsq: init stage=3
-pwrsq: rdev=f0326c00 name=8941_l20 use_count=4
-pwrsq: consumer 'msm_sdcc.1'
-pwrsq: mmc_host=f0032000
-pwrsq: done
-```
-
-`name=8941_l20` 说明稳压器找到了；`consumer 'msm_sdcc.1'` 加上非空的 `mmc_host` 说明
-重扫这条路能用。`Failed to create debugfs directory` 是无害的（重复的 consumer 目录）。
-卸载：`adb shell rmmod pwrsq_diag`。
-
-**让 eMMC 静下来。** 卡马上要断电，不能有人正在写。`adb shell stop` 停掉框架，adbd 属于
-class core 会留着；然后 `sync`。可选地把 `/data` 挂成只读：
-
-```sh
-adb shell 'for d in /mnt/runtime/*/emulated /data/media; do umount -l $d; done'
-adb shell 'mount -o remount,ro /data'
-```
-
-有些 ROM 把 `/su` 挂在 loop 上，这条会以 `Device or resource busy` 失败 —— 那就只保证
-框架停了、`sync` 跑过。`/data` 是 `errors=panic` 挂载的，断电期间任何一次写入都会 panic。
-
-**断电上电。** `scripts/powercycle.sh` 先把两个模块推到 `/dev`（tmpfs —— 卡一没，
-还在 `/data` 上的文件就读不到了），然后依次 `insmod` off 和 on。期望：
-
-```
---- power off / power on ---
-SEQ_DONE
---- result ---
- 179        2     121823 mmcblk0p2
-...
-pwrsq: ops->enable ret=0
-pwrsq: detect_change queued
-mmc0: mmc_reinit_card
-mmc0: mmc_reinit_card return 0
-```
-
-如果 `/proc/partitions` 里没有 `mmcblk0`，等几秒再 `insmod` 一次 `on`（stage 2 是幂等的）。
-还是不行就只能手动断电重启，见[故障处理](#故障处理)。
-
-**查写保护。** 循环之前 `mmc_cmd wp` 会把 group 0..11 列成 `power-on`，现在必须是：
-
-```
-bitmap: 00 00 00 00 00 00 00 00
-  -> no write protection at all
-```
-
-只要还有任何一组被列出来，就不要往下走。
-
-**写 flag。** `scripts/write_flag.sh 0`：
-
-```
-before:
- 03 00 00 00 48 54 43 55
-after:
- 00 00 00 00 48 54 43 55
-```
-
-脚本在回读之前做了 `dd` + `sync` + `drop_caches`，所以你看到的值来自卡，不是页缓存。
-这个区别很关键：写保护状态下 `dd` 也会"成功"，因为它只更新了缓存。
-
-**验证。**
-
-```
-$ fastboot oem readsecureflag
-(bootloader) secure_flag: 0
-$ fastboot getvar all | grep -Ei 'secure|misc'
-(bootloader) version-misc: PVT SHIP S-OFF
-(bootloader) security: off
-```
-
-回到 Android 再确认一次 hboot 不再设保护：
-
-```sh
-adb shell '/dev/mmc_cmd wp'
-# bitmap: 00 00 00 00 00 00 00 00
-```
-
-最后这一步才是真凭据：flag 之所以持久，是因为保护不再被设置，而不是因为每次开机有人去补。
 
 ---
 
