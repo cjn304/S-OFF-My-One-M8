@@ -369,7 +369,8 @@ scripts/stool.sh lock bootloader         # BL magic -> locked   (S-OFF, no token
 scripts/stool.sh unlock bootloader       # BL magic -> unlocked (S-OFF, no token)
 scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
 scripts/stool.sh noredtext --restore <hboot.img>
-scripts/stool.sh splash photo.png        # replace the first boot screen (1080x1920)
+scripts/stool.sh splash photo.png        # first boot screen, 1080x1920 by default
+scripts/stool.sh splash photo.png --size=1440x2560     # other panels
 scripts/stool.sh splash --restore <sp1.img>
 ```
 
@@ -432,9 +433,12 @@ Two things to know before running it:
   the only safe edit - there is no "draw function" with a patchable argument to
   find.
 
-`splash` converts a PNG into what the `sp1` partition actually holds: 1080x1920
-little-endian RGB565 in the first 4,147,200 bytes, the rest of the partition is
-padding.  The conversion is done by `scripts/png2rgb565.py`, pure standard
+`splash` converts a PNG into what the `sp1` partition actually holds: little-endian
+RGB565, 1080x1920 (4,147,200 bytes) unless `--size=WxH` says otherwise; the rest of
+the partition is padding.  The frame size is checked against the partition size
+before anything is written.
+
+The conversion is done by `scripts/png2rgb565.py`, pure standard
 library on purpose (a bare Windows box has no ffmpeg, no PIL, no ImageMagick).
 It takes non-interlaced 8-bit PNG in grey, grey+alpha, RGB, RGBA or palette and
 scales with bilinear filtering; anything else is rejected with a clear message
@@ -660,16 +664,16 @@ found, and writes nothing.
 
 So this tool would have to grow, in order of severity:
 
-1. `DEV` in `stool.sh` is a fixed path; it has to be discovered
-   (`ls -d /dev/block/*/by-name`).
-2. `struct regulator` re-copied per branch - 3.10 and 3.18 differ from 3.4 and
+1. `struct regulator` re-copied per branch - 3.10 and 3.18 differ from 3.4 and
    from each other.
-3. drvdata: newer kernels store `sdhci_pltfm_host` and expect
+2. drvdata: newer kernels store `sdhci_pltfm_host` and expect
    `pltfm_host->host`.
-4. `splash` is fixed at 1080x1920. `png2rgb565.py` already accepts
-   `--width/--height`; `stool.sh` does not pass them through yet.
-5. Every offset in the parameter table re-derived; only the pg1fs record is
+3. Every offset in the parameter table re-derived; only the pg1fs record is
    likely to keep its shape.
+
+Two items that used to be on this list are already gone: the by-name directory is
+probed for instead of assumed (`detect_dev` in `stool.sh`), and `splash
+--size=WxH` takes the panel geometry instead of hard-coding 1080x1920.
 
 And from the U11 on, HTC ships UFS 2.1 instead of eMMC. There is no `mmcblk0` and
 no CMD28/29/31 write-protect group, so the mechanism this tool is built on does

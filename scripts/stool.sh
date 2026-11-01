@@ -10,7 +10,7 @@
 #   stool.sh unlock bootloader     write the BL magic = unlocked (S-OFF only)
 #   stool.sh set <param> [value]    change one parameter (backs up first)
 #   stool.sh noredtext              blank the six "This build is for ..." lines in hboot
-#   stool.sh splash <image.png>     replace the first boot screen (sp1)
+#   stool.sh splash <image.png> [--size=WxH] [--fit=...]   first boot screen
 #   stool.sh splash --restore <f>   write a saved sp1 image back
 #
 #   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
@@ -32,7 +32,8 @@
 # Two commands touch partitions that are not part of that table:
 #
 #   noredtext hboot      (p26)  six NUL terminated lines, located at run time
-#   splash    sp1        (p12)  1080x1920 little-endian RGB565, first 4,147,200 bytes
+	#   splash    sp1        (p12)  little-endian RGB565, 1080x1920 unless
+	#                               --size=WxH says otherwise
 #
 # Both need S-OFF and a full backup; noredtext rewrites hboot, which is the only
 # way to brick this device.  It always dumps the 4 MB hboot partition first.
@@ -42,7 +43,7 @@ set -u
 
 VERSION=1.0
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-DEV=/dev/block/bootdevice/by-name
+DEV=
 BACKUP_DIR=${BACKUP_DIR:-$ROOT/backup}
 STOOL_TMP=$ROOT/.stool.tmp
 
@@ -124,6 +125,29 @@ require_android() {
 		die "no device found: check the cable and that adb debugging is on" ;;
 	esac
 	detect_root || die "adb shell is neither root nor able to run su - check Magisk/TWRP"
+	detect_dev || die "no by-name directory containing pg1fs (looked in bootdevice, by-name and platform/*)"
+}
+
+# The by-name directory moved between SoCs and Android releases:
+#   m8    /dev/block/bootdevice/by-name
+#   pme   /dev/block/platform/soc/7464900.sdhci/by-name
+# probe for a directory that actually contains pg1fs instead of assuming.
+detect_dev() {
+	[ -n "$DEV" ] && return 0
+	for c in /dev/block/bootdevice/by-name /dev/block/by-name; do
+		if devsh "test -e $c/pg1fs && echo ok" 2>/dev/null | tr -d '\r' | grep -qx ok; then
+			DEV=$c
+			return 0
+		fi
+	done
+	for c in $(devsh "ls -d /dev/block/platform/*/by-name /dev/block/platform/*/*/by-name 2>/dev/null" |
+		tr -d '\r'); do
+		if devsh "test -e $c/pg1fs && echo ok" 2>/dev/null | tr -d '\r' | grep -qx ok; then
+			DEV=$c
+			return 0
+		fi
+	done
+	return 1
 }
 
 wait_fastboot() {
@@ -148,6 +172,7 @@ wait_android() {
 # ---------------------------------------------------------------- byte access
 
 hex_at() { # part offset len -> lowercase hex, no separators
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing pg1fs"
 	# dd on the device wants decimal; callers may pass 0x...
 	off=$(( $2 ))
 	devsh "dd if=$DEV/$1 bs=1 skip=$off count=$3 2>/dev/null" |
@@ -176,6 +201,7 @@ le32()     { "$PY" -c 'import sys,binascii;print(int.from_bytes(binascii.unhexli
 u32hex()   { "$PY" -c 'import sys,struct;print(struct.pack("<I",int(sys.argv[1])).hex())' "$1"; }
 
 write_hex() { # part offset hexstring
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing pg1fs"
 	part=$1; off=$(( $2 )); hx=$3
 	n=$(( ${#hx} / 2 ))
 	"$PY" - "$hx" > "$STOOL_TMP" <<'EOF'
@@ -196,6 +222,7 @@ verify_hex() { # part offset hexstring -> 0 if the card returns the same bytes
 }
 
 dump_part() { # part dest-file  (whole partition, pulled to the PC)
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing pg1fs"
 	# The double slash is for Git Bash: a single leading /data/... gets
 	# rewritten into a Windows path before adb ever sees it.
 	devsh "dd if=$DEV/$1 of=/data/local/tmp/stool_$1.img bs=4096" >/dev/null 2>&1
@@ -233,6 +260,11 @@ print_state() {
 	android)
 		if ! detect_root; then
 			say "S state : unknown (no root - TWRP, adb root or Magisk su needed)"
+			return 0
+		fi
+		if ! detect_dev; then
+			say "S state : unknown (no by-name directory contains pg1fs -"
+			say "          this looks like a device this tool does not cover)"
 			return 0
 		fi
 		st=$(secure_state)
@@ -327,6 +359,8 @@ cmd_status() {
 		printf '%-9s %s\n' "BL lock" "$blv"
 		return 0
 	fi
+	# print_state already explained why it could not read anything
+	detect_root && detect_dev || return 0
 	require_android
 	say ""
 	say "== parameters =="
@@ -599,6 +633,7 @@ cmd_restore() {
 winpath() { cygpath -w "$1" 2>/dev/null || printf '%s' "$1"; }
 
 flash_part() { # part src-file  (write a whole image, used by the --restore paths)
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing pg1fs"
 	say "writing $(wc -c < "$2" | tr -d ' ') bytes to $1"
 	"$ADB" push "$2" //data/local/tmp/stool_flash.img >/dev/null 2>&1 || die "adb push failed"
 	devsh "dd if=/data/local/tmp/stool_flash.img of=$DEV/$1 bs=4096 2>&1 | tail -2" >&2
@@ -686,19 +721,40 @@ cmd_splash() {
 	fi
 
 	img=${1:-}
-	[ -n "$img" ] || die "usage: stool.sh splash <image.png> [--fit=cover|stretch]   or   stool.sh splash --restore <sp1.img>"
+	[ -n "$img" ] || die "usage: stool.sh splash <image.png> [--size=WxH] [--fit=cover|stretch]   or   stool.sh splash --restore <sp1.img>"
 	[ -f "$img" ] || die "no such file: $img"
 	shift
-	fitarg="$*"
+	# --size is ours; everything else goes to the converter
+	size=1080x1920
+	fitarg=
+	for a in "$@"; do
+		case $a in
+		--size=*) size=${a#--size=} ;;
+		*)        fitarg="$fitarg $a" ;;
+		esac
+	done
+	w=${size%x*}
+	h=${size#*x}
+	case "${w}${h}" in
+	''|*[!0-9]*) die "bad --size '$size', expected --size=WxH" ;;
+	esac
+	exp=$((w * h * 2))
+	say "size   : ${w}x${h} -> $exp bytes per frame"
 	require_android
 
 	say "== convert =="
 	raw=$STOOL_TMP.splash
-	"$PY" "$(winpath "$ROOT/scripts/png2rgb565.py")" "$(winpath "$img")" "$(winpath "$raw")" $fitarg ||
+	"$PY" "$(winpath "$ROOT/scripts/png2rgb565.py")" "$(winpath "$img")" "$(winpath "$raw")" \
+		--width="$w" --height="$h" $fitarg ||
 		die "conversion failed - PNG only, see the message above"
 	sz=$(wc -c < "$raw" | tr -d ' ')
 	say "raw    : $sz bytes"
-	[ "$sz" = 4147200 ] || die "converted image is $sz bytes, expected 4147200"
+	[ "$sz" = "$exp" ] || die "converted image is $sz bytes, expected $exp"
+	# check before dumping 10 MB of partition that we cannot use anyway
+	psz=$(devsh "blockdev --getsize64 $DEV/sp1 2>/dev/null" | tr -d '\r')
+	if [ -n "$psz" ] && [ "$exp" -gt "$psz" ]; then
+		die "a ${w}x${h} frame is $exp bytes but sp1 is only $psz bytes"
+	fi
 
 	say ""
 	say "== backup =="
@@ -718,14 +774,15 @@ cmd_splash() {
 
 	say ""
 	say "== verify =="
-	devsh "dd if=$DEV/sp1 of=/data/local/tmp/stool_chk.img bs=4096 count=1013" >/dev/null 2>&1
+	cnt=$(( (exp + 4095) / 4096 ))
+	devsh "dd if=$DEV/sp1 of=/data/local/tmp/stool_chk.img bs=4096 count=$cnt" >/dev/null 2>&1
 	devsh "chmod 644 /data/local/tmp/stool_chk.img" >/dev/null 2>&1
 	"$ADB" pull "//data/local/tmp/stool_chk.img" "$STOOL_TMP.chk" >/dev/null 2>&1
 	devsh "rm -f /data/local/tmp/stool_chk.img" >/dev/null 2>&1
 	[ -s "$STOOL_TMP.chk" ] || die "could not read sp1 back"
 
-	a=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(4147200)).hexdigest())" "$(winpath "$raw")")
-	b=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(4147200)).hexdigest())" "$(winpath "$STOOL_TMP.chk")")
+	a=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(int(sys.argv[2]))).hexdigest())" "$(winpath "$raw")" "$exp")
+	b=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(int(sys.argv[2]))).hexdigest())" "$(winpath "$STOOL_TMP.chk")" "$exp")
 	rm -f "$STOOL_TMP.chk" "$raw"
 	[ "$a" = "$b" ] || die "read-back mismatch: wrote $a, read $b"
 	say "  md5 $a  ok"
@@ -756,8 +813,8 @@ stool.sh $VERSION - HTC One (M8) S-OFF control tool
   stool.sh unlock bootloader       write the BL magic = unlocked (S-OFF only)
   stool.sh noredtext               blank the six "This build is for ..." lines
   stool.sh noredtext --restore <hboot.img>
-  stool.sh splash <image.png> [--fit=cover|stretch]
-                                   replace the first boot screen (1080x1920)
+  stool.sh splash <image.png> [--size=WxH] [--fit=cover|stretch]
+                                   replace the first boot screen (default 1080x1920)
   stool.sh splash --restore <sp1.img>
 
 Every command starts by reading the current S state.  Anything that writes

@@ -337,7 +337,8 @@ scripts/stool.sh lock bootloader         # BL magic -> 锁定（S-OFF，不需�
 scripts/stool.sh unlock bootloader       # BL magic -> 解锁（S-OFF，不需要 token）
 scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
 scripts/stool.sh noredtext --restore <hboot.img>
-scripts/stool.sh splash photo.png        # 换开机第一屏（1080x1920）
+scripts/stool.sh splash photo.png        # 换开机第一屏，默认 1080x1920
+scripts/stool.sh splash photo.png --size=1440x2560     # 其它分辨率的屏
 scripts/stool.sh splash --restore <sp1.img>
 ```
 
@@ -394,8 +395,11 @@ dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回�
   扫过，一个都没有。说明横幅是运行期装配的，所以改字符串本身是唯一安全的最小
   改动，不存在"参数可改的绘制函数"可找。
 
-`splash` 把 PNG 转成 `sp1` 分区真正的格式：前 4,147,200 字节是 1080x1920 小端
-RGB565，分区其余部分是填充。转换由 `scripts/png2rgb565.py` 完成，刻意只用标准
+`splash` 把 PNG 转成 `sp1` 分区真正的格式：小端 RGB565，默认 1080x1920
+（4,147,200 字节），`--size=WxH` 可以改成其它尺寸；分区其余部分是填充。写之前会先
+拿帧大小和分区大小比一遍，装不下就直接停。
+
+转换由 `scripts/png2rgb565.py` 完成，刻意只用标准
 库——精简的 Windows 环境里没有 ffmpeg、没有 PIL、没有 ImageMagick。支持非隔行
 8 位 PNG 的灰度、灰度+alpha、RGB、RGBA 和调色板，缩放用双线性；其它格式会明确
 报错而不是生成一张错图（JPG 也一样，先另存成 PNG）。
@@ -598,13 +602,12 @@ consumer 和找到的 mmc_host，且不写任何东西。
 
 所以本工具要往上长，按严重程度排：
 
-1. `stool.sh` 里的 `DEV` 是写死的路径，必须改成自动探测
-   （`ls -d /dev/block/*/by-name`）。
-2. `struct regulator` 按分支重新抄 —— 3.10 和 3.18 跟 3.4 都不一样，彼此之间也不一样。
-3. drvdata：新内核存 `sdhci_pltfm_host`，要取 `pltfm_host->host`。
-4. `splash` 写死 1080x1920。`png2rgb565.py` 本来就支持 `--width/--height`，只是
-   `stool.sh` 还没把参数透传下去。
-5. 参数表里每个偏移重新定位；只有 pg1fs 那条记录的形状大概能保持不变。
+1. `struct regulator` 按分支重新抄 —— 3.10 和 3.18 跟 3.4 都不一样，彼此之间也不一样。
+2. drvdata：新内核存 `sdhci_pltfm_host`，要取 `pltfm_host->host`。
+3. 参数表里每个偏移重新定位；只有 pg1fs 那条记录的形状大概能保持不变。
+
+原来列在这里的另外两项已经消掉了：by-name 目录改成自动探测（`stool.sh` 的
+`detect_dev`），`splash --size=WxH` 直接接收屏幕尺寸，不再假设 1080x1920。
 
 另外从 U11 这一代起，HTC 改用 UFS 2.1 而不是 eMMC。没有 `mmcblk0`，也没有
 CMD28/29/31 那套写保护组，所以不管其余部分移植多少，本工具赖以成立的机制在那些机器上
