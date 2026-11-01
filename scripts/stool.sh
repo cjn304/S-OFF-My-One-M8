@@ -44,7 +44,7 @@ VERSION=1.0
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DEV=/dev/block/bootdevice/by-name
 BACKUP_DIR=${BACKUP_DIR:-$ROOT/backup}
-TMP=$ROOT/.stool.tmp
+STOOL_TMP=$ROOT/.stool.tmp
 
 OFF_CID=20            # 0x0014
 OFF_MID=16384         # 0x4000
@@ -75,8 +75,17 @@ PY=${PY:-$(find_tool python3 python || true)}
 [ -n "$PY" ] || die "python3 is required"
 
 device_mode() {
-	if "$ADB" get-state 2>/dev/null | tr -d '\r' | grep -qx device; then
-		printf android; return
+	# adb devices both starts the server and waits for it, unlike get-state which
+	# fails immediately when the server is not up yet ("cannot connect to daemon").
+	i=0
+	while [ $i -lt 3 ]; do
+		if "$ADB" devices 2>/dev/null | tr -d '\r' | grep -qE '[[:space:]]device$'; then
+			printf android; return
+		fi
+		sleep 1; i=$((i + 1))
+	done
+	if "$FB" devices 2>/dev/null | grep -q fastboot; then
+		printf fastboot; return
 	fi
 	if "$FB" devices 2>/dev/null | grep -q fastboot; then
 		printf fastboot; return
@@ -107,9 +116,14 @@ devsh() { # run one command on the device as root; $1 must not contain single qu
 }
 
 require_android() {
-	[ "$(device_mode)" = android ] ||
-		die "device must be booted into Android (or TWRP) over adb"
-	detect_root || die "adb shell is neither root nor able to run su"
+	case "$(device_mode)" in
+	android) ;;
+	fastboot)
+		die "device is sitting in the bootloader - run 'fastboot reboot' first (or use a fastboot path)" ;;
+	*)
+		die "no device found: check the cable and that adb debugging is on" ;;
+	esac
+	detect_root || die "adb shell is neither root nor able to run su - check Magisk/TWRP"
 }
 
 wait_fastboot() {
@@ -164,15 +178,15 @@ u32hex()   { "$PY" -c 'import sys,struct;print(struct.pack("<I",int(sys.argv[1])
 write_hex() { # part offset hexstring
 	part=$1; off=$(( $2 )); hx=$3
 	n=$(( ${#hx} / 2 ))
-	"$PY" - "$hx" > "$TMP" <<'EOF'
+	"$PY" - "$hx" > "$STOOL_TMP" <<'EOF'
 import sys, binascii
 sys.stdout.buffer.write(binascii.unhexlify(sys.argv[1]))
 EOF
-	"$ADB" push "$TMP" /data/local/tmp/stool.bin >/dev/null 2>&1 || die "adb push failed"
+	"$ADB" push "$STOOL_TMP" //data/local/tmp/stool.bin >/dev/null 2>&1 || die "adb push failed"
 	devsh "dd if=/data/local/tmp/stool.bin of=$DEV/$part bs=1 seek=$off count=$n 2>&1 | tail -1" >&2
 	devsh "rm -f /data/local/tmp/stool.bin" >/dev/null 2>&1
 	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
-	rm -f "$TMP"
+	rm -f "$STOOL_TMP"
 }
 
 verify_hex() { # part offset hexstring -> 0 if the card returns the same bytes
@@ -323,7 +337,7 @@ cmd_status() {
 	printf '%-9s %-12s %s\n' secure   "$(p_secure)"  "pg1fs p2 @ 0x8400"
 	printf '%-9s %-12s %s\n' "BL lock" "$(bl_state)" "pg1fs p2 @ 0x8404"
 	say ""
-	printf '%-9s %s\n' modules  "$("$ADB" shell cat /proc/sys/kernel/modules_disabled 2>/dev/null | tr -d '\r') (0 = allowed)"
+	printf '%-9s %s\n' modules  "$(devsh "cat /proc/sys/kernel/modules_disabled 2>/dev/null" | tr -d '\r') (0 = allowed)"
 	printf '%-9s %s\n' selinux  "$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')"
 }
 
@@ -437,13 +451,13 @@ cmd_bl() { # locked | unlocked
 push_module() { # diag|off|on
 	src=$ROOT/kmod/pwrsq_$1.ko
 	[ -f "$src" ] || die "missing $src - build first (scripts/build.sh)"
-	"$ADB" push "$src" "/dev/pwrsq_$1.ko" >/dev/null || die "adb push failed"
+	"$ADB" push "$src" "//dev/pwrsq_$1.ko" >/dev/null || die "adb push failed"
 }
 
 check_write_protection() {
 	bin=$ROOT/tools/mmc_cmd
 	[ -x "$bin" ] || { warn "tools/mmc_cmd not built - skipping the write-protection check"; return 0; }
-	"$ADB" push "$bin" /dev/mmc_cmd >/dev/null 2>&1
+	"$ADB" push "$bin" //dev/mmc_cmd >/dev/null 2>&1
 	"$ADB" shell 'chmod 755 /dev/mmc_cmd'
 	out=$("$ADB" shell '/dev/mmc_cmd wp' 2>&1 | tr -d '\r')
 	printf '%s\n' "$out" | sed 's/^/  /'
@@ -457,7 +471,7 @@ cmd_soff() {
 	print_state
 	[ "$(secure_state)" = off ] && { say ""; say "already S-OFF, nothing to do"; return 0; }
 
-	[ "$("$ADB" shell cat /proc/sys/kernel/modules_disabled 2>/dev/null | tr -d '\r')" = 0 ] ||
+	[ "$(devsh "cat /proc/sys/kernel/modules_disabled 2>/dev/null" | tr -d '\r')" = 0 ] ||
 		die "module loading is disabled on this kernel"
 	[ "$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')" = Permissive ] ||
 		warn "SELinux is not permissive - loading the module may be denied"
@@ -559,7 +573,7 @@ cmd_restore() {
 	say ""
 	say "== restoring $f =="
 
-	grep '^raw:' "$f" > "$TMP.list"
+	grep '^raw:' "$f" > "$STOOL_TMP.list"
 	while IFS= read -r line; do
 		key=${line%%=*}
 		val=${line#*=}
@@ -573,8 +587,8 @@ cmd_restore() {
 		say "  $part @ $off = $val"
 		write_hex "$part" "$off" "$val"
 		verify_hex "$part" "$off" "$val"
-	done < "$TMP.list"
-	rm -f "$TMP.list"
+	done < "$STOOL_TMP.list"
+	rm -f "$STOOL_TMP.list"
 
 	say ""
 	say "done - values from the snapshot are back on the card"
@@ -586,7 +600,7 @@ winpath() { cygpath -w "$1" 2>/dev/null || printf '%s' "$1"; }
 
 flash_part() { # part src-file  (write a whole image, used by the --restore paths)
 	say "writing $(wc -c < "$2" | tr -d ' ') bytes to $1"
-	"$ADB" push "$2" /data/local/tmp/stool_flash.img >/dev/null 2>&1 || die "adb push failed"
+	"$ADB" push "$2" //data/local/tmp/stool_flash.img >/dev/null 2>&1 || die "adb push failed"
 	devsh "dd if=/data/local/tmp/stool_flash.img of=$DEV/$1 bs=4096 2>&1 | tail -2" >&2
 	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
 	devsh "rm -f /data/local/tmp/stool_flash.img" >/dev/null 2>&1
@@ -633,20 +647,20 @@ cmd_noredtext() {
 
 	say ""
 	say "== patch =="
-	printf '\000' > "$TMP.zero"
-	printf '#!/system/bin/sh\n' > "$TMP.nr.sh"
+	printf '\000' > "$STOOL_TMP.zero"
+	printf '#!/system/bin/sh\n' > "$STOOL_TMP.nr.sh"
 	for o in $offs; do
 		printf 'dd if=/data/local/tmp/stool_zero.bin of=%s/hboot bs=1 seek=%s count=1 || exit 1\n' \
-			"$DEV" "$o" >> "$TMP.nr.sh"
+			"$DEV" "$o" >> "$STOOL_TMP.nr.sh"
 	done
-	printf 'sync\n' >> "$TMP.nr.sh"
+	printf 'sync\n' >> "$STOOL_TMP.nr.sh"
 
-	"$ADB" push "$TMP.zero"  /data/local/tmp/stool_zero.bin >/dev/null 2>&1 || die "adb push failed"
-	"$ADB" push "$TMP.nr.sh" /data/local/tmp/stool_nr.sh   >/dev/null 2>&1 || die "adb push failed"
+	"$ADB" push "$STOOL_TMP.zero"  //data/local/tmp/stool_zero.bin >/dev/null 2>&1 || die "adb push failed"
+	"$ADB" push "$STOOL_TMP.nr.sh" //data/local/tmp/stool_nr.sh   >/dev/null 2>&1 || die "adb push failed"
 	devsh "sh /data/local/tmp/stool_nr.sh" >&2
 	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
 	devsh "rm -f /data/local/tmp/stool_zero.bin /data/local/tmp/stool_nr.sh" >/dev/null 2>&1
-	rm -f "$TMP.zero" "$TMP.nr.sh"
+	rm -f "$STOOL_TMP.zero" "$STOOL_TMP.nr.sh"
 
 	say ""
 	say "== verify =="
@@ -679,7 +693,7 @@ cmd_splash() {
 	require_android
 
 	say "== convert =="
-	raw=$TMP.splash
+	raw=$STOOL_TMP.splash
 	"$PY" "$(winpath "$ROOT/scripts/png2rgb565.py")" "$(winpath "$img")" "$(winpath "$raw")" $fitarg ||
 		die "conversion failed - PNG only, see the message above"
 	sz=$(wc -c < "$raw" | tr -d ' ')
@@ -697,7 +711,7 @@ cmd_splash() {
 
 	say ""
 	say "== write =="
-	"$ADB" push "$raw" /data/local/tmp/stool_splash.raw >/dev/null 2>&1 || die "adb push failed"
+	"$ADB" push "$raw" //data/local/tmp/stool_splash.raw >/dev/null 2>&1 || die "adb push failed"
 	devsh "dd if=/data/local/tmp/stool_splash.raw of=$DEV/sp1 bs=4096 2>&1 | tail -2" >&2
 	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
 	devsh "rm -f /data/local/tmp/stool_splash.raw" >/dev/null 2>&1
@@ -706,13 +720,13 @@ cmd_splash() {
 	say "== verify =="
 	devsh "dd if=$DEV/sp1 of=/data/local/tmp/stool_chk.img bs=4096 count=1013" >/dev/null 2>&1
 	devsh "chmod 644 /data/local/tmp/stool_chk.img" >/dev/null 2>&1
-	"$ADB" pull "//data/local/tmp/stool_chk.img" "$TMP.chk" >/dev/null 2>&1
+	"$ADB" pull "//data/local/tmp/stool_chk.img" "$STOOL_TMP.chk" >/dev/null 2>&1
 	devsh "rm -f /data/local/tmp/stool_chk.img" >/dev/null 2>&1
-	[ -s "$TMP.chk" ] || die "could not read sp1 back"
+	[ -s "$STOOL_TMP.chk" ] || die "could not read sp1 back"
 
 	a=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(4147200)).hexdigest())" "$(winpath "$raw")")
-	b=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(4147200)).hexdigest())" "$(winpath "$TMP.chk")")
-	rm -f "$TMP.chk" "$raw"
+	b=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(4147200)).hexdigest())" "$(winpath "$STOOL_TMP.chk")")
+	rm -f "$STOOL_TMP.chk" "$raw"
 	[ "$a" = "$b" ] || die "read-back mismatch: wrote $a, read $b"
 	say "  md5 $a  ok"
 
