@@ -22,7 +22,7 @@ echo "backing up to $OUT"
 for part in pg1fs board_info mfg radio misc; do
 	printf '  %-11s ' "$part"
 	$ADB shell "dd if=/dev/block/bootdevice/by-name/$part of=/data/local/tmp/$part.img bs=1048576" >/dev/null 2>&1
-	$ADB pull "/data/local/tmp/$part.img" "$OUT/$part.img" >/dev/null 2>&1
+	$ADB pull "//data/local/tmp/$part.img" "$OUT/$part.img" >/dev/null 2>&1
 	$ADB shell "rm -f /data/local/tmp/$part.img" >/dev/null 2>&1
 	echo "$(wc -c < "$OUT/$part.img") bytes"
 done

@@ -42,7 +42,7 @@ sym() {
 
 if [ -z "$KO" ]; then
 	KO="$TMP/stock.ko"
-	$ADB pull /system/lib/modules/ansi_cprng.ko "$KO" >/dev/null 2>&1 || true
+	$ADB pull //system/lib/modules/ansi_cprng.ko "$KO" >/dev/null 2>&1 || true
 fi
 [ -s "$KO" ] || { echo "need a stock .ko to read module_layout crc" >&2; exit 1; }
 CRC=$("$PY" "$ROOT/scripts/get_module_layout_crc.py" "$KO")

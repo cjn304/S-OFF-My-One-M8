@@ -18,7 +18,7 @@ for m in diag off on; do
 		echo "kmod/pwrsq_$m.ko missing - build first" >&2
 		exit 1
 	}
-	$ADB push "$ROOT/kmod/pwrsq_$m.ko" "/dev/pwrsq_$m.ko" >/dev/null
+	$ADB push "$ROOT/kmod/pwrsq_$m.ko" "//dev/pwrsq_$m.ko" >/dev/null
 done
 
 echo "--- diagnostic ---"

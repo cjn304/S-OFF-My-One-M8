@@ -11,7 +11,7 @@ power cycle of the card. Every userspace route to cycle that rail is blocked, so
 the cycle is done from kernel context with a small module that calls the PMIC
 regulator ops directly, followed by writing the one byte hboot reads.
 
-Tested on the HTC One (M8), hboot 3.19.0.0000.
+Tested on the HTC One (M8), hboot 3.19.0.0000 (other devices: see Porting).
 
 ```
 before                          after
@@ -40,9 +40,14 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   <- hboot stops arming 
 
 ## Quick start
 
+The commands below assume `adb shell` is already root (`adb root`, a userdebug
+ROM, or TWRP). On a Magisk-rooted stock ROM it is not: wrap each device command
+in `su -c`, e.g. `adb shell 'su -c "insmod /dev/pwrsq_diag.ko"'`, or run
+`scripts/stool.sh soff`, which detects root and does the wrapping itself.
+
 ```sh
 # 0. pre-flight
-adb shell id                                     # uid=0
+adb shell id                                     # uid=0, else see the note above
 adb shell getenforce                             # Permissive
 adb shell cat /proc/sys/kernel/modules_disabled  # 0
 adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
@@ -67,6 +72,7 @@ adb shell 'stop; sleep 8; sync'
 scripts/powercycle.sh
 
 # 6. confirm the write protection is gone, then set the flag
+make -C tools CROSS=arm-none-linux-gnueabihf-    # if not built yet
 adb push tools/mmc_cmd /dev/ && adb shell chmod 755 /dev/mmc_cmd
 adb shell '/dev/mmc_cmd wp'                      # expect all zeroes
 scripts/write_flag.sh 0
@@ -173,24 +179,6 @@ Why this is the real proof: [section 5](#5-why-it-stays-off).
 
 ---
 
-## Device support
-
-| item | verified value |
-|---|---|
-| device | HTC One (M8), `m8_ul` |
-| MID / CID | `0P6B62000` / `HTCCN703` |
-| firmware | 6.31.1402.1, Android 6.0.1 (MMB29M) |
-| kernel | `3.4.0-perf-ga6393e1` (stock HTC, Jan 2016) |
-| hboot | `3.19.0.0000` |
-| privileges | adbd as root, SELinux permissive, `modules_disabled=0` |
-
-Other M8 variants on a stock 3.4 kernel should behave the same way. Two things
-are per-build and must be regenerated: the symbol addresses and the
-`module_layout` crc (see [Building](#building)). The regulator name and MMC
-platform device are compile-time parameters in `kmod/pwrsq_impl.h`.
-
----
-
 ## How it works
 
 ### 1. The wall
@@ -216,8 +204,8 @@ firmware groups. `CMD31` (SEND_WRITE_PROT_TYPE) reports 2 bits per group:
 A stock, booted M8 answers:
 
 ```
-CMD31 -> 0000000000000000 aaaaaaaa2aaaaaaa
-                            groups 0..11 = 10b = power-on
+CMD31 -> aaaaaaaa2aaaaaaa
+         8 bytes, 2 bits per group; 10b = power-on
 ```
 
 Power-on protection is only cleared by a power cycle. `CMD29`
@@ -590,22 +578,51 @@ nm -u kmod/pwrsq_on.ko                           # prints nothing
 `__versions` must contain exactly one entry (`module_layout`). If it is empty,
 the module was built without `addr.h` or the struct was optimised away.
 
+`build.sh` does not build the userspace helper; `tools/mmc_cmd` is not committed
+either, it is a static ARM binary:
+
+```sh
+make -C tools CROSS=arm-none-linux-gnueabihf-
+```
+
+Push it to `/dev` (tmpfs) and run it as root, as in [Quick start](#quick-start).
+
 ### 7. Porting
 
-Two things must match, and they fail independently: the kernel side (struct
-layouts, symbol addresses) and the model side (rail name, device name, offsets,
-partition names). Devices fall into four tiers.
+The reference build is:
+
+| item | value |
+|---|---|
+| device | HTC One (M8), `m8_ul` |
+| MID / CID as shipped | `0P6B62000` / `HTCCN703` |
+| firmware tested | 6.31.1402.1, then 6.12.1540.4 (both Android 6.0.1) |
+| kernel | `3.4.0-perf-ga6393e1` (Jan 2016) / `3.4.0-perf-g708019f` (Nov 2015) |
+| hboot | `3.19.0.0000` |
+| root | Magisk 20.1 (`su`), SELinux permissive, `modules_disabled=0` |
+
+MID and CID are the values the phone shipped with; the reference unit was later
+switched to `0P6B12000` / `11111111` and re-flashed with the Dev firmware, which
+is why both builds appear above.
+
+Two things have to match when moving to another device, and they fail
+independently: the kernel side (struct layouts, symbol addresses) and the model
+side (rail name, device name, offsets, partition names). The regulator name and
+MMC platform device are compile-time parameters in `kmod/pwrsq_impl.h`. Devices
+fall into four tiers.
 
 | tier | devices | work required |
 |---|---|---|
-| **A** verified | `m8_ul` on 6.31.1402.1 (`ga6393e1`) and 6.12.1540.4 (`g708019f`) | none |
-| **B** same generation | other M8 variants, E8 / Butterfly 2 / mini 2 off the same HTC 3.4 tree | `addr.h` + `module_layout` crc |
+| **A** verified | `m8_ul` on 6.31.1402.1 (`ga6393e1`) and 6.12.1540.4 (`g708019f`) | rebuild only: `addr.h` + crc |
+| **B** same generation | other M8 variants, E8 / Butterfly 2 / mini 2 off the same HTC 3.4 tree | verify board strings, then `addr.h` + `module_layout` crc |
 | **C** same era, new driver layer | M7 (msm8960), M9 (msm8994, 3.10), Desire (msm8x26 / msm8x10) | structs, rail, offsets |
 | **D** HTC 10 and later | `pme` and everything after it | see below |
 
-**A. Verified.** Both firmware branches of the same phone, four months apart in
-HTC's build server. Only `addr.h` and the `module_layout` crc differ between
-them, which is exactly what `scripts/gen_addr.sh` regenerates.
+**A. Verified.** S-OFF was run end to end on both builds of the same phone, two
+months apart on HTC's build server (`g708019f` is Nov 2015, `ga6393e1` is Jan
+2016). Only `addr.h` and the `module_layout` crc differ between them, which is
+exactly what `scripts/gen_addr.sh` regenerates; no source change was needed. The
+parameter commands (`noredtext`, `splash`) were exercised on 6.12.1540.4, and
+hboot dumps of both builds were used to confirm the red-text offsets move.
 
 **B. Same generation.** The mechanism, the structures and the record layout all
 hold; what has to be re-checked is only what is spelled out per board:
@@ -686,22 +703,26 @@ Use one of:
   distro, and USB needs `usbipd`.
 * **Cygwin** — untested.
 
-Three things bite on Windows:
+Four things bite on Windows:
 
 1. **Line endings.** A script saved with CRLF dies with
    `$'\r': command not found`. The repo pins `*.sh text eol=lf` in
    `.gitattributes`, so a fresh clone is fine; if you copy files around, run
    `sed -i 's/\r$//'`.
-2. **Paths.** Git Bash understands `/d/...`; kbuild does not accept `D:/...` as
-   `M=` because the colon looks like a make target separator. Pass MSYS paths to
-   `scripts/build.sh`.
-3. **PATH.** `adb`, `make` and `python3` must be visible from that shell. Git
+2. **Device paths.** MSYS rewrites absolute paths before `adb` sees them:
+   `adb push x /data/local/tmp/x` arrives as
+   `C:/Program Files/Git/data/local/tmp/x`. Prefix device paths with `//`
+   (`//data/local/tmp/x`) to keep them literal; the scripts in this repo do.
+3. **Host paths.** Git Bash understands `/d/...`; kbuild does not accept
+   `D:/...` as `M=` because the colon looks like a make target separator. Pass
+   MSYS paths to `scripts/build.sh`.
+4. **PATH.** `adb`, `make` and `python3` must be visible from that shell. Git
    Bash does not bundle `make`; install MSYS2 or add it to `PATH`.
 
-Toolchain actually used here: Git Bash (WorkBuddy bundle), GNU Make 4.4.1 from
-MSYS2, Python 3.13, adb 1.0.41, `arm-none-linux-gnueabihf-gcc` 13.3.1 (MinGW
-host build). The steps in this README were executed as the equivalent raw
-commands; `scripts/gen_addr.sh` was additionally run end-to-end.
+Toolchain actually used here: Git Bash, GNU Make 4.4.1 from MSYS2, Python 3.13,
+adb 1.0.41, `arm-none-linux-gnueabihf-gcc` 13.3.1 (MinGW host build). The steps
+in this README were executed as the equivalent raw commands;
+`scripts/gen_addr.sh` was additionally run end-to-end.
 
 ---
 
@@ -724,7 +745,7 @@ $ fastboot oem readsecureflag
 (bootloader) secure_flag: 3
 
 $ mmc_cmd wp
-bitmap: aa aa aa aa 2a aa aa aa      -> groups 0..11 power-on
+bitmap: aa aa aa aa 2a aa aa aa      -> 10b = power-on
 ```
 
 **During the power cycle**
@@ -824,9 +845,9 @@ Restoring `pg1fs.img` puts `0x8400` back to `03` — i.e. S-ON.
 
 **Do not**
 
-* **`fastboot flash` a firmware partition.** hboot verifies signatures on every
-  one of them and refuses — that is the behaviour this tool works around, and
-  also what protects you from a bad image.
+* **`fastboot flash` a firmware partition.** On an S-ON device hboot verifies
+  signatures on every one of them and refuses — that is the behaviour this tool
+  works around, and also what protects you from a bad image.
 * **Write anything in `pg1fs` other than `0x8400`.** The header at `0x400`
   describes three records (`security`, `simlock`, `simunlock`); the 4 bytes at
   `0x424`/`0x824`/`0xc24` are device-specific and were left untouched here on
@@ -838,7 +859,8 @@ Restoring `pg1fs.img` puts `0x8400` back to `03` — i.e. S-ON.
 power). If hboot comes up, `fastboot getvar all`: still S-ON means nothing was
 modified and a normal ROM flash recovers you; S-OFF with a dead Android can be
 fixed with any matching RUU. If hboot does not come up, the problem is not in
-`pg1fs` — this procedure never touches `hboot`, `sbl1` or `tz`.
+`pg1fs` — the S-OFF procedure never touches `hboot`, `sbl1` or `tz`.
+`noredtext` is the one command that writes `hboot`, and it keeps a dump.
 
 ---
 
@@ -863,21 +885,12 @@ ever replaced it.
   cycled by hand. Nothing is lost, but you need physical access.
 * `scripts/backup.sh` exists because "should not happen" is not a recovery plan.
   Keep the images on a PC, not on the phone.
-* Writing `pg1fs` is the point of the tool and the only irreversible step.
-  `0x8400`: `00` = S-OFF, `03` = S-ON. Do not touch anything else.
+* Writing `0x8400` is the last step and the only one that flips S-ON/S-OFF:
+  `00` = S-OFF, `03` = S-ON, and it can be written back. What cannot be undone
+  in place is a modified `hboot` (`noredtext`) — put the dumped image back
+  before returning to S-ON.
 
 No warranty. If you brick it, you own both halves.
-
----
-
-## Repository layout
-
-```
-kmod/              the power-cycle module (three build variants + addr.h)
-tools/             mmc_cmd: CMD31 write-protection query
-scripts/           stool.sh control tool, backup, address generation, build, power cycle
-kernel-patches/    fixes needed to build a 3.4 tree with a modern toolchain
-```
 
 ---
 

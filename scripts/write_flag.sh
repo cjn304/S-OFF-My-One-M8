@@ -25,7 +25,7 @@ echo "before:"
 $ADB shell "dd if=$DEV bs=1 skip=$OFF count=8 2>/dev/null | od -An -tx1"
 
 printf "$BIN" > /tmp/flag.bin
-$ADB push /tmp/flag.bin /dev/flag.bin >/dev/null
+$ADB push /tmp/flag.bin //dev/flag.bin >/dev/null
 $ADB shell "dd if=/dev/flag.bin of=$DEV bs=1 seek=$OFF count=1; sync; echo 3 > /proc/sys/vm/drop_caches"
 $ADB shell "rm -f /dev/flag.bin"
 

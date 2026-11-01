@@ -6,7 +6,7 @@
 
 这不是内存破坏漏洞。hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规范只有掉电才清除。所有用户态的通路都被堵死，所以这里用一个小内核模块在内核态把 PMIC 的电真断一次再上电，最后写 hboot 读的那一个字节。
 
-已在 HTC One (M8)，hboot 3.19.0.0000 上测试成功。
+已在 HTC One (M8)，hboot 3.19.0.0000 上测试成功（其它机型见移植）。
 
 ```
 之前                            之后
@@ -29,9 +29,11 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   ← hboot 不再设写
 
 ## 快速开始
 
+下面的命令假设 `adb shell` 本身就是 root（`adb root`、userdebug ROM 或 TWRP）。官方 ROM 用 Magisk 时不是这样：每条设备命令都要套一层 `su -c`，例如 `adb shell 'su -c "insmod /dev/pwrsq_diag.ko"'`；或者直接跑 `scripts/stool.sh soff`，它会自己探测 root 并完成包装。
+
 ```sh
 # 0. 前置检查
-adb shell id                                     # uid=0
+adb shell id                                     # uid=0，否则见上面的说明
 adb shell getenforce                             # Permissive
 adb shell cat /proc/sys/kernel/modules_disabled  # 0
 adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
@@ -56,6 +58,7 @@ adb shell 'stop; sleep 8; sync'
 scripts/powercycle.sh
 
 # 6. 确认写保护已消失，再写 flag
+make -C tools CROSS=arm-none-linux-gnueabihf-    # 还没编的话
 adb push tools/mmc_cmd /dev/ && adb shell chmod 755 /dev/mmc_cmd
 adb shell '/dev/mmc_cmd wp'                      # 必须全 0
 scripts/write_flag.sh 0
@@ -146,21 +149,6 @@ adb shell '/dev/mmc_cmd wp'
 
 ---
 
-## 设备支持
-
-| 项目 | 实测值 |
-|---|---|
-| 机型 | HTC One (M8)，`m8_ul` |
-| MID / CID | `0P6B62000` / `HTCCN703` |
-| 系统 | 6.31.1402.1，Android 6.0.1（MMB29M） |
-| 内核 | `3.4.0-perf-ga6393e1`（HTC 官方，2016-01） |
-| hboot | `3.19.0.0000` |
-| 权限 | adbd 以 root 运行、SELinux Permissive、`modules_disabled=0` |
-
-其它 M8 变体只要跑官方 3.4 内核，行为应当一致。有两样东西**跟构建绑定**、必须自己生成：符号地址和 `module_layout` 的 crc（见[构建](#构建)）。稳压器名字和 MMC 平台设备名是 `kmod/pwrsq_impl.h` 里的编译期参数。
-
----
-
 ## 工作原理
 
 ### 1. 那堵墙
@@ -183,8 +171,8 @@ S-OFF 状态就是 `pg1fs` 里的一个字节：
 一台正常开机的 M8 回答：
 
 ```
-CMD31 -> 0000000000000000 aaaaaaaa2aaaaaaa
-                            group 0..11 = 10b = power-on
+CMD31 -> aaaaaaaa2aaaaaaa
+         8 字节，每 2 bit 一组；10b = power-on
 ```
 
 power-on 保护只能靠掉电清除。`CMD29`（CLEAR_WRITE_PROT）对它无效，`dd` 写 `pg1fs` 会拿到 `card status 0x400d00` —— 第 22 位，`WP_ERASE_SKIP`。
@@ -207,7 +195,15 @@ power-on 保护只能靠掉电清除。`CMD29`（CLEAR_WRITE_PROT）对它无效
 1. **`qcom,vdd-always-on`** —— `sdhci_msm` 在 probe 时把这路电打开，之后永不关闭。
 2. **regulator core 短路** —— 用 debugfs 把电强制断掉之后，`regulator_enable()` 仍然拒绝调用 `->enable()`：
 
-   ```cstatic int _regulator_enable(struct regulator_dev *rdev){if (rdev->use_count == 0) {ret = _regulator_is_enabled(rdev);if (ret == -EINVAL || ret == 0) {...ret = rdev->desc->ops->enable(rdev);```
+   ```c
+   static int _regulator_enable(struct regulator_dev *rdev)
+   {
+           if (rdev->use_count == 0) {
+                   ret = _regulator_is_enabled(rdev);
+                   if (ret == -EINVAL || ret == 0) {
+                           ...
+                           ret = rdev->desc->ops->enable(rdev);
+   ```
 
    `rpm_vreg_is_enabled()` 返回的是驱动缓存的请求位，对 always-on 的稳压器它一直是"开"，于是核心认为电还在、根本不去碰硬件。`echo 1 > .../enable` 会返回成功，然后什么都不做。
 3. **没有重扫入口** —— `sdhci` 没有用户态的 rescan 属性；解绑驱动并不会断电；而 `device_release_driver()` 在那个 gendisk 上还有可写文件系统时会永久阻塞。
@@ -448,18 +444,39 @@ nm -u kmod/pwrsq_on.ko                           # 什么都不输出
 
 `__versions` 必须正好有一条（`module_layout`）。如果是空的，说明编译时没带上 `addr.h`，或者结构体被优化掉了。
 
+`build.sh` 不管用户态那个小工具；`tools/mmc_cmd` 也没有入库，它是一个静态链接的 ARM 可执行文件：
+
+```sh
+make -C tools CROSS=arm-none-linux-gnueabihf-
+```
+
+推到 `/dev`（tmpfs）以 root 运行，见[快速开始](#快速开始)。
+
 ### 7. 移植
 
-有两件事必须同时对上，而且它们会各自独立地失败：内核侧（结构体布局、符号地址）和机型侧（供电轨名、设备名、偏移、分区名）。机型按四档看。
+参考构建是：
+
+| 项目 | 值 |
+|---|---|
+| 机型 | HTC One (M8)，`m8_ul` |
+| 出厂 MID / CID | `0P6B62000` / `HTCCN703` |
+| 测试过的固件 | 6.31.1402.1，之后是 6.12.1540.4（都是 Android 6.0.1） |
+| 内核 | `3.4.0-perf-ga6393e1`（2016-01）/ `3.4.0-perf-g708019f`（2015-11） |
+| hboot | `3.19.0.0000` |
+| root | Magisk 20.1（`su`）、SELinux Permissive、`modules_disabled=0` |
+
+MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷了 Dev 固件，所以上面列了两个构建。
+
+换机型时有两件事必须同时对上，而且它们会各自独立地失败：内核侧（结构体布局、符号地址）和机型侧（供电轨名、设备名、偏移、分区名）。稳压器名字和 MMC 平台设备名是 `kmod/pwrsq_impl.h` 里的编译期参数。机型按四档看。
 
 | 档 | 机型 | 要做的事 |
 |---|---|---|
-| **A** 已验证 | `m8_ul`，6.31.1402.1（`ga6393e1`）和 6.12.1540.4（`g708019f`） | 无 |
-| **B** 同一世代 | 其它 M8 变体，以及共用这棵 HTC 3.4 树的 E8 / Butterfly 2 / mini 2 | `addr.h` + `module_layout` crc |
+| **A** 已验证 | `m8_ul`，6.31.1402.1（`ga6393e1`）和 6.12.1540.4（`g708019f`） | 只需重编：`addr.h` + crc |
+| **B** 同一世代 | 其它 M8 变体，以及共用这棵 HTC 3.4 树的 E8 / Butterfly 2 / mini 2 | 核对板级字符串，再 `addr.h` + `module_layout` crc |
 | **C** 同年代，驱动层要重做 | M7（msm8960）、M9（msm8994，3.10）、Desire（msm8x26 / msm8x10） | 结构体、轨名、偏移 |
 | **D** HTC 10 及以后 | `pme` 及其后所有机型 | 见下 |
 
-**A. 已验证。** 同一台机的两个固件分支，相隔四个月。它们之间只有 `addr.h` 和 `module_layout` 的 crc 不同，而这正是 `scripts/gen_addr.sh` 重新生成的东西。
+**A. 已验证。** 同一台机的两个固件分支，在 HTC 构建服务器上相隔两个月（`g708019f` 是 2015-11，`ga6393e1` 是 2016-01）。两者之间只有 `addr.h` 和 `module_layout` 的 crc 不同，而这正是 `scripts/gen_addr.sh` 重新生成的东西，源码不用改。参数类命令（`noredtext`、`splash`）在 6.12.1540.4 上实测过，两个构建的 hboot dump 都用来确认红字偏移会变。
 
 **B. 同一世代。** 机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
@@ -512,13 +529,14 @@ nm -u kmod/pwrsq_on.ko                           # 什么都不输出
 * **WSL** —— 能用，但 `adb`、`make` 和工具链都得装在发行版里，USB 还要 `usbipd`。
 * **Cygwin** —— 没试过。
 
-Windows 上有三件事会咬人：
+Windows 上有四件事会咬人：
 
 1. **行尾。** 存成 CRLF 的脚本会死在 `$'\r': command not found`。仓库在 `.gitattributes` 里钉了 `*.sh text eol=lf`，正常 clone 不会出问题；如果你手动拷来拷去，跑一次 `sed -i 's/\r$//'`。
-2. **路径。** Git Bash 认识 `/d/...`；kbuild 不接受 `D:/...` 作为 `M=`，因为冒号看起来像 make 的目标分隔符。给 `scripts/build.sh` 传 MSYS 路径。
-3. **PATH。** `adb`、`make`、`python3` 都必须在这个 shell 里能找到。Git Bash 本身不带 `make`，装 MSYS2 或把它加进 PATH。
+2. **设备路径。** MSYS 会在 `adb` 看到之前把绝对路径改写成 Windows 路径：`adb push x /data/local/tmp/x` 到手的会是 `C:/Program Files/Git/data/local/tmp/x`。手机上的路径前面加 `//`（`//data/local/tmp/x`）才是字面量；仓库里的脚本已经这么写了。
+3. **主机路径。** Git Bash 认识 `/d/...`；kbuild 不接受 `D:/...` 作为 `M=`，因为冒号看起来像 make 的目标分隔符。给 `scripts/build.sh` 传 MSYS 路径。
+4. **PATH。** `adb`、`make`、`python3` 都必须在这个 shell 里能找到。Git Bash 本身不带 `make`，装 MSYS2 或把它加进 PATH。
 
-本次实际使用的组合：Git Bash（WorkBuddy 自带）、MSYS2 的 GNU Make 4.4.1、Python 3.13、adb 1.0.41、`arm-none-linux-gnueabihf-gcc` 13.3.1（MinGW 宿主版）。README 里的步骤是以等价的原生命令逐条执行的；`scripts/gen_addr.sh` 另外完整跑通过一次。
+本次实际使用的组合：Git Bash、MSYS2 的 GNU Make 4.4.1、Python 3.13、adb 1.0.41、`arm-none-linux-gnueabihf-gcc` 13.3.1（MinGW 宿主版）。README 里的步骤是以等价的原生命令逐条执行的；`scripts/gen_addr.sh` 另外完整跑通过一次。
 
 ---
 
@@ -541,7 +559,7 @@ $ fastboot oem readsecureflag
 (bootloader) secure_flag: 3
 
 $ mmc_cmd wp
-bitmap: aa aa aa aa 2a aa aa aa      -> group 0..11 power-on
+bitmap: aa aa aa aa 2a aa aa aa      -> 10b = power-on
 ```
 
 **断电上电期间**
@@ -625,11 +643,11 @@ adb reboot bootloader && fastboot oem readsecureflag
 
 **不要做**
 
-* **不要 `fastboot flash` 固件分区。** hboot 对每一个都验签并拒绝 —— 这正是本工具要绕的行为，也是保护你不会刷进坏镜像的东西。
+* **不要 `fastboot flash` 固件分区。** S-ON 状态下 hboot 对每一个都验签并拒绝 —— 这正是本工具要绕的行为，也是保护你不会刷进坏镜像的东西。
 * **`pg1fs` 里除了 `0x8400` 什么都不要写。** `0x400` 的头部描述三条记录（`security`、`simlock`、`simunlock`），`0x424`/`0x824`/`0xc24` 那 4 字节是设备相关的，这里刻意没动。
 * **不要在 `/data` 正在写的时候做断电上电。** panic 还能恢复，写坏一半的 ext4 日志不一定。
 
-**整机不启动。** 进 bootloader（音量下 + 电源）。如果 hboot 能起来，`fastboot getvar all`：还是 S-ON 说明什么都没改，正常刷 ROM 即可恢复；S-OFF 但系统坏了，刷对应 RUU 就行。如果 hboot 都起不来，问题不在 `pg1fs` —— 本流程从不碰 `hboot`、`sbl1`、`tz`。
+**整机不启动。** 进 bootloader（音量下 + 电源）。如果 hboot 能起来，`fastboot getvar all`：还是 S-ON 说明什么都没改，正常刷 ROM 即可恢复；S-OFF 但系统坏了，刷对应 RUU 就行。如果 hboot 都起不来，问题不在 `pg1fs` —— S-OFF 流程从不碰 `hboot`、`sbl1`、`tz`。唯一会写 `hboot` 的是 `noredtext`，而它会先留一份 dump。
 
 ---
 
@@ -648,20 +666,9 @@ scripts/write_flag.sh 3 && adb reboot bootloader && fastboot oem readsecureflag
 * 断电之前把 `/data` 挂成只读，或者至少停掉框架。`/data` 是 `errors=panic`，对死卡的一次写入就会 panic。
 * 卡如果没重新枚举，手机要手动断电才能再启动。数据不会丢，但你需要能够碰到机器。
 * `scripts/backup.sh` 之所以存在，是因为"应该不会出事"不叫恢复方案。镜像留在电脑上，不要留在手机里。
-* 写 `pg1fs` 是本工具的目的，也是唯一不可逆的一步。`0x8400`：`00` = S-OFF，`03` = S-ON。别的字节不要碰。
+* 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。真正没法原地撤销的是改过的 `hboot`（`noredtext`）—— 回 S-ON 之前先把 dump 的镜像写回去。
 
 没有任何担保。刷坏了自负。
-
----
-
-## 仓库结构
-
-```
-kmod/              断电上电模块（三个变体 + addr.h）
-tools/             mmc_cmd：CMD31 写保护查询
-scripts/           stool.sh 控制工具、备份、地址生成、编译、断电上电、写 flag
-kernel-patches/    用现代工具链编 3.4 树所需的修补
-```
 
 ---
 
