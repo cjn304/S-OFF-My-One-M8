@@ -23,8 +23,8 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   ← hboot 不再设写
 
 * **已 root 且能加载模块**：`adb shell id` 是 `uid=0`，
   `cat /proc/sys/kernel/modules_disabled` 是 `0`，SELinux Permissive。
-* 与设备完全对应的**内核源码**，并已为外部模块 prepare 过。HTC 在 htcdev.com 发布；
-  6.0.1 这一版是 `m8ul-3.4.0-perf-ga6393e1.zip`。
+* 与设备完全对应的**内核源码**，并已为外部模块 prepare 过。HTC 在
+  [htcdev.com](https://www.htcdev.com/devcenter/downloads) 发布。
 * 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 Windows 上的 MSYS2/Git Bash
   （见 [Windows](#windows)）。
 * 备份。见文末的风险一节。
@@ -413,7 +413,7 @@ dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回�
 
 ### 1. 拿源码
 
-HTC 在 htcdev.com（Kernel Source Code）发布。6.0.1 这一版的包是
+HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)（Kernel Source Code）发布。6.0.1 这一版的包是
 `m8ul-3.4.0-perf-ga6393e1.zip`，内含 `kernel570.tar.gz`（`kernel/`）和
 `platform.tar.gz`（其余源码树）。只有 `kernel/` 有用。
 

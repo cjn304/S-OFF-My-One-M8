@@ -28,8 +28,7 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   <- hboot stops arming 
 * **Root** with module loading: `adb shell id` -> `uid=0`,
   `cat /proc/sys/kernel/modules_disabled` -> `0`, SELinux permissive.
 * The **exact kernel source** of your build, prepared for out-of-tree modules.
-  HTC publishes it on htcdev.com; for the 6.0.1 M8 build the tarball is
-  `m8ul-3.4.0-perf-ga6393e1.zip`.
+  HTC publishes it on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash on
   Windows (see [Windows](#windows)).
 * Backups. See the warning at the bottom.
@@ -457,7 +456,7 @@ by reading the bytes back.
 
 ### 1. Get the source
 
-HTC publishes it on htcdev.com (Kernel Source Code). For the 6.0.1 M8 build the
+HTC publishes it on [htcdev.com](https://www.htcdev.com/devcenter/downloads) (Kernel Source Code). For the 6.0.1 M8 build the
 download is `m8ul-3.4.0-perf-ga6393e1.zip`, containing `kernel570.tar.gz`
 (`kernel/`) and `platform.tar.gz` (the rest of the tree). Only `kernel/`
 matters.
