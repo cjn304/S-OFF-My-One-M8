@@ -672,14 +672,16 @@ cmd_splash() {
 	fi
 
 	img=${1:-}
-	[ -n "$img" ] || die "usage: stool.sh splash <image.png>   or   stool.sh splash --restore <sp1.img>"
+	[ -n "$img" ] || die "usage: stool.sh splash <image.png> [--fit=cover|stretch]   or   stool.sh splash --restore <sp1.img>"
 	[ -f "$img" ] || die "no such file: $img"
+	shift
+	fitarg="$*"
 	require_android
 
 	say "== convert =="
 	raw=$TMP.splash
-	"$PY" "$(winpath "$ROOT/scripts/png2rgb565.py")" "$(winpath "$img")" "$(winpath "$raw")" ||
-		die "conversion failed - only non-interlaced 8-bit PNG is supported"
+	"$PY" "$(winpath "$ROOT/scripts/png2rgb565.py")" "$(winpath "$img")" "$(winpath "$raw")" $fitarg ||
+		die "conversion failed - PNG only, see the message above"
 	sz=$(wc -c < "$raw" | tr -d ' ')
 	say "raw    : $sz bytes"
 	[ "$sz" = 4147200 ] || die "converted image is $sz bytes, expected 4147200"
@@ -740,7 +742,8 @@ stool.sh $VERSION - HTC One (M8) S-OFF control tool
   stool.sh unlock bootloader       write the BL magic = unlocked (S-OFF only)
   stool.sh noredtext               blank the six "This build is for ..." lines
   stool.sh noredtext --restore <hboot.img>
-  stool.sh splash <image.png>      replace the first boot screen (1080x1920)
+  stool.sh splash <image.png> [--fit=cover|stretch]
+                                   replace the first boot screen (1080x1920)
   stool.sh splash --restore <sp1.img>
 
 Every command starts by reading the current S state.  Anything that writes

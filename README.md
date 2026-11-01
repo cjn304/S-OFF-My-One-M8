@@ -437,7 +437,26 @@ little-endian RGB565 in the first 4,147,200 bytes, the rest of the partition is
 padding.  The conversion is done by `scripts/png2rgb565.py`, pure standard
 library on purpose (a bare Windows box has no ffmpeg, no PIL, no ImageMagick).
 It takes non-interlaced 8-bit PNG in grey, grey+alpha, RGB, RGBA or palette and
-scales with bilinear filtering; anything else is rejected with a clear message.
+scales with bilinear filtering; anything else is rejected with a clear message
+(JPEG included - re-save it as PNG first).
+
+A source that is not 9:16 is handled by `--fit`, and the command says so:
+
+| `--fit` | what happens |
+|---|---|
+| `contain` (default) | scale to fit, centre, pad the rest with `--bg=RRGGBB` (default black) |
+| `cover` | scale to fill, centre-crop the overflow - no bars, edges lost |
+| `stretch` | scale each axis independently - **distorts**, prints a warning |
+
+The old behaviour was always `stretch`, which silently turned a 1920x1080 photo
+into a squashed 1080x1920 one.  `contain` is the default now because a boot
+screen with black bars is a smaller mistake than a stretched logo.
+
+The converter checks the container, not the picture: it verifies the PNG is
+readable, the colour type and bit depth are supported, the result is exactly
+4,147,200 bytes, and the written bytes read back identical.  It cannot tell you
+that the image is upside down, all black, all white, or too low resolution to
+look good - that is on you.
 
 Both commands need S-OFF, back up the whole target partition first, and verify
 by reading the bytes back.

@@ -7,6 +7,13 @@ standard library on purpose - the tool has to run on a bare Windows box where
 ffmpeg / PIL / ImageMagick are not installed.
 
     python png2rgb565.py in.png out.raw [--width 1080] [--height 1920]
+                                      [--fit=contain|cover|stretch] [--bg=RRGGBB]
+
+--fit controls what happens when the source is not the target aspect ratio:
+
+    contain  (default) scale to fit, centre, fill the rest with --bg
+    cover              scale to fill, centre-crop the overflow
+    stretch            scale each axis independently (distorts; old behaviour)
 
 Only non-interlaced 8-bit PNGs are supported (grey, grey+alpha, RGB, RGBA and
 palette).  Anything else is rejected with a clear message instead of producing
@@ -35,12 +42,11 @@ def read_png(path):
     """Return (width, height, rows) where rows is a list of bytearray RGB triples."""
     data = open(path, 'rb').read()
     if data[:8] != b'\x89PNG\r\n\x1a\n':
-        raise SystemExit('error: %s is not a PNG file' % path)
+        raise SystemExit('error: %s is not a PNG file (JPEG is not supported, re-save as PNG)' % path)
 
     pos = 8
     idat = []
     palette = b''
-    trns = b''
     width = height = depth = ctype = interlace = None
 
     while pos < len(data):
@@ -50,11 +56,9 @@ def read_png(path):
         body = data[pos + 8:pos + 8 + length]
         pos += 12 + length
         if ctag == b'IHDR':
-            width, height, depth, ctype, comp, filt, interlace = struct.unpack('>IIBBBBB', body)
+            width, height, depth, ctype, _comp, _filt, interlace = struct.unpack('>IIBBBBB', body)
         elif ctag == b'PLTE':
             palette = body
-        elif ctag == b'tRNS':
-            trns = body
         elif ctag == b'IDAT':
             idat.append(body)
         elif ctag == b'IEND':
@@ -101,7 +105,6 @@ def read_png(path):
         out.append(line)
         prev = line
 
-    # normalise every row into RGB triples
     rows = []
     if ctype == 0:
         for line in out:
@@ -126,30 +129,24 @@ def read_png(path):
                 row[x * 3:x * 3 + 3] = line[x * 4:x * 4 + 3]
             rows.append(row)
     else:  # palette
-        lut = []
-        for i in range(0, len(palette), 3):
-            lut.append(palette[i:i + 3])
+        lut = [palette[i:i + 3] for i in range(0, len(palette), 3)]
         if not lut:
             raise SystemExit('error: palette PNG without PLTE')
-        alpha = trns
         for line in out:
             row = bytearray(width * 3)
             for x in range(width):
                 idx = line[x]
-                rgb = lut[idx] if idx < len(lut) else b'\x00\x00\x00'
-                row[x * 3:x * 3 + 3] = rgb
+                row[x * 3:x * 3 + 3] = lut[idx] if idx < len(lut) else b'\x00\x00\x00'
             rows.append(row)
-        del alpha
 
     return width, height, rows
 
 
-def resize(rows, sw, sh, dw, dh):
-    """Bilinear resize of a list of RGB bytearrays."""
+def _scale(rows, sw, sh, dw, dh):
+    """Bilinear scale of a list of RGB bytearrays to exactly dw x dh."""
     if sw == dw and sh == dh:
-        return rows
+        return [bytearray(r) for r in rows]
 
-    # precompute the horizontal taps once per output column
     xtaps = []
     for x in range(dw):
         sx = (x + 0.5) * sw / dw - 0.5
@@ -188,6 +185,39 @@ def resize(rows, sw, sh, dw, dh):
     return out
 
 
+def resize(rows, sw, sh, dw, dh, fit='contain', bg=(0, 0, 0)):
+    """Fit a source image into dw x dh according to `fit`."""
+    if fit == 'stretch':
+        return _scale(rows, sw, sh, dw, dh)
+
+    if fit == 'cover':
+        scale = max(dw / sw, dh / sh)
+        nw = max(dw, int(sw * scale + 0.5))
+        nh = max(dh, int(sh * scale + 0.5))
+        big = _scale(rows, sw, sh, nw, nh)
+        ox = (nw - dw) // 2
+        oy = (nh - dh) // 2
+        return [bytearray(r[ox * 3:(ox + dw) * 3]) for r in big[oy:oy + dh]]
+
+    # contain: keep the whole image, pad with bg
+    scale = min(dw / sw, dh / sh)
+    nw = max(1, min(dw, int(sw * scale + 0.5)))
+    nh = max(1, min(dh, int(sh * scale + 0.5)))
+    small = _scale(rows, sw, sh, nw, nh)
+    ox = (dw - nw) // 2
+    oy = (dh - nh) // 2
+    fill = bytes(bg) * dw
+    out = []
+    for y in range(dh):
+        if oy <= y < oy + nh:
+            row = bytearray(fill)
+            row[ox * 3:(ox + nw) * 3] = small[y - oy]
+            out.append(row)
+        else:
+            out.append(bytearray(fill))
+    return out
+
+
 def to_rgb565(rows, width, height):
     buf = bytearray(width * height * 2)
     o = 0
@@ -203,24 +233,52 @@ def to_rgb565(rows, width, height):
     return buf
 
 
+def parse_bg(text):
+    text = text.lstrip('#')
+    if len(text) != 6:
+        raise SystemExit('error: --bg wants RRGGBB, got %r' % text)
+    return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))
+
+
 def main(argv):
-    args = [a for a in argv[1:] if not a.startswith('--')]
+    args = []
     opts = {}
     for a in argv[1:]:
-        if a.startswith('--') and '=' in a:
-            k, v = a[2:].split('=', 1)
-            opts[k] = v
+        if a.startswith('--'):
+            if '=' in a:
+                k, v = a[2:].split('=', 1)
+                opts[k] = v
+            else:
+                opts[a[2:]] = '1'
+        else:
+            args.append(a)
     if len(args) < 2:
         raise SystemExit(__doc__)
 
     width = int(opts.get('width', 1080))
     height = int(opts.get('height', 1920))
+    fit = opts.get('fit', 'contain')
+    if fit not in ('contain', 'cover', 'stretch'):
+        raise SystemExit('error: --fit must be contain, cover or stretch')
+    bg = parse_bg(opts.get('bg', '000000'))
 
     sw, sh, rows = read_png(args[0])
-    rows = resize(rows, sw, sh, width, height)
+
+    src_ratio = sw / sh
+    dst_ratio = width / height
+    note = ''
+    if abs(src_ratio / dst_ratio - 1) > 0.02:
+        pct = (src_ratio / dst_ratio - 1) * 100
+        if fit == 'stretch':
+            note = ' (source is %+.0f%% off 9:16, stretch will distort)' % pct
+        else:
+            note = ' (source is %+.0f%% off 9:16, %s applied)' % (pct, fit)
+
+    rows = resize(rows, sw, sh, width, height, fit, bg)
     buf = to_rgb565(rows, width, height)
     open(args[1], 'wb').write(buf)
-    sys.stderr.write('%dx%d -> %dx%d, %d bytes\n' % (sw, sh, width, height, len(buf)))
+    sys.stderr.write('%dx%d -> %dx%d (%s)%s, %d bytes\n'
+                     % (sw, sh, width, height, fit, note, len(buf)))
 
 
 if __name__ == '__main__':
