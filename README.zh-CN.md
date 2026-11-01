@@ -335,6 +335,10 @@ scripts/stool.sh set tamper 0
 scripts/stool.sh set secure 0|3
 scripts/stool.sh lock bootloader         # BL magic -> 锁定（S-OFF，不需要 token）
 scripts/stool.sh unlock bootloader       # BL magic -> 解锁（S-OFF，不需要 token）
+scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
+scripts/stool.sh noredtext --restore <hboot.img>
+scripts/stool.sh splash photo.png        # 换开机第一屏（1080x1920）
+scripts/stool.sh splash --restore <sp1.img>
 ```
 
 每个命令都会先读 S 状态。任何写操作在动卡之前都会把全部参数快照到
@@ -370,6 +374,33 @@ scripts/stool.sh unlock bootloader       # BL magic -> 解锁（S-OFF，不需�
 | tamper | `pg2fs`（p6）@ 0x511804 | dd |
 | secure | `pg1fs`（p2）@ 0x8400 | dd，仅 S-OFF |
 | lock / unlock | `pg1fs`（p2）@ 0x8404，`HTCU` / `00000000` | dd，仅 S-OFF |
+| 红字 | `hboot`（p26），六行字符串运行期定位 | dd，仅 S-OFF |
+| 第一屏 | `sp1`（p12）@ 0，1080x1920 RGB565 | dd，仅 S-OFF |
+
+### 红字与第一屏
+
+`noredtext` 是按内容找那六行，不是写死偏移。它先把整个 4 MB 的 `hboot` 分区
+dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回，再逐字节读回校验。
+偏移在不同构建之间是变动的——6.12.1540.4 上是 `0x8C340`，6.31.1402.1 的 dump 上
+是 `0x8C3F8`，更老的 m8_ul 镜像上是 `0x899CE`——所以必须动态找。
+
+运行前要知道两件事：
+
+- hboot 带 HTC 签名，改字节就会破坏签名，全靠 S-OFF 让 SBL 跳过校验。S-ON 时
+  绝对不能碰，并且一定要保留 dump 出来的 `<ts>.hboot.img`——`noredtext --restore`
+  就是把它原样写回去。
+- 6.12.1540.4 这块 hboot 里，这六个字符串**没有任何静态引用**。绝对地址、文件
+  偏移、低 20 位匹配、ARM 与 Thumb 的 `movw`/`movt`、代码段 literal pool，全部
+  扫过，一个都没有。说明横幅是运行期装配的，所以改字符串本身是唯一安全的最小
+  改动，不存在"参数可改的绘制函数"可找。
+
+`splash` 把 PNG 转成 `sp1` 分区真正的格式：前 4,147,200 字节是 1080x1920 小端
+RGB565，分区其余部分是填充。转换由 `scripts/png2rgb565.py` 完成，刻意只用标准
+库——精简的 Windows 环境里没有 ffmpeg、没有 PIL、没有 ImageMagick。支持非隔行
+8 位 PNG 的灰度、灰度+alpha、RGB、RGBA 和调色板，缩放用双线性；其它格式会明确
+报错而不是生成一张错图。
+
+两个命令都要求 S-OFF、先整分区备份、写完读回校验。
 
 ---
 

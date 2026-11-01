@@ -9,6 +9,9 @@
 #   stool.sh lock bootloader       write the BL magic = locked   (S-OFF only)
 #   stool.sh unlock bootloader     write the BL magic = unlocked (S-OFF only)
 #   stool.sh set <param> [value]    change one parameter (backs up first)
+#   stool.sh noredtext              blank the six "This build is for ..." lines in hboot
+#   stool.sh splash <image.png>     replace the first boot screen (sp1)
+#   stool.sh splash --restore <f>   write a saved sp1 image back
 #
 #   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
 #           tamper <0-255> | secure <0|3>
@@ -25,6 +28,14 @@
 #   tamper    pg2fs      (p6)  @ 0x511804 u32 LE
 #   secure    pg1fs      (p2)  @ 0x8400   u32 LE  (0 = S-OFF, 3 = S-ON)
 #   bl lock   pg1fs      (p2)  @ 0x8404   4 chars ("HTCU" = unlocked, 00000000 = locked)
+#
+# Two commands touch partitions that are not part of that table:
+#
+#   noredtext hboot      (p26)  six NUL terminated lines, located at run time
+#   splash    sp1        (p12)  1080x1920 little-endian RGB565, first 4,147,200 bytes
+#
+# Both need S-OFF and a full backup; noredtext rewrites hboot, which is the only
+# way to brick this device.  It always dumps the 4 MB hboot partition first.
 #
 # Licensed GPL-2.0.
 set -u
@@ -73,11 +84,32 @@ device_mode() {
 	printf none
 }
 
+# adbd is root in TWRP; on a booted system Magisk's su has to wrap the command.
+# DEV_SU: 0 = adbd already root, 1 = use su -c, 2 = no root at all.
+DEV_SU=
+detect_root() {
+	[ -n "$DEV_SU" ] && { [ "$DEV_SU" -ne 2 ]; return; }
+	u=$("$ADB" shell id -u 2>/dev/null | tr -d '\r')
+	if [ "$u" = 0 ]; then DEV_SU=0; return 0; fi
+	if "$ADB" shell "su -c 'id -u'" 2>/dev/null | tr -d '\r' | grep -qx 0; then
+		DEV_SU=1; return 0
+	fi
+	DEV_SU=2
+	return 1
+}
+
+devsh() { # run one command on the device as root; $1 must not contain single quotes
+	if [ "$DEV_SU" = 1 ]; then
+		"$ADB" shell "su -c '$1'"
+	else
+		"$ADB" shell "$1"
+	fi
+}
+
 require_android() {
 	[ "$(device_mode)" = android ] ||
-		die "device must be booted into Android with adb root"
-	[ "$("$ADB" shell id -u 2>/dev/null | tr -d '\r')" = 0 ] ||
-		die "adb shell is not root (run: adb root)"
+		die "device must be booted into Android (or TWRP) over adb"
+	detect_root || die "adb shell is neither root nor able to run su"
 }
 
 wait_fastboot() {
@@ -104,7 +136,7 @@ wait_android() {
 hex_at() { # part offset len -> lowercase hex, no separators
 	# dd on the device wants decimal; callers may pass 0x...
 	off=$(( $2 ))
-	"$ADB" shell "dd if=$DEV/$1 bs=1 skip=$off count=$3 2>/dev/null" |
+	devsh "dd if=$DEV/$1 bs=1 skip=$off count=$3 2>/dev/null" |
 		od -An -v -tx1 | tr -d ' \r\n'
 }
 
@@ -136,10 +168,10 @@ write_hex() { # part offset hexstring
 import sys, binascii
 sys.stdout.buffer.write(binascii.unhexlify(sys.argv[1]))
 EOF
-	"$ADB" push "$TMP" /dev/stool.bin >/dev/null 2>&1 || die "adb push failed"
-	"$ADB" shell "dd if=/dev/stool.bin of=$DEV/$part bs=1 seek=$off count=$n 2>&1 |
-		tail -1" >&2
-	"$ADB" shell "rm -f /dev/stool.bin; sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
+	"$ADB" push "$TMP" /data/local/tmp/stool.bin >/dev/null 2>&1 || die "adb push failed"
+	devsh "dd if=/data/local/tmp/stool.bin of=$DEV/$part bs=1 seek=$off count=$n 2>&1 | tail -1" >&2
+	devsh "rm -f /data/local/tmp/stool.bin" >/dev/null 2>&1
+	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
 	rm -f "$TMP"
 }
 
@@ -152,9 +184,10 @@ verify_hex() { # part offset hexstring -> 0 if the card returns the same bytes
 dump_part() { # part dest-file  (whole partition, pulled to the PC)
 	# The double slash is for Git Bash: a single leading /data/... gets
 	# rewritten into a Windows path before adb ever sees it.
-	"$ADB" shell "dd if=$DEV/$1 of=/data/local/tmp/stool_$1.img bs=4096" >/dev/null 2>&1
+	devsh "dd if=$DEV/$1 of=/data/local/tmp/stool_$1.img bs=4096" >/dev/null 2>&1
+	devsh "chmod 644 /data/local/tmp/stool_$1.img" >/dev/null 2>&1
 	"$ADB" pull "//data/local/tmp/stool_$1.img" "$2" >/dev/null 2>&1
-	"$ADB" shell "rm -f /data/local/tmp/stool_$1.img" >/dev/null 2>&1
+	devsh "rm -f /data/local/tmp/stool_$1.img" >/dev/null 2>&1
 	[ -s "$2" ]
 }
 
@@ -184,8 +217,8 @@ bl_state() { # "unlocked" | "locked"
 print_state() {
 	case "$(device_mode)" in
 	android)
-		if [ "$("$ADB" shell id -u 2>/dev/null | tr -d '\r')" != 0 ]; then
-			say "S state : unknown (adb shell is not root - run: adb root)"
+		if ! detect_root; then
+			say "S state : unknown (no root - TWRP, adb root or Magisk su needed)"
 			return 0
 		fi
 		st=$(secure_state)
@@ -547,7 +580,147 @@ cmd_restore() {
 	say "done - values from the snapshot are back on the card"
 }
 
+# ---------------------------------------------------------------- hboot / splash
+
+winpath() { cygpath -w "$1" 2>/dev/null || printf '%s' "$1"; }
+
+flash_part() { # part src-file  (write a whole image, used by the --restore paths)
+	say "writing $(wc -c < "$2" | tr -d ' ') bytes to $1"
+	"$ADB" push "$2" /data/local/tmp/stool_flash.img >/dev/null 2>&1 || die "adb push failed"
+	devsh "dd if=/data/local/tmp/stool_flash.img of=$DEV/$1 bs=4096 2>&1 | tail -2" >&2
+	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
+	devsh "rm -f /data/local/tmp/stool_flash.img" >/dev/null 2>&1
+}
+
+cmd_noredtext() {
+	if [ "${1:-}" = --restore ]; then
+		src=${2:-}
+		[ -n "$src" ] && [ -f "$src" ] || die "usage: stool.sh noredtext --restore <hboot.img>"
+		require_android
+		[ "$(secure_state)" = off ] || die "writing hboot needs S-OFF"
+		[ "$(wc -c < "$src" | tr -d ' ')" = 4194304 ] || die "not a 4 MB hboot image: $src"
+		flash_part hboot "$src"
+		say "ok - reboot to see it"
+		return 0
+	fi
+
+	require_android
+	say "== state before =="
+	print_state
+	say ""
+	[ "$(secure_state)" = off ] ||
+		die "writing hboot needs S-OFF - the partition is write protected while S-ON"
+
+	say "== backup =="
+	pf=$(cmd_backup)
+	say "params : $pf"
+	ts=$(date +%Y%m%d-%H%M%S)
+	hb=$BACKUP_DIR/$ts.hboot.img
+	dump_part hboot "$hb" || die "could not dump the hboot partition"
+	sz=$(wc -c < "$hb" | tr -d ' ')
+	say "hboot  : $hb ($sz bytes)"
+	[ "$sz" = 4194304 ] || die "hboot dump is $sz bytes, expected 4194304 - aborting"
+
+	say ""
+	say "== locate =="
+	offs=$(cat "$hb" | "$PY" "$(winpath "$ROOT/scripts/find_redtext.py")") ||
+		die "the six red-text lines were not found in this hboot"
+
+	for o in $offs; do
+		b=$(hex_at hboot "$o" 1)
+		say "  0x$(printf '%06x' "$o")  first byte = $b"
+	done
+
+	say ""
+	say "== patch =="
+	printf '\000' > "$TMP.zero"
+	printf '#!/system/bin/sh\n' > "$TMP.nr.sh"
+	for o in $offs; do
+		printf 'dd if=/data/local/tmp/stool_zero.bin of=%s/hboot bs=1 seek=%s count=1 || exit 1\n' \
+			"$DEV" "$o" >> "$TMP.nr.sh"
+	done
+	printf 'sync\n' >> "$TMP.nr.sh"
+
+	"$ADB" push "$TMP.zero"  /data/local/tmp/stool_zero.bin >/dev/null 2>&1 || die "adb push failed"
+	"$ADB" push "$TMP.nr.sh" /data/local/tmp/stool_nr.sh   >/dev/null 2>&1 || die "adb push failed"
+	devsh "sh /data/local/tmp/stool_nr.sh" >&2
+	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
+	devsh "rm -f /data/local/tmp/stool_zero.bin /data/local/tmp/stool_nr.sh" >/dev/null 2>&1
+	rm -f "$TMP.zero" "$TMP.nr.sh"
+
+	say ""
+	say "== verify =="
+	for o in $offs; do
+		verify_hex hboot "$o" 00
+		say "  0x$(printf '%06x' "$o")  ok"
+	done
+
+	say ""
+	say "six bytes blanked.  Reboot and look at the first screen."
+	say "undo   : stool.sh noredtext --restore $hb"
+}
+
+cmd_splash() {
+	if [ "${1:-}" = --restore ]; then
+		src=${2:-}
+		[ -n "$src" ] && [ -f "$src" ] || die "usage: stool.sh splash --restore <sp1.img>"
+		require_android
+		[ "$(secure_state)" = off ] || die "writing sp1 needs S-OFF"
+		flash_part sp1 "$src"
+		say "ok - reboot to see it"
+		return 0
+	fi
+
+	img=${1:-}
+	[ -n "$img" ] || die "usage: stool.sh splash <image.png>   or   stool.sh splash --restore <sp1.img>"
+	[ -f "$img" ] || die "no such file: $img"
+	require_android
+
+	say "== convert =="
+	raw=$TMP.splash
+	"$PY" "$(winpath "$ROOT/scripts/png2rgb565.py")" "$(winpath "$img")" "$(winpath "$raw")" ||
+		die "conversion failed - only non-interlaced 8-bit PNG is supported"
+	sz=$(wc -c < "$raw" | tr -d ' ')
+	say "raw    : $sz bytes"
+	[ "$sz" = 4147200 ] || die "converted image is $sz bytes, expected 4147200"
+
+	say ""
+	say "== backup =="
+	pf=$(cmd_backup)
+	say "params : $pf"
+	ts=$(date +%Y%m%d-%H%M%S)
+	sp=$BACKUP_DIR/$ts.sp1.img
+	dump_part sp1 "$sp" || die "could not dump the sp1 partition"
+	say "sp1    : $sp ($(wc -c < "$sp" | tr -d ' ') bytes)"
+
+	say ""
+	say "== write =="
+	"$ADB" push "$raw" /data/local/tmp/stool_splash.raw >/dev/null 2>&1 || die "adb push failed"
+	devsh "dd if=/data/local/tmp/stool_splash.raw of=$DEV/sp1 bs=4096 2>&1 | tail -2" >&2
+	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
+	devsh "rm -f /data/local/tmp/stool_splash.raw" >/dev/null 2>&1
+
+	say ""
+	say "== verify =="
+	devsh "dd if=$DEV/sp1 of=/data/local/tmp/stool_chk.img bs=4096 count=1013" >/dev/null 2>&1
+	devsh "chmod 644 /data/local/tmp/stool_chk.img" >/dev/null 2>&1
+	"$ADB" pull "//data/local/tmp/stool_chk.img" "$TMP.chk" >/dev/null 2>&1
+	devsh "rm -f /data/local/tmp/stool_chk.img" >/dev/null 2>&1
+	[ -s "$TMP.chk" ] || die "could not read sp1 back"
+
+	a=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(4147200)).hexdigest())" "$(winpath "$raw")")
+	b=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(4147200)).hexdigest())" "$(winpath "$TMP.chk")")
+	rm -f "$TMP.chk" "$raw"
+	[ "$a" = "$b" ] || die "read-back mismatch: wrote $a, read $b"
+	say "  md5 $a  ok"
+
+	say ""
+	say "first screen replaced.  Reboot to see it."
+	say "undo   : stool.sh splash --restore $sp"
+}
+
 # ---------------------------------------------------------------- main
+
 
 usage() {
 	cat <<EOF
@@ -565,6 +738,10 @@ stool.sh $VERSION - HTC One (M8) S-OFF control tool
   stool.sh set secure <0|3>
   stool.sh lock bootloader         write the BL magic = locked   (S-OFF only)
   stool.sh unlock bootloader       write the BL magic = unlocked (S-OFF only)
+  stool.sh noredtext               blank the six "This build is for ..." lines
+  stool.sh noredtext --restore <hboot.img>
+  stool.sh splash <image.png>      replace the first boot screen (1080x1920)
+  stool.sh splash --restore <sp1.img>
 
 Every command starts by reading the current S state.  Anything that writes
 takes a full parameter snapshot into backup/<YYYYmmdd-HHMMSS>.txt first.
@@ -587,6 +764,8 @@ lock)    [ "${1:-}" = bootloader ] || die "usage: stool.sh lock bootloader"
          cmd_bl locked ;;
 unlock)  [ "${1:-}" = bootloader ] || die "usage: stool.sh unlock bootloader"
          cmd_bl unlocked ;;
+noredtext) cmd_noredtext "$@" ;;
+splash)    cmd_splash "$@" ;;
 -h|--help|help) usage ;;
 *) usage; exit 2 ;;
 esac

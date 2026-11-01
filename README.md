@@ -367,6 +367,10 @@ scripts/stool.sh set tamper 0
 scripts/stool.sh set secure 0|3
 scripts/stool.sh lock bootloader         # BL magic -> locked   (S-OFF, no token)
 scripts/stool.sh unlock bootloader       # BL magic -> unlocked (S-OFF, no token)
+scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
+scripts/stool.sh noredtext --restore <hboot.img>
+scripts/stool.sh splash photo.png        # replace the first boot screen (1080x1920)
+scripts/stool.sh splash --restore <sp1.img>
 ```
 
 Every command reads the S state first. Anything that writes takes a parameter
@@ -405,6 +409,38 @@ mfg, radio and misc as full images.
 | tamper | `pg2fs` (p6) @ 0x511804 | dd |
 | secure | `pg1fs` (p2) @ 0x8400 | dd, S-OFF only |
 | lock / unlock | `pg1fs` (p2) @ 0x8404, `HTCU` / `00000000` | dd, S-OFF only |
+| red text | `hboot` (p26), six strings located at run time | dd, S-OFF only |
+| first screen | `sp1` (p12) @ 0, 1080x1920 RGB565 | dd, S-OFF only |
+
+### Red text and the first screen
+
+`noredtext` finds the six lines by content, not by a hard-coded offset.  It
+dumps the whole 4 MB `hboot` partition, searches for the six strings, blanks
+the first byte of each, writes them back and reads them back.  The offsets move
+between builds - `0x8C340` on 6.12.1540.4, `0x8C3F8` on the 6.31.1402.1 dump,
+`0x899CE` on the older m8_ul image - which is exactly why the search is dynamic.
+
+Two things to know before running it:
+
+- hboot carries the HTC signature.  Changing bytes breaks it; S-OFF is what
+  makes the SBL skip the check.  Never run this while S-ON, and keep the dumped
+  `<ts>.hboot.img` - `noredtext --restore` writes it straight back.
+- On the 6.12.1540.4 hboot these six strings have **no static cross reference**
+  in the image.  Every form was scanned: absolute address, raw file offset,
+  low-20-bit match, ARM and Thumb `movw`/`movt`, and the literal pool of the
+  code section.  The banner is assembled at run time, so blanking the strings is
+  the only safe edit - there is no "draw function" with a patchable argument to
+  find.
+
+`splash` converts a PNG into what the `sp1` partition actually holds: 1080x1920
+little-endian RGB565 in the first 4,147,200 bytes, the rest of the partition is
+padding.  The conversion is done by `scripts/png2rgb565.py`, pure standard
+library on purpose (a bare Windows box has no ffmpeg, no PIL, no ImageMagick).
+It takes non-interlaced 8-bit PNG in grey, grey+alpha, RGB, RGBA or palette and
+scales with bilinear filtering; anything else is rejected with a clear message.
+
+Both commands need S-OFF, back up the whole target partition first, and verify
+by reading the bytes back.
 
 ---
 

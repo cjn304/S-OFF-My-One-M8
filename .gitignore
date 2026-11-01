@@ -20,6 +20,9 @@ backup-*/
 *.img
 .stool.tmp*
 
+# test scaffolding (see scripts/, mocked adb used during development)
+.mock/
+
 # misc
 *.log
 .DS_Store
