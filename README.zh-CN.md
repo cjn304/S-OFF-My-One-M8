@@ -26,9 +26,9 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   ← hboot 不再设写
   不解锁 BL 用临时 root 也可以；一旦 S-OFF，BL 就随你解锁。
 * 与设备完全对应的**内核源码**，并已为外部模块 prepare 过。HTC 在
   [htcdev.com](https://www.htcdev.com/devcenter/downloads) 发布。
-* 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 Windows 上的 MSYS2/Git Bash
+* 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash
   （见 [Windows](#windows)）。
-* 备份。见文末的风险一节。
+* 备份（见[风险](#风险)）。
 
 ---
 

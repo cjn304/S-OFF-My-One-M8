@@ -31,9 +31,9 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   <- hboot stops arming 
   unlocking BL works too, once S-OFF the BL is yours to unlock.
 * The **exact kernel source** of your build, prepared for out-of-tree modules.
   HTC publishes it on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
-* A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash on
-  Windows (see [Windows](#windows)).
-* Backups. See the warning at the bottom.
+* A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
+  (see [Windows](#windows)).
+* Backups (see [Warnings](#warnings)).
 
 ---
 
