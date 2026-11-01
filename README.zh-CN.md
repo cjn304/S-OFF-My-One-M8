@@ -117,7 +117,7 @@ mmc0: mmc_reinit_card return 0
 如果 `/proc/partitions` 里没有 `mmcblk0`，等几秒再 `insmod` 一次 `on`（stage 2 是幂等的）。
 还是不行就只能手动断电重启，见[故障处理](#故障处理)。
 
-**查写保护。** 循环之前 `mmc_cmd wp` 会把 group 0..11 列成 `power-on`，现在必须是：
+**查写保护。** 跑 `/dev/mmc_cmd wp`，结果必须是：
 
 ```
 bitmap: 00 00 00 00 00 00 00 00
@@ -155,7 +155,7 @@ adb shell '/dev/mmc_cmd wp'
 # bitmap: 00 00 00 00 00 00 00 00
 ```
 
-最后这一步才是真凭据：flag 之所以持久，是因为保护不再被设置，而不是因为每次开机有人去补。
+为什么这才是真凭据，见[第 5 节](#5-为什么之后一直有效)。
 
 ---
 
@@ -268,34 +268,20 @@ echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC 真的断了
 同一份源码编出三个变体：`diag`（stage 3，只读）、`off`（stage 1）、`on`（stage 2，先
 `msleep(1500)` 让电放干净再上电）。
 
-期望的内核日志：
-
-```
-pwrsq: init stage=1
-pwrsq: rdev=f0326c00 name=8941_l20 use_count=4
-pwrsq: consumer 'msm_sdcc.1'
-pwrsq: mmc_host=f0032000
-pwrsq: ops->disable ret=0
-...
-pwrsq: init stage=2
-pwrsq: ops->enable ret=0
-pwrsq: detect_change queued
-mmc0: sdhci_cmd_irq: AUTO CMD err sts 0x00000002
-mmc0: mmc_reinit_card
-mmc0: mmc_reinit_card return 0
-```
-
-最后两行是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：卡回来了，分区都在，手机没重启。
+它打出来的日志就在[快速开始](#快速开始)里；这一节真正要看的是 `ops->disable ret=0`
+和 `ops->enable ret=0` 这两行 —— 它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。
+末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：卡回来了，
+分区都在，手机没重启。
 
 ### 4. 写哪一个字节
 
 ```sh
 dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
-sync; echo 3 > /proc/sys/vm/drop_caches     # 证明是从卡上读回来的，不是缓存
 ```
 
-`33792` = `0x8400`。只有最低字节变（`03` -> `00`）；`0x8404` 的标签在出厂机上本来就是
-`HTCU`。
+`33792` 就是 `0x8400`。只有最低字节变（`03` -> `00`）；`0x8404` 的标签在出厂机上本来
+就是 `HTCU`。改前改后的字节、以及之后为什么要 `drop_caches`，都在[快速开始](#快速开始)
+里；这一节要说清的是：写的是 4 个字节，记录里其它字段都不用动。
 
 `pg1fs + 0x424` 还有 4 个字节，老版 `firewater`/Sunshine 的配方会一起写。**这台机器上
 不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，

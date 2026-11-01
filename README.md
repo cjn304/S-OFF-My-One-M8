@@ -128,8 +128,7 @@ If `/proc/partitions` has no `mmcblk0`, wait a few seconds and re-`insmod` the
 `on` module (stage 2 is idempotent). Still nothing means a manual power cycle —
 see [Recovery](#recovery).
 
-**Write protection check.** Before the cycle `mmc_cmd wp` lists groups 0..11 as
-`power-on`. Now it must be:
+**Write protection check.** Run `/dev/mmc_cmd wp`. It must be:
 
 ```
 bitmap: 00 00 00 00 00 00 00 00
@@ -168,8 +167,7 @@ adb shell '/dev/mmc_cmd wp'
 # bitmap: 00 00 00 00 00 00 00 00
 ```
 
-That last check is the real proof: the flag persists because the protection is
-not re-applied, not because something patches it every boot.
+Why this is the real proof: [section 5](#5-why-it-stays-off).
 
 ---
 
@@ -293,35 +291,23 @@ Three build variants come from the same source: `diag` (stage 3, read only),
 `off` (stage 1) and `on` (stage 2, which sleeps 1.5 s first so the rail
 discharges before power is restored).
 
-Expected kernel log:
-
-```
-pwrsq: init stage=1
-pwrsq: rdev=f0326c00 name=8941_l20 use_count=4
-pwrsq: consumer 'msm_sdcc.1'
-pwrsq: mmc_host=f0032000
-pwrsq: ops->disable ret=0
-...
-pwrsq: init stage=2
-pwrsq: ops->enable ret=0
-pwrsq: detect_change queued
-mmc0: sdhci_cmd_irq: AUTO CMD err sts 0x00000002
-mmc0: mmc_reinit_card
-mmc0: mmc_reinit_card return 0
-```
-
-That last pair is HTC's own re-initialisation path in `sdhci_msm`: the card is
-back, with its partitions, without rebooting the phone.
+The log these produce is shown in [Quick start](#quick-start); the two lines that
+matter here are `ops->disable ret=0` and `ops->enable ret=0` - they mean the driver
+ops really ran instead of being short-circuited by the core.  The `mmc_reinit_card`
+pair at the end is HTC's own re-initialisation path in `sdhci_msm`: the card comes
+back, with its partitions, without rebooting.
 
 ### 4. The write
 
 ```sh
 dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
-sync; echo 3 > /proc/sys/vm/drop_caches     # prove it came off the card, not cache
 ```
 
-`33792` = `0x8400`. Only the low byte changes (`03` -> `00`); the tag at
-`0x8404` is already `HTCU` on shipping devices.
+`33792` is `0x8400`. Only the low byte changes (`03` -> `00`); the tag at
+`0x8404` is already `HTCU` on shipping devices.  The before/after bytes and the
+reason for the `drop_caches` afterwards are in [Quick start](#quick-start); what
+this section is about is that the write is 4 bytes and nothing else in the record
+has to move.
 
 There is a second 4-byte field at `pg1fs + 0x424` that the old
 `firewater`/Sunshine payload also writes. On this device it is **not** required:
