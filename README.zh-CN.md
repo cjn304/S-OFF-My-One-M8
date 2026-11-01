@@ -471,7 +471,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 移植按要重做的量分四种情况，A 到 D。
 
-**A. M7 及以前和 hboot 3.19 以前的老机型，可能不设写保护。** 这一档要先查：在 S-ON 下跑 `mmc_cmd wp`。位图全零说明 hboot 从来没设过保护，直接 `dd` 就能写 flag，模块和断电都不需要。
+**A. M7 及以前和 hboot 3.19 以前的老机型，可能不设写保护。** 代表机型：One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）。先在 S-ON 下跑 `mmc_cmd wp`：位图全零说明 hboot 从来没设过保护，直接 `dd` 就能写 flag，模块和断电都不需要。不过这些老机型的分区布局和 M8 不同：这一档省掉的只是断电，flag 写在哪里仍要按机型另算。
 
 **B. 同一世代。** 其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2 都出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
@@ -479,7 +479,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 * 安全记录结构不变 —— pg1fs 0x8400 处的 `{u32 flag; char magic[4]}`，S-ON 时读出来是 `03 00 00 00` + `HTCU`。写之前先核对这八个字节。
 * 整个工作就是重跑 `scripts/gen_addr.sh` 再取一次 `module_layout` 的 crc。
 
-**C. 同年代，驱动层要重做。** One M7（msm8960）、One M9（msm8994，3.10）、Desire 816 / 610，以及其它 msm8x26 / msm8x10 的 Desire，都落在另一层驱动上。思路照样成立，但有四件事同时变，而且每一件都能让模块“加载成功、然后做错事”：
+**C. 驱动层要重做。** One M9（msm8994，3.10）、One M8s（msm8939）、Desire 816 / 610（msm8928 / msm8926），都落在另一层驱动上。思路照样成立，但有四件事同时变，而且每一件都能让模块“加载成功、然后做错事”：
 
 1. `struct regulator` 是 `drivers/regulator/core.c` 的私有结构，本文件里存的是一份拷贝，必须按目标树重新抄。
 2. drvdata：本内核存的是 `sdhci_host`；绑老 `msm_sdcc` 驱动的变体存的是它自己的 host 结构体，从上面读 `->mmc` 拿到的是垃圾。

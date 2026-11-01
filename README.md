@@ -613,9 +613,12 @@ MMC platform device are compile-time parameters in `kmod/pwrsq_impl.h`.
 Porting falls into four cases, A to D, ordered by how much has to be redone.
 
 **A. Older devices - M7 and earlier, or hboot before 3.19 - may not set write
-protection.** Check this before anything else: run `mmc_cmd wp` on the S-ON
-device. An all-zero bitmap means hboot never armed the protection, so a plain
-`dd` sets the flag and neither the module nor the power cycle is needed.
+protection.** Examples: One M7 (msm8960), One S (msm8260A), Sensation / XE
+(msm8260), Desire HD (msm8255). Run `mmc_cmd wp` on the S-ON device first: an
+all-zero bitmap means hboot never armed the protection, so a plain `dd` sets the
+flag and neither the module nor the power cycle is needed. Their partition
+layout is not the M8's, though: what this case skips is the power cycle, not the
+offset work.
 
 **B. Same generation.** Other M8 SKUs (dual-SIM, Sprint, Verizon), the One E8,
 Butterfly 2 and One mini 2 come off the same HTC 3.4 tree. The mechanism, the
@@ -631,13 +634,12 @@ what is spelled out per board:
   bytes before writing anything.
 * `scripts/gen_addr.sh` plus a fresh `module_layout` crc is the whole job.
 
-**C. Same era, driver layer must be redone.** The One M7 (msm8960), the One M9
-(msm8994, 3.10) and the Desire 816 / 610 - plus the other msm8x26 / msm8x10
-Desires - sit on a different driver layer. The idea still applies, but four
-things change at once and each one can silently produce a module that loads and
-then does the wrong thing:
+**C. Driver layer must be redone.** The One M9 (msm8994, 3.10), the One M8s
+(msm8939) and the Desire 816 / 610 (msm8928 / msm8926) sit on a different
+driver layer. The idea still applies, but four things change at once and each
+one can silently produce a module that loads and then does the wrong thing:
 
-1. `struct regulator` is private to `drivers/regulator/core.c`; this file carries
+1. `struct regulator` is private to `drivers/regulator/core.c`; the file carries
    a copy, and it must be re-copied from the target tree.
 2. drvdata: this kernel stores `sdhci_host`; variants that bind the older
    `msm_sdcc` driver store their own host struct, and reading `->mmc` off it is
