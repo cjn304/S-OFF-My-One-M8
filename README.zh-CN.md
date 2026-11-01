@@ -413,9 +413,10 @@ dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回�
 
 ### 1. 拿源码
 
-HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)（Kernel Source Code）发布。6.0.1 这一版的包是
-`m8ul-3.4.0-perf-ga6393e1.zip`，内含 `kernel570.tar.gz`（`kernel/`）和
-`platform.tar.gz`（其余源码树）。只有 `kernel/` 有用。
+HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)
+（Kernel Source Code）发布。6.0.1 这一版的包是 `m8ul-3.4.0-perf-ga6393e1.zip`，
+内含 `kernel570.tar.gz`（`kernel/`）和 `platform.tar.gz`（其余源码树）。
+只有 `kernel/` 有用。
 
 Windows 上要注意 NTFS 大小写不敏感，而这棵树里有只差大小写的文件
 （`net/netfilter/xt_DSCP.c` 与 `xt_dscp.c`）。要么给目录开大小写敏感
