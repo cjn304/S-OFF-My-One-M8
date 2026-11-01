@@ -469,17 +469,17 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 换机型时有两件事必须同时对上，而且它们会各自独立地失败：内核侧（结构体布局、符号地址）和机型侧（供电轨名、设备名、偏移、分区名）。稳压器名字和 MMC 平台设备名是 `kmod/pwrsq_impl.h` 里的编译期参数。
 
-移植按要重做的量分四种情况，A 到 D。
+移植按要重做的量分四种情况，A 到 D，未实测。
 
-**A. M7 及以前和 hboot 3.19 以前的老机型，可能不设写保护。** 代表机型：One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）。先在 S-ON 下跑 `mmc_cmd wp`：位图全零说明 hboot 从来没设过保护，直接 `dd` 就能写 flag，模块和断电都不需要。不过这些老机型的分区布局和 M8 不同：这一档省掉的只是断电，flag 写在哪里仍要按机型另算。
+**A. hboot 版本在 3.19 以前的：** One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 从来没设过保护。直接 `dd` 就能写 flag，模块和断电都不需要，不过写在哪里仍要按机型算。
 
-**B. 同一世代。** 其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2 都出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
+**B. 同一世代的：** 其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2 都出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
 * `TARGET_VREG` 和 `TARGET_MMC_DEV` 仍是 `8941_l20` 和 `msm_sdcc.1`。这两个都是板级字符串，不是驱动名：`board-8974.c` 把 `sdhci-msm` 驱动注册的设备命名为 `msm_sdcc.1`，轨名则来自 `msm-pm8x41-rpm-regulator.dtsi`。
 * 安全记录结构不变 —— pg1fs 0x8400 处的 `{u32 flag; char magic[4]}`，S-ON 时读出来是 `03 00 00 00` + `HTCU`。写之前先核对这八个字节。
 * 整个工作就是重跑 `scripts/gen_addr.sh` 再取一次 `module_layout` 的 crc。
 
-**C. 驱动层要重做。** One M9（msm8994，3.10）、One M8s（msm8939）、Desire 816 / 610（msm8928 / msm8926），都落在另一层驱动上。思路照样成立，但有四件事同时变，而且每一件都能让模块“加载成功、然后做错事”：
+**C. 驱动层要重做的：** One M9（msm8994）、One M8s（msm8939）、Desire 816 / 610（msm8928 / msm8926），都落在另一层驱动上。思路照样成立，但有四件事同时变，而且每一件都能让模块“加载成功、然后做错事”：
 
 1. `struct regulator` 是 `drivers/regulator/core.c` 的私有结构，本文件里存的是一份拷贝，必须按目标树重新抄。
 2. drvdata：本内核存的是 `sdhci_host`；绑老 `msm_sdcc` 驱动的变体存的是它自己的 host 结构体，从上面读 `->mmc` 拿到的是垃圾。
@@ -488,7 +488,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 `pwrsq_diag.ko` 就是为了用设备实测回答第 2、3 条，而不是靠猜：它解析稳压器、打印全部 consumer 和找到的 mmc_host，且不写任何东西。
 
-**D. HTC 10 及以后。** HTC 10（`pme`）、Desire 10 pro，以及之后仍用 eMMC 的机型，没有任何一项能原样沿用。按一台 `pme` 的分区 dump 实测：bootloader 是 `aboot`；参数分区整体挪位 —— `board_info` 在 p1、`mfg` 在 p2、`pg1fs` 在 p3、`pg2fs` 在 p4 且是 23.6 MB 而不是几百 KB；`sp1` 在 p21、10 MB，屏幕 1440x2560；by-name 在 `/dev/block/platform/soc/7464900.sdhci/by-name`；内核是 3.10.84 或 3.18.20，HTC 两条分支都发布。
+**D. HTC 10 及以后的：** HTC 10（`pme`）、Desire 10 pro，以及之后仍用 eMMC 的机型，没有任何一项能原样沿用。按一台 `pme` 的分区 dump 实测：bootloader 是 `aboot`；参数分区整体挪位 —— `board_info` 在 p1、`mfg` 在 p2、`pg1fs` 在 p3、`pg2fs` 在 p4 且是 23.6 MB 而不是几百 KB；`sp1` 在 p21、10 MB，屏幕 1440x2560；by-name 在 `/dev/block/platform/soc/7464900.sdhci/by-name`；内核是 3.10.84 或 3.18.20，HTC 两条分支都发布。
 
 所以本工具要往上长，按严重程度排：
 
