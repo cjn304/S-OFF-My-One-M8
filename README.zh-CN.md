@@ -241,7 +241,7 @@ dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 
 `33792` 就是 `0x8400`。只有最低字节变（`03` -> `00`）；`0x8404` 的标签在出厂机上本来就是 `HTCU`。改前改后的字节、以及之后为什么要 `drop_caches`，都在[快速开始](#快速开始)里；这一节要说清的是：写的是 4 个字节，记录里其它字段都不用动。
 
-`pg1fs + 0x424` 还有 4 个字节，老版 `firewater`/Sunshine 的配方会一起写。**这台机器上不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，手机正常启动。不要动它。
+`pg1fs + 0x424` 还有 4 个字节，老版 Firewater/Sunshine 的配方会一起写。**这台机器上不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，手机正常启动。不要动它。
 
 ### 5. 为什么之后一直有效
 
@@ -669,7 +669,7 @@ kernel-patches/    用现代工具链编 3.4 树所需的修补
 
 * HTC 公开内核源码，以及 `sdhci_msm` 里那条 `mmc_reinit_card` —— 卡不用重启就能回来。
 * XDA/ARHD 社区关于 RUU/CID/MID 的整理，本项目的判断建立在这些之上。
-* `firewater`/Sunshine 时代的研究，把 S-OFF flag 到底是什么讲清楚了。
+* Firewater/Sunshine 时代的研究，把 S-OFF flag 到底是什么讲清楚了。
 
 ---
 

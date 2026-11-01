@@ -312,7 +312,7 @@ this section is about is that the write is 4 bytes and nothing else in the recor
 has to move.
 
 There is a second 4-byte field at `pg1fs + 0x424` that the old
-`firewater`/Sunshine payload also writes. On this device it is **not** required:
+Firewater/Sunshine payload also writes. On this device it is **not** required:
 the partition head (0..0x1000, including `0x424`) stayed byte-identical to the
 pre-change backup after a successful S-OFF, and the phone booted normally. Leave
 it alone.
@@ -886,7 +886,7 @@ kernel-patches/    fixes needed to build a 3.4 tree with a modern toolchain
 * HTC for publishing the kernel source, and for the `mmc_reinit_card` path that
   makes the card come back without a reboot.
 * The XDA/ARHD community for the RUU/CID/MID knowledge this relies on.
-* The `firewater`/Sunshine era research for documenting what the S-OFF flag is.
+* The Firewater/Sunshine era research for documenting what the S-OFF flag is.
 
 ---
 
