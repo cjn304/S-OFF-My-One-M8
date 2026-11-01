@@ -612,7 +612,12 @@ MMC platform device are compile-time parameters in `kmod/pwrsq_impl.h`.
 
 Porting falls into four cases, A to D, ordered by how much has to be redone.
 
-**A. Same generation.** Other M8 SKUs (dual-SIM, Sprint, Verizon), the One E8,
+**A. Older devices - M7 and earlier, or hboot before 3.19 - may not set write
+protection.** Check this before anything else: run `mmc_cmd wp` on the S-ON
+device. An all-zero bitmap means hboot never armed the protection, so a plain
+`dd` sets the flag and neither the module nor the power cycle is needed.
+
+**B. Same generation.** Other M8 SKUs (dual-SIM, Sprint, Verizon), the One E8,
 Butterfly 2 and One mini 2 come off the same HTC 3.4 tree. The mechanism, the
 structures and the record layout all hold; what has to be re-checked is only
 what is spelled out per board:
@@ -626,7 +631,7 @@ what is spelled out per board:
   bytes before writing anything.
 * `scripts/gen_addr.sh` plus a fresh `module_layout` crc is the whole job.
 
-**B. Same era, driver layer must be redone.** The One M7 (msm8960), the One M9
+**C. Same era, driver layer must be redone.** The One M7 (msm8960), the One M9
 (msm8994, 3.10) and the Desire 816 / 610 - plus the other msm8x26 / msm8x10
 Desires - sit on a different driver layer. The idea still applies, but four
 things change at once and each one can silently produce a module that loads and
@@ -644,7 +649,7 @@ then does the wrong thing:
 guess: it resolves the regulator, prints every consumer and the mmc_host it
 found, and writes nothing.
 
-**C. HTC 10 and later.** On the HTC 10 (`pme`), the Desire 10 pro and the later
+**D. HTC 10 and later.** On the HTC 10 (`pme`), the Desire 10 pro and the later
 models that still use eMMC, nothing carries over unchanged. Measured against a
 `pme` dump: the bootloader is `aboot`; the parameter partitions move -
 `board_info` is p1, `mfg` p2, `pg1fs` p3, `pg2fs` p4 and 23.6 MB instead of a
@@ -660,16 +665,6 @@ So this tool would have to grow, in order of severity:
    `pltfm_host->host`.
 3. Every offset in the parameter table re-derived; only the pg1fs record is
    likely to keep its shape.
-
-Two items that used to be on this list are already gone: the by-name directory is
-probed for instead of assumed (`detect_dev` in `stool.sh`), and `splash
---size=WxH` takes the panel geometry instead of hard-coding 1080x1920.
-
-**D. No write protection.** Check this before anything else: run `mmc_cmd wp`
-on the S-ON device. An all-zero bitmap means hboot never armed the protection,
-so a plain `dd` sets the flag and neither the module nor the power cycle is
-needed. Whether that holds is a property of the firmware rather than the model,
-so there is no list of phones to quote - measure the one in front of you.
 
 And from the U11 on, HTC ships UFS 2.1 instead of eMMC. There is no `mmcblk0` and
 no CMD28/29/31 write-protect group, so the mechanism this tool is built on does
