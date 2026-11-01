@@ -1,6 +1,6 @@
 # HTC-S-OFF-M8
 
-[English](README.md) | [中文](README.zh-CN.md)
+**English** | [中文](README.zh-CN.md)
 
 True **S-OFF** for the HTC One (M8) on **hboot 3.19.0.0000** — the bootloader the
 community has treated as un-S-OFF-able since 2015.
