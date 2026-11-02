@@ -47,7 +47,7 @@ scripts/stool.sh son
 
 ## stool.sh
 
-`scripts/stool.sh` 把整套流程包起来，另外还管那些跟 S-OFF 无关的参数。
+`scripts/stool.sh` 是下面全部命令的入口。除 `status`、`backup` 和 `soff` 本身，其余都要先 S-OFF —— `soff` 正是拿到 S-OFF 的那一条。
 
 ```sh
 scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
@@ -107,7 +107,7 @@ scripts/stool.sh splash --restore <sp1.img>
 
 MID 标明机型变体 —— `0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。RUU 会把镜像要求的 MID、CID 和手机上的值比对，任一对不上就拒绝刷入 —— 所以换区刷固件前通常先改这两项：`set mid` 直接写 mfg 分区，`set cid` 必须走 `fastboot oem writecid`，把 CID 改成 `11111111`（SuperCID）可以让手机接受任意 CID，但 MID 的检查依然有效。各固件包对应的 MID/CID 见[这份 M8 固件表](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
 
-### 红字
+### 开机红字
 
 `noredtext` 是按内容找那六行，不是写死偏移。它先把整个 4 MB 的 `hboot` 分区 dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回，再逐字节读回校验。偏移在不同构建之间是变动的——6.12.1540.4 上是 `0x8C340`，6.31.1402.1 的 dump 上是 `0x8C3F8`，更老的 m8_ul 镜像上是 `0x899CE`——所以必须动态找。
 
@@ -116,7 +116,7 @@ MID 标明机型变体 —— `0P6B62000` 是国行联通版，`0P6B12000` 是 D
 - hboot 带 HTC 签名，改字节就会破坏签名，全靠 S-OFF 让 SBL 跳过校验。S-ON 时绝对不能碰，并且一定要保留 dump 出来的 `<ts>.hboot.img`——`noredtext --restore` 就是把它原样写回去。
 - 6.12.1540.4 这块 hboot 里，这六个字符串**没有任何静态引用**。绝对地址、文件偏移、低 20 位匹配、ARM 与 Thumb 的 `movw`/`movt`、代码段 literal pool，全部扫过，一个都没有。说明横幅是运行期装配的，所以改字符串本身是唯一安全的最小改动，不存在"参数可改的绘制函数"可找。
 
-### 开机第一屏
+### 第一屏
 
 `splash` 把 PNG 转成 `sp1` 分区真正的格式：小端 RGB565，默认 1080x1920（4,147,200 字节），`--size=WxH` 可以改成其它尺寸；分区其余部分是填充。写之前会先拿帧大小和分区大小比一遍，装不下就直接停。
 
@@ -133,8 +133,6 @@ MID 标明机型变体 —— `0P6B62000` 是国行联通版，`0P6B12000` 是 D
 以前固定是 `stretch`，一张 1920×1080 的照片会被悄悄压成 1080×1920。现在默认 `contain`，因为"带黑边的开机图"比"被拉变形的 logo"是更小的错误。
 
 这个转换器检查的是容器不是内容：PNG 能不能读、色彩类型和位深支不支持、结果是不是正好 4,147,200 字节、写进去的字节读回是否一致。它没法告诉你图片是倒的、全黑、全白，或者分辨率太低糊成一片——这些只能你自己看。
-
-`noredtext` 和 `splash` 都要求 S-OFF、先整分区备份、写完读回校验。
 
 ---
 

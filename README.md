@@ -65,8 +65,9 @@ scripts/stool.sh son
 
 ## stool.sh
 
-`scripts/stool.sh` wraps the whole procedure, plus the parameters that have
-nothing to do with S-OFF.
+`scripts/stool.sh` is the entry point for every command below. All of them
+need S-OFF except `status`, `backup` and `soff` itself, which is the one that
+gets you there.
 
 ```sh
 scripts/stool.sh status                  # S state + every parameter (Android or fastboot)
@@ -151,7 +152,7 @@ phone accept any CID - the MID check still applies. What each package expects
 is listed in
 [this M8 firmware sheet](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0).
 
-### Red text
+### Red text at boot
 
 `noredtext` finds the six lines by content, not by a hard-coded offset.  It
 dumps the whole 4 MB `hboot` partition, searches for the six strings, blanks
@@ -171,7 +172,7 @@ Two things to know before running it:
   the only safe edit - there is no "draw function" with a patchable argument to
   find.
 
-### First boot screen
+### First screen
 
 `splash` converts a PNG into what the `sp1` partition actually holds:
 little-endian RGB565, 1080x1920 (4,147,200 bytes) unless `--size=WxH` says
@@ -201,9 +202,6 @@ readable, the colour type and bit depth are supported, the result is exactly
 4,147,200 bytes, and the written bytes read back identical.  It cannot tell you
 that the image is upside down, all black, all white, or too low resolution to
 look good - that is on you.
-
-`noredtext` and `splash` both need S-OFF, back up their target partition first,
-and verify by reading the bytes back.
 
 ---
 
