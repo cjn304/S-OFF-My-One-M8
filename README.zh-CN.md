@@ -343,7 +343,7 @@ S-OFF 状态就是 `pg1fs` 里的一个字节：
 | 偏移 | 含义 | S-ON | S-OFF |
 |---|---|---|---|
 | `0x8400` | secure flag（u32 LE） | `03 00 00 00` | `00 00 00 00` |
-| `0x8404` | bootloader 锁状态 magic | `HTCU` 解锁 / `00000000` 锁定 | 不变 |
+| `0x8404` | BL 状态 magic | `HTCU` 解锁 / `00000000` 锁定 | 不变 |
 
 `fastboot oem readsecureflag` 读的就是这个值，`getvar all` 里的 `version-misc: PVT SHIP S-ON/S-OFF` 和 `security: on/off` 也都是从它推出来的。
 

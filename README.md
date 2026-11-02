@@ -511,7 +511,7 @@ The S-OFF state is one byte in the `pg1fs` partition:
 | offset | meaning | S-ON | S-OFF |
 |---|---|---|---|
 | `0x8400` | secure flag (u32 LE) | `03 00 00 00` | `00 00 00 00` |
-| `0x8404` | bootloader lock magic | `HTCU` unlocked / `00000000` locked | unchanged |
+| `0x8404` | BL state magic | `HTCU` unlocked / `00000000` locked | unchanged |
 
 `fastboot oem readsecureflag` reads exactly this value, and `getvar all` derives
 `version-misc: PVT SHIP S-ON/S-OFF` and `security: on/off` from it.
