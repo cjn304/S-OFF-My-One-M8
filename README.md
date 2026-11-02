@@ -79,8 +79,8 @@ scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
 scripts/stool.sh set tamper <0|4>        # 0 = Official, 4 = Modified
 scripts/stool.sh set secure <0|3>        # 0 = S-OFF, 3 = S-ON
-scripts/stool.sh lock bootloader         # BL magic -> locked   (no htcdev token)
-scripts/stool.sh unlock bootloader       # BL magic -> unlocked (no htcdev token)
+scripts/stool.sh lock bootloader         # BL magic -> locked
+scripts/stool.sh unlock bootloader       # BL magic -> unlocked
 scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
 scripts/stool.sh noredtext --restore <hboot.img>
 scripts/stool.sh splash photo.png        # first boot screen, 1080x1920 by default
@@ -106,21 +106,12 @@ the flag and reads it back, with no power cycle and no reboot. That is what a
 restore needs afterwards - putting `pg1fs.img` back sets `0x8400` to `03` -
 and what `3` needs when `son`'s reboot is not wanted.
 
-**CID, MID and flashing.** MID names the model variant - `0P6B62000` is the
-China Unicom M8, `0P6B12000` the Dev Edition - and CID names the carrier or
-region (`HTCCN703` for China Unicom). An RUU checks both against the image and
-refuses to flash when either does not match, which is why changing them is the
-usual prerequisite for another region's firmware: `set mid` writes the mfg
-partition, `set cid` has to go through `fastboot oem writecid`, and CID
-`11111111` (SuperCID) makes the phone accept any CID - the MID check still
-applies. What each package expects is listed in
-[this M8 firmware sheet](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0).
-
 `lock bootloader` / `unlock bootloader` write the four bytes at `pg1fs` (p2)
 0x8404 directly: `HTCU` = unlocked, `00000000` = locked. That is the same magic
-hboot compares at boot, so once the device is S-OFF no unlock token is involved.
-`fastboot oem lock` is not used either — it only produces `RELOCKED`, and hboot
-3.19 has no `oem unlock` command at all (`[ERR] Command error`).
+hboot compares at boot, so once the device is S-OFF no htcdev-issued unlock
+code is needed. `fastboot oem lock` is not used either — it only produces
+`RELOCKED`, and hboot 3.19 has no `oem unlock` command at all
+(`[ERR] Command error`).
 
 What a snapshot holds:
 
@@ -148,7 +139,19 @@ this tool. The whole set is ~196 MB and takes about a minute over USB.
 | red text | `hboot` (p26), six strings located at run time | dd, S-OFF only |
 | first screen | `sp1` (p12) @ 0, 1080x1920 RGB565 | dd, S-OFF only |
 
-### Red text and the first screen
+### CID, MID and flashing
+
+MID names the model variant - `0P6B62000` is the China Unicom M8, `0P6B12000`
+the Dev Edition - and CID names the carrier or region (`HTCCN703` for China
+Unicom). An RUU checks both against the image and refuses to flash when either
+does not match, which is why changing them is the usual prerequisite for
+another region's firmware: `set mid` writes the mfg partition, `set cid` has to
+go through `fastboot oem writecid`, and CID `11111111` (SuperCID) makes the
+phone accept any CID - the MID check still applies. What each package expects
+is listed in
+[this M8 firmware sheet](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0).
+
+### Red text
 
 `noredtext` finds the six lines by content, not by a hard-coded offset.  It
 dumps the whole 4 MB `hboot` partition, searches for the six strings, blanks
@@ -167,6 +170,8 @@ Two things to know before running it:
   code section.  The banner is assembled at run time, so blanking the strings is
   the only safe edit - there is no "draw function" with a patchable argument to
   find.
+
+### First boot screen
 
 `splash` converts a PNG into what the `sp1` partition actually holds:
 little-endian RGB565, 1080x1920 (4,147,200 bytes) unless `--size=WxH` says
@@ -197,8 +202,8 @@ readable, the colour type and bit depth are supported, the result is exactly
 that the image is upside down, all black, all white, or too low resolution to
 look good - that is on you.
 
-Both commands need S-OFF, back up the whole target partition first, and verify
-by reading the bytes back.
+`noredtext` and `splash` both need S-OFF, back up their target partition first,
+and verify by reading the bytes back.
 
 ---
 
