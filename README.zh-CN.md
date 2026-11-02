@@ -6,7 +6,7 @@
 
 这不是内存破坏漏洞。hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规范只有掉电才清除。所有用户态的通路都被堵死，所以这里用一个小内核模块在内核态把 PMIC 的电真断一次再上电，最后写 hboot 读的那一个字节。
 
-已在 HTC One M8，hboot 3.19.0.0000 上[测试成功](#实测记录)（其它机型见[移植](#7-移植)）。
+已在 HTC One M8，hboot 3.19.0.0000 上[测试成功](#实测记录)（其它机型见[移植](#8-移植)）。
 
 ---
 
@@ -205,7 +205,36 @@ cat kmod/addr.h
 * 五个地址都是普通代码符号，`CONFIG_KALLSYMS_ALL=n` 也能在 `/proc/kallsyms` 里看到（前提是 `kptr_restrict` 为 0）；
 * `A_MODULE_LAYOUT_CRC` 是从设备上原厂模块的 `__versions` 里读出来的（`scripts/get_module_layout_crc.py`）。它是内核编译时 genksyms 给 `module_layout` 算的 crc，猜不出来。
 
-### 6. 编译
+### 6. 参数偏移
+
+`kmod/addr.h` 管的是内核符号；参数偏移不由任何脚本生成 —— 它们是 `stool.sh` 里的常量（`OFF_CID` 那一组），分区布局一变就得重新定位。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
+
+```sh
+for p in board_info mfg misc pg1fs pg2fs hboot sp1; do
+	adb shell "su -c 'dd if=/dev/block/bootdevice/by-name/$p of=/sdcard/$p.img'"
+	adb pull /sdcard/$p.img
+done
+```
+
+`su -c` 是按 Magisk 环境写的；`adb shell` 本身就是 root 时去掉它。
+
+| 字段 | 位置 | M8 上的值 | 怎么定位的 |
+|---|---|---|---|
+| CID | `board_info` p3 | 0x14，8 字符 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
+| MID | `mfg` p5 | 0x4000，9 字符 UTF-16LE | `modelid` 字符串的 UTF-16LE 编码 |
+| version | `misc` p24 | 0xA0，16 字节 ASCII | `version-main` 字符串 |
+| tamper | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时读作 4，Official 时是 0 |
+| secure | `pg1fs` p2 | 0x8400，u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
+| BL lock | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
+| 红字 | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
+| 第一屏 | `sp1` p12 | 0 | 画面从 0 开始：W x H x 2 字节 |
+
+换构建时重复这套流程，有两条规矩：
+
+- 搜设备已经告诉你的东西（`cidnum`、`modelid`、`version-main`、hboot 那行状态），不要猜偏移；同一个值回头还能验证你找到的位置。
+- 每次写完先 `sync` + `drop_caches` 再回读。写保护还在时，写入“成功”只是更新了页缓存 —— 这也是 `write_hex` 坚持回读而不是相信 `dd` 的原因。
+
+### 7. 编译
 
 ```sh
 scripts/build.sh /path/to/kernel-tree
@@ -241,7 +270,7 @@ make -C tools CROSS=arm-none-linux-gnueabihf-
 
 `soff` 会把它推到 `/dev`（tmpfs）并以 root 运行。没有它，`soff` 会在动手机之前停下：写保护检查是唯一能证明断电生效的依据。
 
-### 7. 移植
+### 8. 移植
 
 参考构建是：
 
