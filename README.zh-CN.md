@@ -15,13 +15,13 @@
 * [解锁 BL](http://www.htcdev.com/bootloader/) 并 root，比如用 Magisk，或刷入自带 root 的固件。内核得能加载模块：M8 的 LineageOS 17.1 就不行。不解锁 BL 找到一些办法临时 root 也可以，S-OFF 之后 BL 就随便解锁。
 * 与固件接近的内核源码，HTC 官方的在 [htcdev.com](https://www.htcdev.com/devcenter/downloads) 发布。
 * 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows](#windows)）。
-* 备份（见[风险](#风险)）和准备（见[构建](#构建)）。
+* 备份（见[风险](#风险)）和[构建](#构建)。
 
 ---
 
 ## 快速开始
 
-下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反 —— 重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。`stool.sh status`、`soff` 和 `son` 会自己探测 root；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。见[期望输出与故障处理](#期望输出与故障处理)。
+下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反 —— 重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。`stool.sh status`、`soff` 和 `son` 会自己探测 root；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。[期望输出与故障处理](#期望输出与故障处理)。
 
 ```sh
 # 0. 检查 root、S 状态、modules_disabled、SELinux
@@ -157,6 +157,8 @@ sh kernel/scripts/extract-ikconfig vmlinux.bin > m8.config
 grep -E 'CONFIG_MODULES|CONFIG_MODVERSIONS|CONFIG_LOCALVERSION' m8.config
 ```
 
+`dd` 需要 root：官方 ROM 上写成 `adb shell 'su -c "dd …"'`；这个块里其余命令都在主机上跑。
+
 `UTS_RELEASE` 最后必须正好是 `3.4.0-perf-ga6393e1`。因为压缩包里没有 git 历史，`setlocalversion` 补不出 `-ga6393e1` 后缀，直接写进配置：
 
 ```sh
@@ -237,7 +239,7 @@ strings kmod/pwrsq_on.ko | grep vermagic=
 nm -u kmod/pwrsq_on.ko                           # 什么都不输出
 ```
 
-`__versions` 必须正好有一条（`module_layout`）。如果是空的，说明编译时没带上 `addr.h`，或者结构体被优化掉了。
+`__versions` 必须正好有一条（`module_layout`，整段 64 字节）。如果是空的，说明这个段没进 `.ko` —— 检查 `pwrsq_impl.h` 里 `section("__versions"), used` 的属性还在，以及你看的是不是刚编出来的模块。
 
 `build.sh` 不管用户态那个小工具；`tools/mmc_cmd` 也没有入库，它是一个静态链接的 ARM 可执行文件：
 
@@ -245,7 +247,7 @@ nm -u kmod/pwrsq_on.ko                           # 什么都不输出
 make -C tools CROSS=arm-none-linux-gnueabihf-
 ```
 
-推到 `/dev`（tmpfs）以 root 运行，见[快速开始](#快速开始)。没有它，`stool.sh soff` 会在动手机之前停下：写保护检查是唯一能证明断电生效的依据。
+`soff` 会把它推到 `/dev`（tmpfs）并以 root 运行。没有它，`soff` 会在动手机之前停下：写保护检查是唯一能证明断电生效的依据。
 
 ### 7. 移植
 
@@ -258,7 +260,7 @@ make -C tools CROSS=arm-none-linux-gnueabihf-
 | 测试过的固件 | 6.31.1402.1，之后是 6.12.1540.4（都是 Android 6.0.1） |
 | 内核 | `3.4.0-perf-ga6393e1`（2016-01）/ `3.4.0-perf-g708019f`（2015-11） |
 | hboot | `3.19.0.0000` |
-| root | Magisk 20.1（`su`）、SELinux Permissive、`modules_disabled=0` |
+| root | Magisk 20.1（`su`）、`modules_disabled=0` |
 
 MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷了 Dev 固件，所以上面列了两个构建。
 
@@ -271,7 +273,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 **B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
 * `TARGET_VREG` 和 `TARGET_MMC_DEV` 仍是 `8941_l20` 和 `msm_sdcc.1`。这两个都是板级字符串，不是驱动名：`board-8974.c` 把 `sdhci-msm` 驱动注册的设备命名为 `msm_sdcc.1`，轨名则来自 `msm-pm8x41-rpm-regulator.dtsi`。
-* 安全记录结构不变 —— pg1fs 0x8400 处的 `{u32 flag; char magic[4]}`，S-ON 时读出来是 `03 00 00 00` + `HTCU`。写之前先核对这八个字节。
+* 安全记录结构不变 —— pg1fs 0x8400 处的 `{u32 flag; char magic[4]}`，S-ON 时前四字节是 `03 00 00 00`；紧跟的四字节是 bootloader 锁状态 magic，只有解锁时才是 `HTCU`。写之前先核对这八个字节。
 * 整个工作就是重跑 `scripts/gen_addr.sh` 再取一次 `module_layout` 的 crc。
 
 **C. 驱动层要重做的：** 如 One M9（msm8994）、One M8s（msm8939）、Desire 816 / 610（msm8928 / msm8926），都落在另一层驱动上。思路照样成立，但有四件事同时变，而且每一件都能让模块“加载成功、然后做错事”：
@@ -304,7 +306,7 @@ S-OFF 状态就是 `pg1fs` 里的一个字节：
 | 偏移 | 含义 | S-ON | S-OFF |
 |---|---|---|---|
 | `0x8400` | secure flag（u32 LE） | `03 00 00 00` | `00 00 00 00` |
-| `0x8404` | 标签 | `"HTCU"` | `"HTCU"` |
+| `0x8404` | bootloader 锁状态 magic | `HTCU` 解锁 / `00000000` 锁定 | 不变 |
 
 `fastboot oem readsecureflag` 读的就是这个值，`getvar all` 里的 `version-misc: PVT SHIP S-ON/S-OFF` 和 `security: on/off` 也都是从它推出来的。
 
@@ -373,7 +375,7 @@ eMMC 消失了，`mmcblk0*` 全没了 —— 除了重启没有回头路。这�
 
 同一份源码编出三个变体：`diag`（stage 3，只读）、`off`（stage 1）、`on`（stage 2，先 `msleep(1500)` 让电放干净再上电）。
 
-它打出来的日志就在[快速开始](#快速开始)里；这一节真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行 —— 它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：eMMC 回来了，分区都在，手机没重启。
+它打出来的日志在[诊断](#诊断)里；这一节真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行 —— 它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：eMMC 回来了，分区都在，手机没重启。
 
 ### 4. 写哪一个字节
 
@@ -381,7 +383,7 @@ eMMC 消失了，`mmcblk0*` 全没了 —— 除了重启没有回头路。这�
 dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 ```
 
-`33792` 就是 `0x8400`。只有最低字节变（`03` -> `00`）；`0x8404` 的标签在出厂机上本来就是 `HTCU`。改前改后的字节、以及之后为什么要 `drop_caches`，都在[快速开始](#快速开始)里；这一节要说清的是：写的是 4 个字节，记录里其它字段都不用动。
+`33792` 就是 `0x8400`。只有最低字节变（`03` -> `00`），上面三个本来就是 0。`0x8404` 那 4 个字节是 bootloader 的锁状态，不属于 flag —— `HTCU` 解锁、`00000000` 锁定 —— 只写 0x8400 时它原样不动。回读和之后为什么要 `drop_caches`，见[写 flag](#写-flag)；这一节要说清的是：只有一个字节变。
 
 `pg1fs + 0x424` 还有 4 个字节，老版 Firewater/Sunshine 的配方会一起写。**这台机器上不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，手机正常启动。不要动它。
 
@@ -483,7 +485,7 @@ pwrsq: done
 
 `name=8941_l20` 说明稳压器找到了；`consumer 'msm_sdcc.1'` 加上非空的 `mmc_host` 说明重扫这条路能用。`Failed to create debugfs directory` 是无害的（重复的 consumer 目录）。`regulator 8941_l20 not found - wrong device/kernel?` 说明模块和这个内核不匹配，就停在这里。
 
-#### 静默（quiesce）
+#### 静默
 
 `== quiesce ==` —— `framework stopped, caches flushed`，也就是 `stop`、一次 `sleep`、两次 `sync`。eMMC 马上要断电，不能有人正在写。
 
@@ -538,7 +540,7 @@ adb shell 'dmesg | grep -i "card status"'
 
 ### 还原备份
 
-S-OFF 之后固件分区可写，还原就是普通的 `dd`：
+S-OFF 之后固件分区可写，还原就是普通的 `dd`，同样要以 root 运行（Magisk 上套 `su -c`）：
 
 ```sh
 adb push backup/<ts>.pg1fs.img /dev/pg1fs.img

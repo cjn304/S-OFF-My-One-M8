@@ -26,8 +26,7 @@ regulator ops directly, followed by writing the one byte hboot reads.
   ones on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
   (see [Windows](#windows)).
-* Backups (see [Warnings](#warnings)) and preparation
-  (see [Building](#building)).
+* Backups (see [Warnings](#warnings)) and [Building](#building).
 
 ---
 
@@ -39,7 +38,8 @@ The commands below assume `adb shell` is root: a userdebug or eng ROM, where
 inside the su command, or the non-root shell performs it first and fails with
 `Permission denied`. `stool.sh status`, `soff` and `son` find root on their own;
 `gen_addr.sh` needs none: once `kptr_restrict` is 0, `/proc/kallsyms` is
-world-readable. See [troubleshooting](#expected-output-and-troubleshooting).
+world-readable.
+[Expected output and troubleshooting](#expected-output-and-troubleshooting).
 
 ```sh
 # 0. check root, S state, modules_disabled, SELinux
@@ -96,11 +96,11 @@ partitions, plus a txt with a readable summary and a
 `set secure 0` refuses to run while S-ON: writing the flag needs the write
 protection cleared, and clearing it is what `soff` does.
 
-`lock bootloader` / `unlock bootloader` write the four bytes at `pg1fs` (p2) 0x8404 directly:
-`HTCU` = unlocked, `00000000` = locked. That is the same magic hboot compares at
-boot, so once the device is S-OFF no unlock token is involved. `fastboot oem lock`
-is not used either — it only produces `RELOCKED`, and hboot 3.19 has no
-`oem unlock` command at all (`[ERR] Command error`).
+`lock bootloader` / `unlock bootloader` write the four bytes at `pg1fs` (p2)
+0x8404 directly: `HTCU` = unlocked, `00000000` = locked. That is the same magic
+hboot compares at boot, so once the device is S-OFF no unlock token is involved.
+`fastboot oem lock` is not used either — it only produces `RELOCKED`, and hboot
+3.19 has no `oem unlock` command at all (`[ERR] Command error`).
 
 What a snapshot holds:
 
@@ -148,10 +148,10 @@ Two things to know before running it:
   the only safe edit - there is no "draw function" with a patchable argument to
   find.
 
-`splash` converts a PNG into what the `sp1` partition actually holds: little-endian
-RGB565, 1080x1920 (4,147,200 bytes) unless `--size=WxH` says otherwise; the rest of
-the partition is padding.  The frame size is checked against the partition size
-before anything is written.
+`splash` converts a PNG into what the `sp1` partition actually holds:
+little-endian RGB565, 1080x1920 (4,147,200 bytes) unless `--size=WxH` says
+otherwise; the rest of the partition is padding.  The frame size is checked
+against the partition size before anything is written.
 
 The conversion is done by `scripts/png2rgb565.py`, pure standard
 library on purpose (a bare Windows box has no ffmpeg, no PIL, no ImageMagick).
@@ -219,6 +219,9 @@ EOF
 sh kernel/scripts/extract-ikconfig vmlinux.bin > m8.config
 grep -E 'CONFIG_MODULES|CONFIG_MODVERSIONS|CONFIG_LOCALVERSION' m8.config
 ```
+
+The `dd` needs root: on a Magisk ROM write it as
+`adb shell 'su -c "dd …"'`. Everything else in this block runs on the host.
 
 `UTS_RELEASE` has to end up as `3.4.0-perf-ga6393e1`. Because the tarball has no
 git history, `setlocalversion` cannot append the `-ga6393e1` suffix, so put it
@@ -314,8 +317,10 @@ strings kmod/pwrsq_on.ko | grep vermagic=
 nm -u kmod/pwrsq_on.ko                           # prints nothing
 ```
 
-`__versions` must contain exactly one entry (`module_layout`). If it is empty,
-the module was built without `addr.h` or the struct was optimised away.
+`__versions` must contain exactly one entry (`module_layout`, 64 bytes in all).
+If it is empty, the section never made it into the `.ko`: check that
+`pwrsq_impl.h` still carries `section("__versions"), used`, and that you are
+looking at the module you just built.
 
 `build.sh` does not build the userspace helper; `tools/mmc_cmd` is not committed
 either, it is a static ARM binary:
@@ -324,9 +329,9 @@ either, it is a static ARM binary:
 make -C tools CROSS=arm-none-linux-gnueabihf-
 ```
 
-Push it to `/dev` (tmpfs) and run it as root, as in [Quick start](#quick-start).
-Without it `stool.sh soff` stops before touching the phone: the write-protection
-check is the only thing that proves the power cycle worked.
+`soff` pushes it to `/dev` (tmpfs) and runs it as root. Without it `soff` stops
+before touching the phone: the write-protection check is the only thing that
+proves the power cycle worked.
 
 ### 7. Porting
 
@@ -339,7 +344,7 @@ The reference build is:
 | firmware tested | 6.31.1402.1, then 6.12.1540.4 (both Android 6.0.1) |
 | kernel | `3.4.0-perf-ga6393e1` (Jan 2016) / `3.4.0-perf-g708019f` (Nov 2015) |
 | hboot | `3.19.0.0000` |
-| root | Magisk 20.1 (`su`), SELinux permissive, `modules_disabled=0` |
+| root | Magisk 20.1 (`su`), `modules_disabled=0` |
 
 MID and CID are the values the phone shipped with; the reference unit was later
 switched to `0P6B12000` / `11111111` and re-flashed with the Dev firmware, which
@@ -374,8 +379,9 @@ re-checking:
   device under the name `msm_sdcc.1`, and the rail name comes from
   `msm-pm8x41-rpm-regulator.dtsi`.
 * The security record keeps its shape - `{u32 flag; char magic[4]}` at pg1fs
-  0x8400, reading `03 00 00 00` + `HTCU` on an S-ON device. Check those eight
-  bytes before writing anything.
+  0x8400, `03 00 00 00` in the first four on an S-ON device. The four after it
+  are the bootloader lock magic, `HTCU` only while the bootloader is unlocked.
+  Check those eight bytes before writing anything.
 * `scripts/gen_addr.sh` plus a fresh `module_layout` crc is the whole job.
 
 **C. Driver layer must be redone:** e.g. One M9 (msm8994), One M8s (msm8939),
@@ -426,7 +432,7 @@ The S-OFF state is one byte in the `pg1fs` partition:
 | offset | meaning | S-ON | S-OFF |
 |---|---|---|---|
 | `0x8400` | secure flag (u32 LE) | `03 00 00 00` | `00 00 00 00` |
-| `0x8404` | tag | `"HTCU"` | `"HTCU"` |
+| `0x8404` | bootloader lock magic | `HTCU` unlocked / `00000000` locked | unchanged |
 
 `fastboot oem readsecureflag` reads exactly this value, and `getvar all` derives
 `version-misc: PVT SHIP S-ON/S-OFF` and `security: on/off` from it.
@@ -519,11 +525,11 @@ Three build variants come from the same source: `diag` (stage 3, read only),
 `off` (stage 1) and `on` (stage 2, which sleeps 1.5 s first so the rail
 discharges before power is restored).
 
-The log these produce is shown in [Quick start](#quick-start); the two lines that
-matter here are `ops->disable ret=0` and `ops->enable ret=0` - they mean the driver
-ops really ran instead of being short-circuited by the core.  The `mmc_reinit_card`
-pair at the end is HTC's own re-initialisation path in `sdhci_msm`: the eMMC comes
-back, with its partitions, without rebooting.
+The log these produce is in [diagnostic](#diagnostic); the two lines that matter
+here are `ops->disable ret=0` and `ops->enable ret=0` - they mean the driver ops
+really ran instead of being short-circuited by the core.  The `mmc_reinit_card`
+pair at the end is HTC's own re-initialisation path in `sdhci_msm`: the eMMC
+comes back, with its partitions, without rebooting.
 
 ### 4. The write
 
@@ -531,11 +537,12 @@ back, with its partitions, without rebooting.
 dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 ```
 
-`33792` is `0x8400`. Only the low byte changes (`03` -> `00`); the tag at
-`0x8404` is already `HTCU` on shipping devices.  The before/after bytes and the
-reason for the `drop_caches` afterwards are in [Quick start](#quick-start); what
-this section is about is that the write is 4 bytes and nothing else in the record
-has to move.
+`33792` is `0x8400`. Only the lowest byte changes (`03` -> `00`); the upper
+three are already zero. The 4-byte magic at `0x8404` is the bootloader lock
+state, not part of the flag - `HTCU` unlocked, `00000000` locked - and writing
+the flag leaves it as it was. The read-back and the `drop_caches` that makes it
+trustworthy are in [write flag](#write-flag); what matters here is that exactly
+one byte moves.
 
 There is a second 4-byte field at `pg1fs + 0x424` that the old
 Firewater/Sunshine payload also writes. On this device it is **not** required:
@@ -751,7 +758,8 @@ written and read back by then.
 
 ### Restoring a backup
 
-With S-OFF the firmware partitions are writable, so a restore is a plain `dd`:
+With S-OFF the firmware partitions are writable, so a restore is a plain `dd`.
+Run it as root - on a Magisk ROM that means `su -c`, as everywhere else:
 
 ```sh
 adb push backup/<ts>.pg1fs.img /dev/pg1fs.img
@@ -935,8 +943,8 @@ a file is derived from:
 
 `kmod/` is a Linux kernel module. It includes GPL-2.0-only kernel headers,
 carries a verbatim copy of `struct regulator` from `drivers/regulator/core.c`
-and is loaded into a GPL-2.0-only kernel, so it is GPL-2.0-only as well — GPL-3.0
-cannot be used there, the two versions cannot be combined. It declares
+and is loaded into a GPL-2.0-only kernel, so it is GPL-2.0-only as well —
+GPL-3.0 cannot be used there, the two versions cannot be combined. It declares
 `MODULE_LICENSE("GPL v2")`, which is the kernel's tag for v2-only; bare `"GPL"`
 would mean v2-or-later. The userland side reaches the kernel only through
 syscalls, so GPL-3.0-or-later is a choice, not a constraint.
