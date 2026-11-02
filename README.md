@@ -611,19 +611,19 @@ side (rail name, device name, offsets, partition names). The regulator name and
 MMC platform device are compile-time parameters in `kmod/pwrsq_impl.h`.
 
 Porting falls into four cases, A to D, ordered by how much has to be redone.
+None of them was tested here.
 
-**A. Older devices - M7 and earlier, or hboot before 3.19 - may not set write
-protection.** Examples: One M7 (msm8960), One S (msm8260A), Sensation / XE
-(msm8260), Desire HD (msm8255). Run `mmc_cmd wp` on the S-ON device first: an
-all-zero bitmap means hboot never armed the protection, so a plain `dd` sets the
-flag and neither the module nor the power cycle is needed. Their partition
-layout is not the M8's, though: what this case skips is the power cycle, not the
-offset work.
+**A. hboot before 3.19:** e.g. One M7 (msm8960), One S (msm8260A),
+Sensation / XE (msm8260), Desire HD (msm8255), plus the B-tier devices that
+never got a system update. They may not set write protection at all: run
+`mmc_cmd wp` while S-ON, and an all-zero bitmap means hboot never armed it. A
+plain `dd` writes the flag with neither the module nor the power cycle - though
+where to write still depends on the model.
 
-**B. Same generation.** Other M8 SKUs (dual-SIM, Sprint, Verizon), the One E8,
-Butterfly 2 and One mini 2 come off the same HTC 3.4 tree. The mechanism, the
-structures and the record layout all hold; what has to be re-checked is only
-what is spelled out per board:
+**B. Same generation:** e.g. other M8 variants (dual-SIM, Sprint, Verizon),
+One E8, Butterfly 2, One mini 2 - all off the same HTC 3.4 tree. The mechanism,
+the structures and the record layout hold; only the board-level items need
+re-checking:
 
 * `TARGET_VREG` and `TARGET_MMC_DEV` stay `8941_l20` and `msm_sdcc.1`. Both are
   board strings, not driver names: `board-8974.c` registers the `sdhci-msm`
@@ -634,10 +634,10 @@ what is spelled out per board:
   bytes before writing anything.
 * `scripts/gen_addr.sh` plus a fresh `module_layout` crc is the whole job.
 
-**C. Driver layer must be redone.** The One M9 (msm8994, 3.10), the One M8s
-(msm8939) and the Desire 816 / 610 (msm8928 / msm8926) sit on a different
-driver layer. The idea still applies, but four things change at once and each
-one can silently produce a module that loads and then does the wrong thing:
+**C. Driver layer must be redone:** e.g. One M9 (msm8994), One M8s (msm8939),
+Desire 816 / 610 (msm8928 / msm8926) - all on a different driver layer. The idea
+still applies, but four things change at once, and each one can produce a
+module that loads and then does the wrong thing:
 
 1. `struct regulator` is private to `drivers/regulator/core.c`; the file carries
    a copy, and it must be re-copied from the target tree.
@@ -651,26 +651,25 @@ one can silently produce a module that loads and then does the wrong thing:
 guess: it resolves the regulator, prints every consumer and the mmc_host it
 found, and writes nothing.
 
-**D. HTC 10 and later.** On the HTC 10 (`pme`), the Desire 10 pro and the later
-models that still use eMMC, nothing carries over unchanged. Measured against a
-`pme` dump: the bootloader is `aboot`; the parameter partitions move -
-`board_info` is p1, `mfg` p2, `pg1fs` p3, `pg2fs` p4 and 23.6 MB instead of a
-few hundred KB; `sp1` is p21, 10 MB, on a 1440x2560 panel; by-name lives under
-`/dev/block/platform/soc/7464900.sdhci/by-name`; the kernel is 3.10.84 or
-3.18.20, and HTC publishes both branches.
+**D. HTC 10 and later:** e.g. Desire 10 pro and the later models that still use
+eMMC; nothing carries over unchanged. From the HTC 10 partition table on XDA
+(thread 3374048): the bootloader is `aboot`; the parameter partitions move -
+`board_info` at p1, `mfg` p2, `pg1fs` p3, `pg2fs` p4 and 23.6 MB instead of a
+few hundred KB; `sp1` at p21, 10 MB, on a 1440x2560 panel; by-name under
+`/dev/block/platform/soc/7464900.sdhci/by-name`.
 
-So this tool would have to grow, in order of severity:
+Porting to them, in order of severity:
 
-1. `struct regulator` re-copied per branch - 3.10 and 3.18 differ from 3.4 and
+1. `struct regulator` re-copied per branch - newer kernels differ from 3.4 and
    from each other.
 2. drvdata: newer kernels store `sdhci_pltfm_host` and expect
    `pltfm_host->host`.
 3. Every offset in the parameter table re-derived; only the pg1fs record is
    likely to keep its shape.
 
-And from the U11 on, HTC ships UFS 2.1 instead of eMMC. There is no `mmcblk0` and
-no CMD28/29/31 write-protect group, so the mechanism this tool is built on does
-not exist on those phones regardless of how much of the rest is ported.
+And from the U11 on, HTC ships UFS 2.1 instead of eMMC. There is no `mmcblk0`
+and no CMD28/29/31 write-protect group, so the mechanism this tool is built on
+does not exist on those phones regardless of how much of the rest is ported.
 
 ---
 
