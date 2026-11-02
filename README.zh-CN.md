@@ -47,7 +47,7 @@ scripts/stool.sh son
 
 ## stool.sh
 
-`scripts/stool.sh` 是下面全部命令的入口。除 `status`、`backup` 和 `soff` 本身，其余都要先 S-OFF。
+`scripts/stool.sh` 是下面全部命令的入口。除 `status`、`backup`、`soff` 本身，以及写保护本来就没设的机器上的 `set secure 0`，其余都要先 S-OFF。
 
 ```sh
 scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
@@ -59,6 +59,7 @@ scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
 scripts/stool.sh set tamper <0|4>        # 0 = Official，4 = Modified
+scripts/stool.sh set secure <0|3>        # 0 = S-OFF，3 = S-ON
 scripts/stool.sh lock                    # BL magic -> 锁定
 scripts/stool.sh unlock                  # BL magic -> 解锁
 scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
@@ -71,6 +72,8 @@ scripts/stool.sh splash --restore <sp1.img>
 每个命令都会先读 S 状态。任何写操作在动 eMMC 之前都会存一份快照到 `backup/<时间戳>.{txt,img}`：五个整分区，外加一份 txt，一半是给人看的摘要，一半是 `raw:<分区>:<偏移>=<hex>` 形式的原始字节，`restore` 靠它逐字节写回。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
+
+`set secure` 就是 `soff` 最后一步的那次写入，单独跑：先存快照，再写 `0x8400`，再回读 —— 不断电也不重启。S-ON 时写 `0` 会先探测 `mmc_cmd wp`：只有真的还有写保护才拒绝；位图全零（[移植](#8-移植) A 档那种旧 hboot）就照写。已 S-OFF 的机器上，它用来在还原 `pg1fs.img` 之后把 `00` 补回去。
 
 `lock` / `unlock` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不需要在官网申请的解锁码了；也不走 `fastboot oem lock` —— 那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
 
@@ -289,7 +292,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 移植按要重做的量分四种情况，A 到 D，未实测。
 
-**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。直接 `dd` 就能写 flag，模块和断电都不需要。要算的是三样：flag 在哪个分区、分区内的偏移、紧跟在后面的 4 字节 magic。做法是把该机型的小分区（几十 KB 到几 MB 的那些）dump 出来，搜 `03 00 00 00` + `HTCU`，第一个字节就是 flag；magic 不是 `HTCU` 的机型，得从读这个字节的 hboot 代码里找，或者拿一台已 S-OFF 的同型号 dump 来 diff。
+**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够 —— 按[第 6 节](#6-参数偏移)的办法找出分区、偏移和记录形状，把那次写入里的 `pg1fs` 参数和 `OFF_SECURE` 改成它们，`stool.sh set secure 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
 
 **B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 

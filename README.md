@@ -66,7 +66,8 @@ scripts/stool.sh son
 ## stool.sh
 
 `scripts/stool.sh` is the entry point for every command below. All of them
-need S-OFF except `status`, `backup` and `soff` itself.
+need S-OFF except `status`, `backup`, `soff` itself, and `set secure 0` on a
+phone whose hboot never armed the protection.
 
 ```sh
 scripts/stool.sh status                  # S state + every parameter (Android or fastboot)
@@ -78,6 +79,7 @@ scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
 scripts/stool.sh set tamper <0|4>        # 0 = Official, 4 = Modified
+scripts/stool.sh set secure <0|3>        # 0 = S-OFF, 3 = S-ON
 scripts/stool.sh lock                    # BL magic -> locked
 scripts/stool.sh unlock                  # BL magic -> unlocked
 scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
@@ -96,6 +98,13 @@ partitions, plus a txt with a readable summary and a
 That byte is the only input to hboot's `Software status:` line: `04` prints
 `*** Software status: Modified ***`, `00` prints
 `*** Software status: Official ***`.
+
+`set secure` is the write from the last stage of `soff`, on its own: a snapshot
+first, then `00` or `03` at `0x8400`, then a read-back - no power cycle and no
+reboot. `00` while S-ON is refused unless `mmc_cmd wp` reports no write
+protection, which is the old-hboot case in [Porting](#8-porting); there it is
+the plain write that sets the flag. On an S-OFF phone it re-applies `00` after a
+`pg1fs.img` restore.
 
 `lock` / `unlock` write the four bytes at `pg1fs` (p2)
 0x8404 directly: `HTCU` = unlocked, `00000000` = locked. That is the same magic
@@ -402,12 +411,14 @@ None of them was tested here.
 Sensation / XE (msm8260), Desire HD (msm8255), plus the B-tier devices that
 have had few system updates. They may not set write protection at all: run
 `mmc_cmd wp` while S-ON, and an all-zero bitmap means hboot never armed it. A
-plain `dd` writes the flag with neither the module nor the power cycle. Three
-things have to be worked out: which partition holds it, the offset inside that
-partition, and the 4-byte magic that follows. Dump the small partitions - tens
-of KB up to a few MB - and search for `03 00 00 00` + `HTCU`; the first byte is
-the flag. If the magic is not `HTCU`, read it out of the hboot code that tests
-it, or diff a dump from the same model that is already S-OFF.
+plain write is enough then, with neither the module nor the power cycle: find
+the partition, the offset and the record shape as in
+[section 6](#6-parameter-offsets), point the `pg1fs` argument and `OFF_SECURE`
+in that call at them, and `stool.sh set secure 0` is that write - it probes the
+bitmap first and refuses only if protection is really armed. One caveat there:
+the four bytes after `03 00 00 00` read `HTCU` only while the bootloader is
+unlocked, so a dump from a locked phone shows `00000000` and the pair is not a
+reliable anchor. Confirm the candidate with `readsecureflag`.
 
 **B. Same generation:** e.g. other M8 variants (dual-SIM, Sprint, Verizon),
 One E8, Butterfly 2, One mini 2 - all off the same HTC 3.4 tree. The mechanism,

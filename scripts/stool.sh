@@ -16,7 +16,7 @@
 #   stool.sh splash --restore <f>   write a saved sp1 image back
 #
 #   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
-#           tamper <0-255>
+#           tamper <0-255> | secure <0|3>
 #
 # Every command reads the current S state first.  `set` (and soff/son) take a
 # full parameter snapshot into backup/<YYYYmmdd-HHMMSS>.txt before touching
@@ -397,10 +397,10 @@ cmd_status() {
 
 cmd_set() {
 	param=${1:-}; val=${2:-}
-	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|version|tamper> [value]"
+	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|version|tamper|secure> [value]"
 
 	case "$param" in
-	cid|mid|version|tamper)
+	cid|mid|version|tamper|secure)
 		require_android
 		;;
 	*)
@@ -453,6 +453,20 @@ cmd_set() {
 		verify_hex pg2fs $OFF_TAMPER "$hx"
 		say "ok"
 		;;
+	secure)
+		case "$val" in 0|3) ;; *) die "secure takes 0 (S-OFF) or 3 (S-ON)";; esac
+		if [ "$val" = 0 ] && [ "$(secure_state)" != off ]; then
+			# Not fatal by itself: an old hboot may never have armed the
+			# protection, and then a plain write works (Porting, case A).
+			wp_probe ||
+				die "writing 0 while S-ON needs the write protection cleared - run 'stool.sh soff'"
+		fi
+		hx=$(u32hex "$val")
+		say "secure: $(p_secure) -> $val"
+		write_hex pg1fs $OFF_SECURE "$hx"
+		verify_hex pg1fs $OFF_SECURE "$hx"
+		say "ok"
+		;;
 	esac
 }
 
@@ -491,16 +505,19 @@ push_module() { # diag|off|on
 	"$ADB" push "$src" "//dev/pwrsq_$1.ko" >/dev/null || die "adb push failed"
 }
 
-check_write_protection() {
+wp_probe() { # 0 when the eMMC reports no write protection at all
 	bin=$ROOT/tools/mmc_cmd
 	[ -x "$bin" ] ||
 		die "missing $bin - build first (make -C tools CROSS=arm-none-linux-gnueabihf-)"
 	"$ADB" push "$bin" //dev/mmc_cmd >/dev/null 2>&1
 	"$ADB" shell 'chmod 755 /dev/mmc_cmd'
 	out=$("$ADB" shell '/dev/mmc_cmd wp' 2>&1 | tr -d '\r')
-	printf '%s\n' "$out" | sed 's/^/  /'
-	printf '%s\n' "$out" | grep -q 'no write protection' ||
-		die "eMMC write protection is still active - power cycle did not take effect"
+	printf '%s\n' "$out" | sed 's/^/  /' >&2
+	printf '%s\n' "$out" | grep -q 'no write protection'
+}
+
+check_write_protection() {
+	wp_probe || die "eMMC write protection is still active - power cycle did not take effect"
 }
 
 cmd_soff() {
@@ -826,6 +843,7 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh set mid <9 chars>
   stool.sh set version <x.y.z.w>
   stool.sh set tamper <0-255>
+  stool.sh set secure <0|3>
   stool.sh lock                    write the BL magic = locked   (S-OFF only)
   stool.sh unlock                  write the BL magic = unlocked (S-OFF only)
   stool.sh noredtext               blank the six "This build is for ..." lines
