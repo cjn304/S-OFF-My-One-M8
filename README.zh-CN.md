@@ -55,13 +55,13 @@ scripts/stool.sh soff                    # 完整 S-OFF：备份、诊断、断�
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup                  # 五个整分区 + 参数，约 196 MB
 scripts/stool.sh restore <snapshot>      # 用快照还原
-scripts/stool.sh set cid BS_US001
-scripts/stool.sh set mid 0P6B12000
-scripts/stool.sh set version 6.12.1540.4
-scripts/stool.sh set tamper 0
-scripts/stool.sh set secure 0|3
-scripts/stool.sh lock bootloader         # BL magic -> 锁定（S-OFF，不需要 token）
-scripts/stool.sh unlock bootloader       # BL magic -> 解锁（S-OFF，不需要 token）
+scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
+scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
+scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
+scripts/stool.sh set tamper <0|4>        # 0 = Official，4 = Modified
+scripts/stool.sh set secure <0|3>        # 0 = S-OFF，3 = S-ON
+scripts/stool.sh lock bootloader         # BL magic -> 锁定（不需要到官网申请 token）
+scripts/stool.sh unlock bootloader       # BL magic -> 解锁（不需要到官网申请 token）
 scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
 scripts/stool.sh noredtext --restore <hboot.img>
 scripts/stool.sh splash photo.png        # 换开机第一屏，默认 1080x1920
@@ -71,7 +71,13 @@ scripts/stool.sh splash --restore <sp1.img>
 
 每个命令都会先读 S 状态。任何写操作在动 eMMC 之前都会存一份快照到 `backup/<时间戳>.{txt,img}`：五个整分区，外加一份 txt，一半是给人看的摘要，一半是 `raw:<分区>:<偏移>=<hex>` 形式的原始字节，`restore` 靠它逐字节写回。
 
+`set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
+
 `set secure 0` 在 S-ON 状态下会直接拒绝：写 flag 需要先把写保护清掉，而清写保护正是 `soff` 做的事。
+
+`set secure` 单独用时只是 `soff` 里的一个阶段，不是整套流程：写 flag、回读，不碰电也不重启。还原之后就需要它 —— 把 `pg1fs.img` 写回会把 `0x8400` 变回 `03`；不想走 `son` 的重启时，改 `3` 也用它。
+
+**CID、MID 和刷机的关系。** MID 标明机型变体 —— `0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。RUU 会把镜像要求的 MID、CID 和手机上的值比对，任一对不上就拒绝刷入 —— 所以换区刷固件前通常先改这两项：`set mid` 直接写 mfg 分区，`set cid` 必须走 `fastboot oem writecid`，把 CID 改成 `11111111`（SuperCID）可以让手机接受任意 CID，但 MID 的检查依然有效。各固件包对应的 MID/CID 见[这份 M8 固件表](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
 
 `lock bootloader` / `unlock bootloader` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不涉及任何解锁码；也不走 `fastboot oem lock` —— 那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
 

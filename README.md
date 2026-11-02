@@ -74,13 +74,13 @@ scripts/stool.sh soff                    # full S-OFF: backup, diag, power cycle
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup                  # five partitions + parameters, ~196 MB
 scripts/stool.sh restore <snapshot>      # write a snapshot back
-scripts/stool.sh set cid BS_US001
-scripts/stool.sh set mid 0P6B12000
-scripts/stool.sh set version 6.12.1540.4
-scripts/stool.sh set tamper 0
-scripts/stool.sh set secure 0|3
-scripts/stool.sh lock bootloader         # BL magic -> locked   (S-OFF, no token)
-scripts/stool.sh unlock bootloader       # BL magic -> unlocked (S-OFF, no token)
+scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
+scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
+scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
+scripts/stool.sh set tamper <0|4>        # 0 = Official, 4 = Modified
+scripts/stool.sh set secure <0|3>        # 0 = S-OFF, 3 = S-ON
+scripts/stool.sh lock bootloader         # BL magic -> locked   (no htcdev token)
+scripts/stool.sh unlock bootloader       # BL magic -> unlocked (no htcdev token)
 scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
 scripts/stool.sh noredtext --restore <hboot.img>
 scripts/stool.sh splash photo.png        # first boot screen, 1080x1920 by default
@@ -93,8 +93,28 @@ into `backup/<timestamp>.{txt,img}` before touching the eMMC: five whole
 partitions, plus a txt with a readable summary and a
 `raw:<part>:<offset>=<hex>` block that `restore` replays byte for byte.
 
+`set tamper` takes any decimal 0..255, but only `0` and `4` mean anything.
+That byte is the only input to hboot's `Software status:` line: `04` prints
+`*** Software status: Modified ***`, `00` prints
+`*** Software status: Official ***`.
+
 `set secure 0` refuses to run while S-ON: writing the flag needs the write
 protection cleared, and clearing it is what `soff` does.
+
+`set secure` on its own is one stage of `soff`, not the whole run: it writes
+the flag and reads it back, with no power cycle and no reboot. That is what a
+restore needs afterwards - putting `pg1fs.img` back sets `0x8400` to `03` -
+and what `3` needs when `son`'s reboot is not wanted.
+
+**CID, MID and flashing.** MID names the model variant - `0P6B62000` is the
+China Unicom M8, `0P6B12000` the Dev Edition - and CID names the carrier or
+region (`HTCCN703` for China Unicom). An RUU checks both against the image and
+refuses to flash when either does not match, which is why changing them is the
+usual prerequisite for another region's firmware: `set mid` writes the mfg
+partition, `set cid` has to go through `fastboot oem writecid`, and CID
+`11111111` (SuperCID) makes the phone accept any CID - the MID check still
+applies. What each package expects is listed in
+[this M8 firmware sheet](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0).
 
 `lock bootloader` / `unlock bootloader` write the four bytes at `pg1fs` (p2)
 0x8404 directly: `HTCU` = unlocked, `00000000` = locked. That is the same magic
