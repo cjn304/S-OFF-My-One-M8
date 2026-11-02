@@ -8,15 +8,15 @@
 #   stool.sh son                    back to S-ON
 #   stool.sh backup                 snapshot all parameters to backup/<time>.txt
 #   stool.sh restore <snapshot>     write a snapshot back
-#   stool.sh lock bootloader       write the BL magic = locked   (S-OFF only)
-#   stool.sh unlock bootloader     write the BL magic = unlocked (S-OFF only)
+#   stool.sh lock                  write the BL magic = locked   (S-OFF only)
+#   stool.sh unlock                write the BL magic = unlocked (S-OFF only)
 #   stool.sh set <param> [value]    change one parameter (backs up first)
 #   stool.sh noredtext              blank the six "This build is for ..." lines in hboot
 #   stool.sh splash <image.png> [--size=WxH] [--fit=...]   first boot screen
 #   stool.sh splash --restore <f>   write a saved sp1 image back
 #
 #   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
-#           tamper <0-255> | secure <0|3>
+#           tamper <0-255>
 #
 # Every command reads the current S state first.  `set` (and soff/son) take a
 # full parameter snapshot into backup/<YYYYmmdd-HHMMSS>.txt before touching
@@ -398,10 +398,10 @@ cmd_status() {
 
 cmd_set() {
 	param=${1:-}; val=${2:-}
-	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|version|tamper|secure> [value]"
+	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|version|tamper> [value]"
 
 	case "$param" in
-	cid|mid|version|tamper|secure)
+	cid|mid|version|tamper)
 		require_android
 		;;
 	*)
@@ -415,7 +415,6 @@ cmd_set() {
 	say "== backup =="
 	say "saved: $(cmd_backup)"
 
-	cur_st=$(secure_state 2>/dev/null || printf "?")
 	say ""
 
 	case "$param" in
@@ -456,17 +455,6 @@ cmd_set() {
 		say "tamper: $(p_tamper) -> $val"
 		write_hex pg2fs $OFF_TAMPER "$hx"
 		verify_hex pg2fs $OFF_TAMPER "$hx"
-		say "ok"
-		;;
-	secure)
-		case "$val" in 0|3) ;; *) die "secure takes 0 (S-OFF) or 3 (S-ON)";; esac
-		if [ "$val" = 0 ] && [ "$cur_st" != off ]; then
-			die "writing 0 while S-ON needs the eMMC write protection cleared - run 'stool.sh soff'"
-		fi
-		hx=$(u32hex "$val")
-		say "secure: $(p_secure) -> $val"
-		write_hex pg1fs $OFF_SECURE "$hx"
-		verify_hex pg1fs $OFF_SECURE "$hx"
 		say "ok"
 		;;
 	esac
@@ -842,9 +830,8 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh set mid <9 chars>
   stool.sh set version <x.y.z.w>
   stool.sh set tamper <0-255>
-  stool.sh set secure <0|3>
-  stool.sh lock bootloader         write the BL magic = locked   (S-OFF only)
-  stool.sh unlock bootloader       write the BL magic = unlocked (S-OFF only)
+  stool.sh lock                    write the BL magic = locked   (S-OFF only)
+  stool.sh unlock                  write the BL magic = unlocked (S-OFF only)
   stool.sh noredtext               blank the six "This build is for ..." lines
   stool.sh noredtext --restore <hboot.img>
   stool.sh splash <image.png> [--size=WxH] [--fit=cover|stretch]
@@ -868,9 +855,9 @@ son)     cmd_son ;;
 backup)  cmd_backup ;;
 restore) cmd_restore "$@" ;;
 set)     cmd_set "$@" ;;
-lock)    [ "${1:-}" = bootloader ] || die "usage: stool.sh lock bootloader"
+lock)    [ $# -eq 0 ] || die "usage: stool.sh lock"
          cmd_bl locked ;;
-unlock)  [ "${1:-}" = bootloader ] || die "usage: stool.sh unlock bootloader"
+unlock)  [ $# -eq 0 ] || die "usage: stool.sh unlock"
          cmd_bl unlocked ;;
 noredtext) cmd_noredtext "$@" ;;
 splash)    cmd_splash "$@" ;;

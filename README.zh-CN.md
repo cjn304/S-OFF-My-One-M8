@@ -59,9 +59,8 @@ scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
 scripts/stool.sh set tamper <0|4>        # 0 = Official，4 = Modified
-scripts/stool.sh set secure <0|3>        # 0 = S-OFF，3 = S-ON
-scripts/stool.sh lock bootloader         # BL magic -> 锁定
-scripts/stool.sh unlock bootloader       # BL magic -> 解锁
+scripts/stool.sh lock                    # BL magic -> 锁定
+scripts/stool.sh unlock                  # BL magic -> 解锁
 scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
 scripts/stool.sh noredtext --restore <hboot.img>
 scripts/stool.sh splash photo.png        # 换开机第一屏，默认 1080x1920
@@ -73,11 +72,7 @@ scripts/stool.sh splash --restore <sp1.img>
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
 
-`set secure 0` 在 S-ON 状态下会直接拒绝：写 flag 需要先把写保护清掉，而清写保护正是 `soff` 做的事。
-
-`set secure` 做的事和 `soff` 最后一步相同，只是单独跑：先存快照，再写 `0x8400`，再回读 —— 不断电也不重启。`soff` 和 `son` 不调用它，两者都是自己内联那两行。还原之后要用它（`pg1fs.img` 会把 `0x8400` 写回 `03`）；不想走 `son` 的重启、只把状态改成 `3` 时也用它。
-
-`lock bootloader` / `unlock bootloader` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不需要在官网申请的解锁码了；也不走 `fastboot oem lock` —— 那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
+`lock` / `unlock` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不需要在官网申请的解锁码了；也不走 `fastboot oem lock` —— 那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
 
 一次快照包含：
 

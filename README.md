@@ -78,9 +78,8 @@ scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
 scripts/stool.sh set tamper <0|4>        # 0 = Official, 4 = Modified
-scripts/stool.sh set secure <0|3>        # 0 = S-OFF, 3 = S-ON
-scripts/stool.sh lock bootloader         # BL magic -> locked
-scripts/stool.sh unlock bootloader       # BL magic -> unlocked
+scripts/stool.sh lock                    # BL magic -> locked
+scripts/stool.sh unlock                  # BL magic -> unlocked
 scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
 scripts/stool.sh noredtext --restore <hboot.img>
 scripts/stool.sh splash photo.png        # first boot screen, 1080x1920 by default
@@ -98,16 +97,7 @@ That byte is the only input to hboot's `Software status:` line: `04` prints
 `*** Software status: Modified ***`, `00` prints
 `*** Software status: Official ***`.
 
-`set secure 0` refuses to run while S-ON: writing the flag needs the write
-protection cleared, and clearing it is what `soff` does.
-
-`set secure` is the same write as the last step of `soff`, run on its own: a
-snapshot first, then `00` or `03` at `0x8400`, then a read-back - no power
-cycle and no reboot. `soff` and `son` do not call it; both carry those two
-lines inline. It is what a restore needs afterwards (`pg1fs.img` puts `03`
-back), and what flips to `3` without `son`'s reboot.
-
-`lock bootloader` / `unlock bootloader` write the four bytes at `pg1fs` (p2)
+`lock` / `unlock` write the four bytes at `pg1fs` (p2)
 0x8404 directly: `HTCU` = unlocked, `00000000` = locked. That is the same magic
 hboot compares at boot, so once the device is S-OFF no htcdev-issued unlock
 code is needed. `fastboot oem lock` is not used either — it only produces
