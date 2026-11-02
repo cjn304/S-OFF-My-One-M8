@@ -20,8 +20,8 @@ regulator ops directly, followed by writing the one byte hboot reads.
 
 * [Unlock bootloader](http://www.htcdev.com/bootloader/). Then root, with Magisk,
   etc. or flash a firmware that ships root. The kernel has to be able to load
-  modules: e.g. LineageOS 17.1 for M8 is disabled. Temporary root without
-  unlocking BL works too, once S-OFF the BL is yours to unlock.
+  modules: e.g. LineageOS 17.1 for M8 is disabled. Using some exploits to get
+  a temporary root without unlocking works too, once S-OFF the BL is yours.
 * The kernel source your firmware was close to.  HTC publishes the official
   ones on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
@@ -511,7 +511,7 @@ The S-OFF state is one byte in the `pg1fs` partition:
 | offset | meaning | S-ON | S-OFF |
 |---|---|---|---|
 | `0x8400` | secure flag (u32 LE) | `03 00 00 00` | `00 00 00 00` |
-| `0x8404` | BL state magic | `HTCU` unlocked / `00000000` locked | unchanged |
+| `0x8404` | bootloader state magic | `HTCU` unlocked / `00000000` locked | unchanged |
 
 `fastboot oem readsecureflag` reads exactly this value, and `getvar all` derives
 `version-misc: PVT SHIP S-ON/S-OFF` and `security: on/off` from it.
