@@ -149,190 +149,6 @@ adb shell '/dev/mmc_cmd wp'
 
 ---
 
-## 工作原理
-
-### 1. 那堵墙
-
-S-OFF 状态就是 `pg1fs` 里的一个字节：
-
-| 偏移 | 含义 | S-ON | S-OFF |
-|---|---|---|---|
-| `0x8400` | secure flag（u32 LE） | `03 00 00 00` | `00 00 00 00` |
-| `0x8404` | 标签 | `"HTCU"` | `"HTCU"` |
-
-`fastboot oem readsecureflag` 读的就是这个值，`getvar all` 里的 `version-misc: PVT SHIP S-ON/S-OFF` 和 `security: on/off` 也都是从它推出来的。
-
-以 root 身份写这个字节会失败，原因既不是 SELinux 也不是文件系统：hboot 每次开机都给固件分区加上 eMMC 的 **power-on 写保护**。`CMD31`（SEND_WRITE_PROT_TYPE）按每 2 bit 一组报告类型：
-
-```
-00 = 无保护   01 = 临时   10 = power-on   11 = 永久
-```
-
-一台正常开机的 M8 回答：
-
-```
-CMD31 -> aaaaaaaa2aaaaaaa
-         8 字节，每 2 bit 一组；10b = power-on
-```
-
-power-on 保护只能靠掉电清除。`CMD29`（CLEAR_WRITE_PROT）对它无效，`dd` 写 `pg1fs` 会拿到 `card status 0x400d00` —— 第 22 位，`WP_ERASE_SKIP`。
-
-于是问题收敛成一句话：**把 eMMC 的 VCC 断掉再上电，且不能让 SoC 重启。**
-
-### 2. 用户态为什么做不到
-
-这路电是 **PM8941 LDO20**（`8941_l20`，2.95 V），由 RPM-SMD 管理。eMMC 控制器的设备树节点写着：
-
-```dts
-&sdhc_1 {
-	vdd-supply = <&pm8941_l20>;
-	qcom,vdd-always-on;
-	...
-```
-
-三个各自独立的障碍：
-
-1. **`qcom,vdd-always-on`** —— `sdhci_msm` 在 probe 时把这路电打开，之后永不关闭。
-2. **regulator core 短路** —— 用 debugfs 把电强制断掉之后，`regulator_enable()` 仍然拒绝调用 `->enable()`：
-
-   ```c
-   static int _regulator_enable(struct regulator_dev *rdev)
-   {
-           if (rdev->use_count == 0) {
-                   ret = _regulator_is_enabled(rdev);
-                   if (ret == -EINVAL || ret == 0) {
-                           ...
-                           ret = rdev->desc->ops->enable(rdev);
-   ```
-
-   `rpm_vreg_is_enabled()` 返回的是驱动缓存的请求位，对 always-on 的稳压器它一直是"开"，于是核心认为电还在、根本不去碰硬件。`echo 1 > .../enable` 会返回成功，然后什么都不做。
-3. **没有重扫入口** —— `sdhci` 没有用户态的 rescan 属性；解绑驱动并不会断电；而 `device_release_driver()` 在那个 gendisk 上还有可写文件系统时会永久阻塞。
-
-用户态只能做到前一半：
-
-```sh
-echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC 真的断了
-```
-
-卡消失了，`mmcblk0*` 全没了 —— 除了重启没有回头路。这就是墙。
-
-### 3. 模块做了什么
-
-`kmod/pwrsq_impl.h` 只做四件事：
-
-1. **拿到稳压器** —— `regulator_get(NULL, "8941_l20")`。`struct regulator` 是 `drivers/regulator/core.c` 的私有结构，所以模块里复制了一份，用来取 `->rdev`。
-2. **直接调驱动 ops** —— `rdev->desc->ops->disable(rdev)`，之后再 `->enable(rdev)`。这一步绕开了 `_regulator_enable()`，也就绕开了 `is_enabled()` 的短路。
-3. **找到 mmc_host** —— 遍历 `rdev->consumer_list`，挑出设备名为 `msm_sdcc.1` 的那一项，读它的 drvdata（`sdhci_pltfm_init()` 往这里存的就是 `sdhci_host`），取 `sdhci_host->mmc`。
-4. **请求重扫** —— `mmc_detect_change(host, 0)` 调度 `mmc_rescan()`，重新走一遍卡识别。
-
-同一份源码编出三个变体：`diag`（stage 3，只读）、`off`（stage 1）、`on`（stage 2，先 `msleep(1500)` 让电放干净再上电）。
-
-它打出来的日志就在[快速开始](#快速开始)里；这一节真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行 —— 它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：卡回来了，分区都在，手机没重启。
-
-### 4. 写哪一个字节
-
-```sh
-dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
-```
-
-`33792` 就是 `0x8400`。只有最低字节变（`03` -> `00`）；`0x8404` 的标签在出厂机上本来就是 `HTCU`。改前改后的字节、以及之后为什么要 `drop_caches`，都在[快速开始](#快速开始)里；这一节要说清的是：写的是 4 个字节，记录里其它字段都不用动。
-
-`pg1fs + 0x424` 还有 4 个字节，老版 Firewater/Sunshine 的配方会一起写。**这台机器上不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，手机正常启动。不要动它。
-
-### 5. 为什么之后一直有效
-
-重启后 hboot 读到 `secure_flag = 0`，走它的 S-OFF 分支 —— 其中就包括**不再设置 power-on 写保护**。所以 S-OFF 设备上第二次 `CMD31` 返回全 0，`pg1fs` 从那时起一直可写。写保护不是被"攻破"的，是**不再被设置**了。
-
-### 6. 模块为什么能加载
-
-内核是 `CONFIG_MODVERSIONS=y` 编的，而我们没有它的 `Module.symvers`。两个后果，都已处理：
-
-* 每个被导入的符号都需要匹配的 crc —— 所以模块**一个符号都不导入**：所有函数地址在编译时从 `/proc/kallsyms` 生成（`kmod/addr.h`）；
-* `module_layout` 是无条件检查的 —— 所以模块自带一条 `__versions` 记录，crc 从设备上原厂 `.ko` 里抄出来。
-
----
-
-## stool.sh
-
-`scripts/stool.sh` 把上面这些步骤包起来，另外还管那些跟 S-OFF 无关的参数。
-
-```sh
-scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
-scripts/stool.sh soff                    # 完整 S-OFF：备份、诊断、断电上电、写入、验证
-scripts/stool.sh son                     # 回到 S-ON
-scripts/stool.sh backup                  # 快照到 backup/<YYYYmmdd-HHMMSS>.txt
-scripts/stool.sh restore <snapshot>      # 用快照还原
-scripts/stool.sh set cid BS_US001
-scripts/stool.sh set mid 0P6B12000
-scripts/stool.sh set version 6.12.1540.4
-scripts/stool.sh set tamper 0
-scripts/stool.sh set secure 0|3
-scripts/stool.sh lock bootloader         # BL magic -> 锁定（S-OFF，不需要 token）
-scripts/stool.sh unlock bootloader       # BL magic -> 解锁（S-OFF，不需要 token）
-scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
-scripts/stool.sh noredtext --restore <hboot.img>
-scripts/stool.sh splash photo.png        # 换开机第一屏，默认 1080x1920
-scripts/stool.sh splash photo.png --size=1440x2560     # 其它分辨率的屏
-scripts/stool.sh splash --restore <sp1.img>
-```
-
-每个命令都会先读 S 状态。任何写操作在动卡之前都会把全部参数快照到 `backup/<时间戳>.txt`；这个文件一半是给人看的摘要，一半是 `raw:<分区>:<偏移>=<hex>` 形式的原始字节，`restore` 靠它逐字节写回。
-
-`set secure 0` 在 S-ON 状态下会直接拒绝：写 flag 需要先把写保护清掉，而清写保护正是 `soff` 做的事。
-
-`lock bootloader` / `unlock bootloader` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不涉及任何解锁码；也不走 `fastboot oem lock` —— 那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
-
-一次快照包含：
-
-| 文件 | 内容 | 大小 |
-|---|---|---|
-| `<ts>.txt` | 全部参数的值 + 可以还原的精确字节区间 | 约 0.5 KB |
-| `<ts>.board_info.img` | 整个 p3 —— CID、IMEI、板级数据 | 16 KB |
-| `<ts>.mfg.img` | 整个 p5 —— MID 在这里 | 256 KB |
-| `<ts>.misc.img` | 整个 p24 —— version-main 在这里 | 1 MB |
-
-`set cid` 走的是 `fastboot oem writecid`，那一步对我们不透明，所以整块 p3 镜像比 txt 里那 8 个字节更重要。radio（p20）本工具从不写入；需要的话用 `scripts/backup.sh` 整体备份一次，它会导出 pg1fs、board_info、mfg、radio、misc 的完整镜像。
-
-| 参数 | 存储位置 | 改法 |
-|---|---|---|
-| CID | `board_info`（p3）@ 0x14，8 字符 | `fastboot oem writecid`（会重启到 bootloader） |
-| MID | `mfg`（p5）@ 0x4000，9 字符 UTF-16LE | dd |
-| version | `misc`（p24）@ 0xA0 | dd |
-| tamper | `pg2fs`（p6）@ 0x511804 | dd |
-| secure | `pg1fs`（p2）@ 0x8400 | dd，仅 S-OFF |
-| lock / unlock | `pg1fs`（p2）@ 0x8404，`HTCU` / `00000000` | dd，仅 S-OFF |
-| 红字 | `hboot`（p26），六行字符串运行期定位 | dd，仅 S-OFF |
-| 第一屏 | `sp1`（p12）@ 0，1080x1920 RGB565 | dd，仅 S-OFF |
-
-### 红字与第一屏
-
-`noredtext` 是按内容找那六行，不是写死偏移。它先把整个 4 MB 的 `hboot` 分区 dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回，再逐字节读回校验。偏移在不同构建之间是变动的——6.12.1540.4 上是 `0x8C340`，6.31.1402.1 的 dump 上是 `0x8C3F8`，更老的 m8_ul 镜像上是 `0x899CE`——所以必须动态找。
-
-运行前要知道两件事：
-
-- hboot 带 HTC 签名，改字节就会破坏签名，全靠 S-OFF 让 SBL 跳过校验。S-ON 时绝对不能碰，并且一定要保留 dump 出来的 `<ts>.hboot.img`——`noredtext --restore` 就是把它原样写回去。
-- 6.12.1540.4 这块 hboot 里，这六个字符串**没有任何静态引用**。绝对地址、文件偏移、低 20 位匹配、ARM 与 Thumb 的 `movw`/`movt`、代码段 literal pool，全部扫过，一个都没有。说明横幅是运行期装配的，所以改字符串本身是唯一安全的最小改动，不存在"参数可改的绘制函数"可找。
-
-`splash` 把 PNG 转成 `sp1` 分区真正的格式：小端 RGB565，默认 1080x1920（4,147,200 字节），`--size=WxH` 可以改成其它尺寸；分区其余部分是填充。写之前会先拿帧大小和分区大小比一遍，装不下就直接停。
-
-转换由 `scripts/png2rgb565.py` 完成，刻意只用标准库——精简的 Windows 环境里没有 ffmpeg、没有 PIL、没有 ImageMagick。支持非隔行 8 位 PNG 的灰度、灰度+alpha、RGB、RGBA 和调色板，缩放用双线性；其它格式会明确报错而不是生成一张错图（JPG 也一样，先另存成 PNG）。
-
-源图不是 9:16 时由 `--fit` 决定怎么处理，命令会把这行打出来：
-
-| `--fit` | 行为 |
-|---|---|
-| `contain`（默认） | 等比缩放到放得下，居中，其余用 `--bg=RRGGBB` 填（默认黑） |
-| `cover` | 等比缩放到铺满，居中裁掉溢出部分——没有黑边，但会切边 |
-| `stretch` | 两个方向各自拉伸——**会变形**，会打印警告 |
-
-以前固定是 `stretch`，一张 1920×1080 的照片会被悄悄压成 1080×1920。现在默认 `contain`，因为"带黑边的开机图"比"被拉变形的 logo"是更小的错误。
-
-这个转换器检查的是容器不是内容：PNG 能不能读、色彩类型和位深支不支持、结果是不是正好 4,147,200 字节、写进去的字节读回是否一致。它没法告诉你图片是倒的、全黑、全白，或者分辨率太低糊成一片——这些只能你自己看。
-
-两个命令都要求 S-OFF、先整分区备份、写完读回校验。
-
----
-
 ## 构建
 
 ### 1. 拿源码
@@ -471,7 +287,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 移植按要重做的量分四种情况，A 到 D，未实测。
 
-**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。直接 `dd` 就能写 flag，模块和断电都不需要，不过写在哪里仍要按机型算。
+**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。直接 `dd` 就能写 flag，模块和断电都不需要。要算的是三样：flag 在哪个分区、分区内的偏移、紧跟在后面的 4 字节 magic。做法是把该机型的小分区（几十 KB 到几 MB 的那些）dump 出来，搜 `03 00 00 00` + `HTCU`，第一个字节就是 flag；magic 不是 `HTCU` 的机型，得从读这个字节的 hboot 代码里找，或者拿一台已 S-OFF 的同型号 dump 来 diff。
 
 **B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
@@ -497,6 +313,190 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 3. 参数表里每个偏移重新定位；只有 pg1fs 那条记录的形状大概能保持不变。
 
 另外从 U11 这一代起，HTC 改用 UFS 2.1 而不是 eMMC。没有 `mmcblk0`，也没有 CMD28/29/31 那套写保护组，所以不管其余部分移植多少，本工具赖以成立的机制在那些机器上都不存在。
+
+---
+
+## stool.sh
+
+`scripts/stool.sh` 把上面这些步骤包起来，另外还管那些跟 S-OFF 无关的参数。
+
+```sh
+scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
+scripts/stool.sh soff                    # 完整 S-OFF：备份、诊断、断电上电、写入、验证
+scripts/stool.sh son                     # 回到 S-ON
+scripts/stool.sh backup                  # 快照到 backup/<YYYYmmdd-HHMMSS>.txt
+scripts/stool.sh restore <snapshot>      # 用快照还原
+scripts/stool.sh set cid BS_US001
+scripts/stool.sh set mid 0P6B12000
+scripts/stool.sh set version 6.12.1540.4
+scripts/stool.sh set tamper 0
+scripts/stool.sh set secure 0|3
+scripts/stool.sh lock bootloader         # BL magic -> 锁定（S-OFF，不需要 token）
+scripts/stool.sh unlock bootloader       # BL magic -> 解锁（S-OFF，不需要 token）
+scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
+scripts/stool.sh noredtext --restore <hboot.img>
+scripts/stool.sh splash photo.png        # 换开机第一屏，默认 1080x1920
+scripts/stool.sh splash photo.png --size=1440x2560     # 其它分辨率的屏
+scripts/stool.sh splash --restore <sp1.img>
+```
+
+每个命令都会先读 S 状态。任何写操作在动卡之前都会把全部参数快照到 `backup/<时间戳>.txt`；这个文件一半是给人看的摘要，一半是 `raw:<分区>:<偏移>=<hex>` 形式的原始字节，`restore` 靠它逐字节写回。
+
+`set secure 0` 在 S-ON 状态下会直接拒绝：写 flag 需要先把写保护清掉，而清写保护正是 `soff` 做的事。
+
+`lock bootloader` / `unlock bootloader` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不涉及任何解锁码；也不走 `fastboot oem lock` —— 那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
+
+一次快照包含：
+
+| 文件 | 内容 | 大小 |
+|---|---|---|
+| `<ts>.txt` | 全部参数的值 + 可以还原的精确字节区间 | 约 0.5 KB |
+| `<ts>.board_info.img` | 整个 p3 —— CID、IMEI、板级数据 | 16 KB |
+| `<ts>.mfg.img` | 整个 p5 —— MID 在这里 | 256 KB |
+| `<ts>.misc.img` | 整个 p24 —— version-main 在这里 | 1 MB |
+
+`set cid` 走的是 `fastboot oem writecid`，那一步对我们不透明，所以整块 p3 镜像比 txt 里那 8 个字节更重要。radio（p20）本工具从不写入；需要的话用 `scripts/backup.sh` 整体备份一次，它会导出 pg1fs、board_info、mfg、radio、misc 的完整镜像。
+
+| 参数 | 存储位置 | 改法 |
+|---|---|---|
+| CID | `board_info`（p3）@ 0x14，8 字符 | `fastboot oem writecid`（会重启到 bootloader） |
+| MID | `mfg`（p5）@ 0x4000，9 字符 UTF-16LE | dd |
+| version | `misc`（p24）@ 0xA0 | dd |
+| tamper | `pg2fs`（p6）@ 0x511804 | dd |
+| secure | `pg1fs`（p2）@ 0x8400 | dd，仅 S-OFF |
+| lock / unlock | `pg1fs`（p2）@ 0x8404，`HTCU` / `00000000` | dd，仅 S-OFF |
+| 红字 | `hboot`（p26），六行字符串运行期定位 | dd，仅 S-OFF |
+| 第一屏 | `sp1`（p12）@ 0，1080x1920 RGB565 | dd，仅 S-OFF |
+
+### 红字与第一屏
+
+`noredtext` 是按内容找那六行，不是写死偏移。它先把整个 4 MB 的 `hboot` 分区 dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回，再逐字节读回校验。偏移在不同构建之间是变动的——6.12.1540.4 上是 `0x8C340`，6.31.1402.1 的 dump 上是 `0x8C3F8`，更老的 m8_ul 镜像上是 `0x899CE`——所以必须动态找。
+
+运行前要知道两件事：
+
+- hboot 带 HTC 签名，改字节就会破坏签名，全靠 S-OFF 让 SBL 跳过校验。S-ON 时绝对不能碰，并且一定要保留 dump 出来的 `<ts>.hboot.img`——`noredtext --restore` 就是把它原样写回去。
+- 6.12.1540.4 这块 hboot 里，这六个字符串**没有任何静态引用**。绝对地址、文件偏移、低 20 位匹配、ARM 与 Thumb 的 `movw`/`movt`、代码段 literal pool，全部扫过，一个都没有。说明横幅是运行期装配的，所以改字符串本身是唯一安全的最小改动，不存在"参数可改的绘制函数"可找。
+
+`splash` 把 PNG 转成 `sp1` 分区真正的格式：小端 RGB565，默认 1080x1920（4,147,200 字节），`--size=WxH` 可以改成其它尺寸；分区其余部分是填充。写之前会先拿帧大小和分区大小比一遍，装不下就直接停。
+
+转换由 `scripts/png2rgb565.py` 完成，刻意只用标准库——精简的 Windows 环境里没有 ffmpeg、没有 PIL、没有 ImageMagick。支持非隔行 8 位 PNG 的灰度、灰度+alpha、RGB、RGBA 和调色板，缩放用双线性；其它格式会明确报错而不是生成一张错图（JPG 也一样，先另存成 PNG）。
+
+源图不是 9:16 时由 `--fit` 决定怎么处理，命令会把这行打出来：
+
+| `--fit` | 行为 |
+|---|---|
+| `contain`（默认） | 等比缩放到放得下，居中，其余用 `--bg=RRGGBB` 填（默认黑） |
+| `cover` | 等比缩放到铺满，居中裁掉溢出部分——没有黑边，但会切边 |
+| `stretch` | 两个方向各自拉伸——**会变形**，会打印警告 |
+
+以前固定是 `stretch`，一张 1920×1080 的照片会被悄悄压成 1080×1920。现在默认 `contain`，因为"带黑边的开机图"比"被拉变形的 logo"是更小的错误。
+
+这个转换器检查的是容器不是内容：PNG 能不能读、色彩类型和位深支不支持、结果是不是正好 4,147,200 字节、写进去的字节读回是否一致。它没法告诉你图片是倒的、全黑、全白，或者分辨率太低糊成一片——这些只能你自己看。
+
+两个命令都要求 S-OFF、先整分区备份、写完读回校验。
+
+---
+
+## 工作原理
+
+### 1. 那堵墙
+
+S-OFF 状态就是 `pg1fs` 里的一个字节：
+
+| 偏移 | 含义 | S-ON | S-OFF |
+|---|---|---|---|
+| `0x8400` | secure flag（u32 LE） | `03 00 00 00` | `00 00 00 00` |
+| `0x8404` | 标签 | `"HTCU"` | `"HTCU"` |
+
+`fastboot oem readsecureflag` 读的就是这个值，`getvar all` 里的 `version-misc: PVT SHIP S-ON/S-OFF` 和 `security: on/off` 也都是从它推出来的。
+
+以 root 身份写这个字节会失败，原因既不是 SELinux 也不是文件系统：hboot 每次开机都给固件分区加上 eMMC 的 **power-on 写保护**。`CMD31`（SEND_WRITE_PROT_TYPE）按每 2 bit 一组报告类型：
+
+```
+00 = 无保护   01 = 临时   10 = power-on   11 = 永久
+```
+
+一台正常开机的 M8 回答：
+
+```
+CMD31 -> aaaaaaaa2aaaaaaa
+         8 字节，每 2 bit 一组；10b = power-on
+```
+
+power-on 保护只能靠掉电清除。`CMD29`（CLEAR_WRITE_PROT）对它无效，`dd` 写 `pg1fs` 会拿到 `card status 0x400d00` —— 第 22 位，`WP_ERASE_SKIP`。
+
+于是问题收敛成一句话：**把 eMMC 的 VCC 断掉再上电，且不能让 SoC 重启。**
+
+### 2. 用户态为什么做不到
+
+这路电是 **PM8941 LDO20**（`8941_l20`，2.95 V），由 RPM-SMD 管理。eMMC 控制器的设备树节点写着：
+
+```dts
+&sdhc_1 {
+	vdd-supply = <&pm8941_l20>;
+	qcom,vdd-always-on;
+	...
+```
+
+三个各自独立的障碍：
+
+1. **`qcom,vdd-always-on`** —— `sdhci_msm` 在 probe 时把这路电打开，之后永不关闭。
+2. **regulator core 短路** —— 用 debugfs 把电强制断掉之后，`regulator_enable()` 仍然拒绝调用 `->enable()`：
+
+   ```c
+   static int _regulator_enable(struct regulator_dev *rdev)
+   {
+           if (rdev->use_count == 0) {
+                   ret = _regulator_is_enabled(rdev);
+                   if (ret == -EINVAL || ret == 0) {
+                           ...
+                           ret = rdev->desc->ops->enable(rdev);
+   ```
+
+   `rpm_vreg_is_enabled()` 返回的是驱动缓存的请求位，对 always-on 的稳压器它一直是"开"，于是核心认为电还在、根本不去碰硬件。`echo 1 > .../enable` 会返回成功，然后什么都不做。
+3. **没有重扫入口** —— `sdhci` 没有用户态的 rescan 属性；解绑驱动并不会断电；而 `device_release_driver()` 在那个 gendisk 上还有可写文件系统时会永久阻塞。
+
+用户态只能做到前一半：
+
+```sh
+echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC 真的断了
+```
+
+卡消失了，`mmcblk0*` 全没了 —— 除了重启没有回头路。这就是墙。
+
+### 3. 模块做了什么
+
+`kmod/pwrsq_impl.h` 只做四件事：
+
+1. **拿到稳压器** —— `regulator_get(NULL, "8941_l20")`。`struct regulator` 是 `drivers/regulator/core.c` 的私有结构，所以模块里复制了一份，用来取 `->rdev`。
+2. **直接调驱动 ops** —— `rdev->desc->ops->disable(rdev)`，之后再 `->enable(rdev)`。这一步绕开了 `_regulator_enable()`，也就绕开了 `is_enabled()` 的短路。
+3. **找到 mmc_host** —— 遍历 `rdev->consumer_list`，挑出设备名为 `msm_sdcc.1` 的那一项，读它的 drvdata（`sdhci_pltfm_init()` 往这里存的就是 `sdhci_host`），取 `sdhci_host->mmc`。
+4. **请求重扫** —— `mmc_detect_change(host, 0)` 调度 `mmc_rescan()`，重新走一遍卡识别。
+
+同一份源码编出三个变体：`diag`（stage 3，只读）、`off`（stage 1）、`on`（stage 2，先 `msleep(1500)` 让电放干净再上电）。
+
+它打出来的日志就在[快速开始](#快速开始)里；这一节真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行 —— 它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：卡回来了，分区都在，手机没重启。
+
+### 4. 写哪一个字节
+
+```sh
+dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
+```
+
+`33792` 就是 `0x8400`。只有最低字节变（`03` -> `00`）；`0x8404` 的标签在出厂机上本来就是 `HTCU`。改前改后的字节、以及之后为什么要 `drop_caches`，都在[快速开始](#快速开始)里；这一节要说清的是：写的是 4 个字节，记录里其它字段都不用动。
+
+`pg1fs + 0x424` 还有 4 个字节，老版 Firewater/Sunshine 的配方会一起写。**这台机器上不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，手机正常启动。不要动它。
+
+### 5. 为什么之后一直有效
+
+重启后 hboot 读到 `secure_flag = 0`，走它的 S-OFF 分支 —— 其中就包括**不再设置 power-on 写保护**。所以 S-OFF 设备上第二次 `CMD31` 返回全 0，`pg1fs` 从那时起一直可写。写保护不是被"攻破"的，是**不再被设置**了。
+
+### 6. 模块为什么能加载
+
+内核是 `CONFIG_MODVERSIONS=y` 编的，而我们没有它的 `Module.symvers`。两个后果，都已处理：
+
+* 每个被导入的符号都需要匹配的 crc —— 所以模块**一个符号都不导入**：所有函数地址在编译时从 `/proc/kallsyms` 生成（`kmod/addr.h`）；
+* `module_layout` 是无条件检查的 —— 所以模块自带一条 `__versions` 记录，crc 从设备上原厂 `.ko` 里抄出来。
 
 ---
 

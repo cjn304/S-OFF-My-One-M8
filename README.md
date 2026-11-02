@@ -180,270 +180,6 @@ Why this is the real proof: [section 5](#5-why-it-stays-off).
 
 ---
 
-## How it works
-
-### 1. The wall
-
-The S-OFF state is one byte in the `pg1fs` partition:
-
-| offset | meaning | S-ON | S-OFF |
-|---|---|---|---|
-| `0x8400` | secure flag (u32 LE) | `03 00 00 00` | `00 00 00 00` |
-| `0x8404` | tag | `"HTCU"` | `"HTCU"` |
-
-`fastboot oem readsecureflag` reads exactly this value, and `getvar all` derives
-`version-misc: PVT SHIP S-ON/S-OFF` and `security: on/off` from it.
-
-Writing it as root fails, and the reason is neither SELinux nor the filesystem:
-at every boot hboot sets the eMMC's **power-on write protection** on the
-firmware groups. `CMD31` (SEND_WRITE_PROT_TYPE) reports 2 bits per group:
-
-```
-00 = not protected   01 = temporary   10 = power-on   11 = permanent
-```
-
-A stock, booted M8 answers:
-
-```
-CMD31 -> aaaaaaaa2aaaaaaa
-         8 bytes, 2 bits per group; 10b = power-on
-```
-
-Power-on protection is only cleared by a power cycle. `CMD29`
-(CLEAR_WRITE_PROT) has no effect on it, and `dd` to `pg1fs` comes back with
-`card status 0x400d00` — bit 22, `WP_ERASE_SKIP`.
-
-So the problem reduces to: cut VCC to the eMMC and bring it back, without
-rebooting the SoC.
-
-### 2. Why userspace cannot do that
-
-The rail is **PM8941 LDO20** (`8941_l20`, 2.95 V), managed through RPM-SMD. The
-device tree node for the eMMC controller says:
-
-```dts
-&sdhc_1 {
-	vdd-supply = <&pm8941_l20>;
-	qcom,vdd-always-on;
-	...
-```
-
-Three independent blockers:
-
-1. **`qcom,vdd-always-on`** — `sdhci_msm` enables the rail at probe and never
-   disables it.
-2. **regulator core short-circuit** — after forcing the rail off via debugfs,
-   `regulator_enable()` still refuses to call `->enable()`:
-
-   ```c
-   static int _regulator_enable(struct regulator_dev *rdev)
-   {
-           if (rdev->use_count == 0) {
-                   ret = _regulator_is_enabled(rdev);
-                   if (ret == -EINVAL || ret == 0) {
-                           ...
-                           ret = rdev->desc->ops->enable(rdev);
-   ```
-
-   `rpm_vreg_is_enabled()` returns the driver's cached request bit, which stays
-   "on" for an always-on rail, so the core concludes the rail is already up and
-   never touches the hardware. `echo 1 > .../enable` returns success and does
-   nothing.
-3. **No rescan hook** — `sdhci` has no userspace "rescan" attribute, unbinding
-   the driver does not cut power, and `device_release_driver()` can block
-   forever if a filesystem on that gendisk is still writable.
-
-What does work from userspace is the first half only:
-
-```sh
-echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC really drops
-```
-
-The card disappears, `mmcblk0*` vanish — and there is no way back except a
-reboot. That is the wall.
-
-### 3. The module
-
-`kmod/pwrsq_impl.h` does four things:
-
-1. **Resolve the regulator** — `regulator_get(NULL, "8941_l20")`. `struct
-   regulator` is private to `drivers/regulator/core.c`, so the module carries a
-   copy of the struct to reach `->rdev`.
-2. **Call the driver ops directly** — `rdev->desc->ops->disable(rdev)` and later
-   `->enable(rdev)`. This bypasses `_regulator_enable()` and therefore the
-   `is_enabled()` short-circuit.
-3. **Find the MMC host** — walk `rdev->consumer_list`, pick the entry whose
-   device name is `msm_sdcc.1`, read its drvdata (which `sdhci_pltfm_init()`
-   sets to the `sdhci_host`), and take `sdhci_host->mmc`.
-4. **Ask for a rescan** — `mmc_detect_change(host, 0)` schedules `mmc_rescan()`,
-   which re-runs card identification.
-
-Three build variants come from the same source: `diag` (stage 3, read only),
-`off` (stage 1) and `on` (stage 2, which sleeps 1.5 s first so the rail
-discharges before power is restored).
-
-The log these produce is shown in [Quick start](#quick-start); the two lines that
-matter here are `ops->disable ret=0` and `ops->enable ret=0` - they mean the driver
-ops really ran instead of being short-circuited by the core.  The `mmc_reinit_card`
-pair at the end is HTC's own re-initialisation path in `sdhci_msm`: the card comes
-back, with its partitions, without rebooting.
-
-### 4. The write
-
-```sh
-dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
-```
-
-`33792` is `0x8400`. Only the low byte changes (`03` -> `00`); the tag at
-`0x8404` is already `HTCU` on shipping devices.  The before/after bytes and the
-reason for the `drop_caches` afterwards are in [Quick start](#quick-start); what
-this section is about is that the write is 4 bytes and nothing else in the record
-has to move.
-
-There is a second 4-byte field at `pg1fs + 0x424` that the old
-Firewater/Sunshine payload also writes. On this device it is **not** required:
-the partition head (0..0x1000, including `0x424`) stayed byte-identical to the
-pre-change backup after a successful S-OFF, and the phone booted normally. Leave
-it alone.
-
-### 5. Why it stays off
-
-After the reboot hboot reads `secure_flag = 0` and takes its S-OFF path — which
-includes **not arming the power-on write protection**. That is why a second
-`CMD31` on the S-OFF device returns all zeroes, and why `pg1fs` stays writable
-from then on. The protection was never "defeated"; it simply stopped being set.
-
-### 6. Why the module loads at all
-
-The kernel is built with `CONFIG_MODVERSIONS=y` and we do not have its
-`Module.symvers`. Two consequences, both handled:
-
-* every imported symbol would need a matching crc — so the module imports
-  **none**: all function addresses come from `/proc/kallsyms` at build time
-  (`kmod/addr.h`);
-* `module_layout` is checked unconditionally, so the module carries its own
-  `__versions` entry with the crc copied from a stock `.ko` on the device.
-
----
-
-## stool.sh
-
-`scripts/stool.sh` wraps everything above, plus the parameters that have nothing
-to do with S-OFF.
-
-```sh
-scripts/stool.sh status                  # S state + every parameter (Android or fastboot)
-scripts/stool.sh soff                    # full S-OFF: backup, diag, power cycle, write, verify
-scripts/stool.sh son                     # back to S-ON
-scripts/stool.sh backup                  # snapshot to backup/<YYYYmmdd-HHMMSS>.txt
-scripts/stool.sh restore <snapshot>      # write a snapshot back
-scripts/stool.sh set cid BS_US001
-scripts/stool.sh set mid 0P6B12000
-scripts/stool.sh set version 6.12.1540.4
-scripts/stool.sh set tamper 0
-scripts/stool.sh set secure 0|3
-scripts/stool.sh lock bootloader         # BL magic -> locked   (S-OFF, no token)
-scripts/stool.sh unlock bootloader       # BL magic -> unlocked (S-OFF, no token)
-scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
-scripts/stool.sh noredtext --restore <hboot.img>
-scripts/stool.sh splash photo.png        # first boot screen, 1080x1920 by default
-scripts/stool.sh splash photo.png --size=1440x2560     # other panels
-scripts/stool.sh splash --restore <sp1.img>
-```
-
-Every command reads the S state first. Anything that writes takes a parameter
-snapshot into `backup/<timestamp>.txt` before touching the card; the file holds
-both a readable summary and a `raw:<part>:<offset>=<hex>` block that `restore`
-replays byte for byte.
-
-`set secure 0` refuses to run while S-ON: writing the flag needs the write
-protection cleared, and clearing it is what `soff` does.
-
-`lock bootloader` / `unlock bootloader` write the four bytes at `pg1fs` (p2) 0x8404 directly:
-`HTCU` = unlocked, `00000000` = locked. That is the same magic hboot compares at
-boot, so once the device is S-OFF no unlock token is involved. `fastboot oem lock`
-is not used either — it only produces `RELOCKED`, and hboot 3.19 has no
-`oem unlock` command at all (`[ERR] Command error`).
-
-What a snapshot holds:
-
-| file | content | size |
-|---|---|---|
-| `<ts>.txt` | every parameter, plus the exact byte ranges to restore | ~0.5 KB |
-| `<ts>.board_info.img` | whole p3 — CID, IMEI, board data | 16 KB |
-| `<ts>.mfg.img` | whole p5 — MID lives here | 256 KB |
-| `<ts>.misc.img` | whole p24 — version-main lives here | 1 MB |
-
-`set cid` goes through `fastboot oem writecid`, which is opaque, so the whole p3
-image matters more than the 8 bytes in the txt. Radio (p20) is never written by
-this tool; take it once with `scripts/backup.sh`, which dumps pg1fs, board_info,
-mfg, radio and misc as full images.
-
-| parameter | storage | how |
-|---|---|---|
-| CID | `board_info` (p3) @ 0x14, 8 chars | `fastboot oem writecid` (reboots to the bootloader) |
-| MID | `mfg` (p5) @ 0x4000, 9 chars UTF-16LE | dd |
-| version | `misc` (p24) @ 0xA0 | dd |
-| tamper | `pg2fs` (p6) @ 0x511804 | dd |
-| secure | `pg1fs` (p2) @ 0x8400 | dd, S-OFF only |
-| lock / unlock | `pg1fs` (p2) @ 0x8404, `HTCU` / `00000000` | dd, S-OFF only |
-| red text | `hboot` (p26), six strings located at run time | dd, S-OFF only |
-| first screen | `sp1` (p12) @ 0, 1080x1920 RGB565 | dd, S-OFF only |
-
-### Red text and the first screen
-
-`noredtext` finds the six lines by content, not by a hard-coded offset.  It
-dumps the whole 4 MB `hboot` partition, searches for the six strings, blanks
-the first byte of each, writes them back and reads them back.  The offsets move
-between builds - `0x8C340` on 6.12.1540.4, `0x8C3F8` on the 6.31.1402.1 dump,
-`0x899CE` on the older m8_ul image - which is exactly why the search is dynamic.
-
-Two things to know before running it:
-
-- hboot carries the HTC signature.  Changing bytes breaks it; S-OFF is what
-  makes the SBL skip the check.  Never run this while S-ON, and keep the dumped
-  `<ts>.hboot.img` - `noredtext --restore` writes it straight back.
-- On the 6.12.1540.4 hboot these six strings have **no static cross reference**
-  in the image.  Every form was scanned: absolute address, raw file offset,
-  low-20-bit match, ARM and Thumb `movw`/`movt`, and the literal pool of the
-  code section.  The banner is assembled at run time, so blanking the strings is
-  the only safe edit - there is no "draw function" with a patchable argument to
-  find.
-
-`splash` converts a PNG into what the `sp1` partition actually holds: little-endian
-RGB565, 1080x1920 (4,147,200 bytes) unless `--size=WxH` says otherwise; the rest of
-the partition is padding.  The frame size is checked against the partition size
-before anything is written.
-
-The conversion is done by `scripts/png2rgb565.py`, pure standard
-library on purpose (a bare Windows box has no ffmpeg, no PIL, no ImageMagick).
-It takes non-interlaced 8-bit PNG in grey, grey+alpha, RGB, RGBA or palette and
-scales with bilinear filtering; anything else is rejected with a clear message
-(JPEG included - re-save it as PNG first).
-
-A source that is not 9:16 is handled by `--fit`, and the command says so:
-
-| `--fit` | what happens |
-|---|---|
-| `contain` (default) | scale to fit, centre, pad the rest with `--bg=RRGGBB` (default black) |
-| `cover` | scale to fill, centre-crop the overflow - no bars, edges lost |
-| `stretch` | scale each axis independently - **distorts**, prints a warning |
-
-The old behaviour was always `stretch`, which silently turned a 1920x1080 photo
-into a squashed 1080x1920 one.  `contain` is the default now because a boot
-screen with black bars is a smaller mistake than a stretched logo.
-
-The converter checks the container, not the picture: it verifies the PNG is
-readable, the colour type and bit depth are supported, the result is exactly
-4,147,200 bytes, and the written bytes read back identical.  It cannot tell you
-that the image is upside down, all black, all white, or too low resolution to
-look good - that is on you.
-
-Both commands need S-OFF, back up the whole target partition first, and verify
-by reading the bytes back.
-
----
-
 ## Building
 
 ### 1. Get the source
@@ -615,10 +351,14 @@ None of them was tested here.
 
 **A. hboot before 3.19:** e.g. One M7 (msm8960), One S (msm8260A),
 Sensation / XE (msm8260), Desire HD (msm8255), plus the B-tier devices that
-never got a system update. They may not set write protection at all: run
+have had few system updates. They may not set write protection at all: run
 `mmc_cmd wp` while S-ON, and an all-zero bitmap means hboot never armed it. A
-plain `dd` writes the flag with neither the module nor the power cycle - though
-where to write still depends on the model.
+plain `dd` writes the flag with neither the module nor the power cycle. Three
+things have to be worked out: which partition holds it, the offset inside that
+partition, and the 4-byte magic that follows. Dump the small partitions - tens
+of KB up to a few MB - and search for `03 00 00 00` + `HTCU`; the first byte is
+the flag. If the magic is not `HTCU`, read it out of the hboot code that tests
+it, or diff a dump from the same model that is already S-OFF.
 
 **B. Same generation:** e.g. other M8 variants (dual-SIM, Sprint, Verizon),
 One E8, Butterfly 2, One mini 2 - all off the same HTC 3.4 tree. The mechanism,
@@ -670,6 +410,270 @@ Porting to them, in order of severity:
 And from the U11 on, HTC ships UFS 2.1 instead of eMMC. There is no `mmcblk0`
 and no CMD28/29/31 write-protect group, so the mechanism this tool is built on
 does not exist on those phones regardless of how much of the rest is ported.
+
+---
+
+## stool.sh
+
+`scripts/stool.sh` wraps everything above, plus the parameters that have nothing
+to do with S-OFF.
+
+```sh
+scripts/stool.sh status                  # S state + every parameter (Android or fastboot)
+scripts/stool.sh soff                    # full S-OFF: backup, diag, power cycle, write, verify
+scripts/stool.sh son                     # back to S-ON
+scripts/stool.sh backup                  # snapshot to backup/<YYYYmmdd-HHMMSS>.txt
+scripts/stool.sh restore <snapshot>      # write a snapshot back
+scripts/stool.sh set cid BS_US001
+scripts/stool.sh set mid 0P6B12000
+scripts/stool.sh set version 6.12.1540.4
+scripts/stool.sh set tamper 0
+scripts/stool.sh set secure 0|3
+scripts/stool.sh lock bootloader         # BL magic -> locked   (S-OFF, no token)
+scripts/stool.sh unlock bootloader       # BL magic -> unlocked (S-OFF, no token)
+scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
+scripts/stool.sh noredtext --restore <hboot.img>
+scripts/stool.sh splash photo.png        # first boot screen, 1080x1920 by default
+scripts/stool.sh splash photo.png --size=1440x2560     # other panels
+scripts/stool.sh splash --restore <sp1.img>
+```
+
+Every command reads the S state first. Anything that writes takes a parameter
+snapshot into `backup/<timestamp>.txt` before touching the card; the file holds
+both a readable summary and a `raw:<part>:<offset>=<hex>` block that `restore`
+replays byte for byte.
+
+`set secure 0` refuses to run while S-ON: writing the flag needs the write
+protection cleared, and clearing it is what `soff` does.
+
+`lock bootloader` / `unlock bootloader` write the four bytes at `pg1fs` (p2) 0x8404 directly:
+`HTCU` = unlocked, `00000000` = locked. That is the same magic hboot compares at
+boot, so once the device is S-OFF no unlock token is involved. `fastboot oem lock`
+is not used either — it only produces `RELOCKED`, and hboot 3.19 has no
+`oem unlock` command at all (`[ERR] Command error`).
+
+What a snapshot holds:
+
+| file | content | size |
+|---|---|---|
+| `<ts>.txt` | every parameter, plus the exact byte ranges to restore | ~0.5 KB |
+| `<ts>.board_info.img` | whole p3 — CID, IMEI, board data | 16 KB |
+| `<ts>.mfg.img` | whole p5 — MID lives here | 256 KB |
+| `<ts>.misc.img` | whole p24 — version-main lives here | 1 MB |
+
+`set cid` goes through `fastboot oem writecid`, which is opaque, so the whole p3
+image matters more than the 8 bytes in the txt. Radio (p20) is never written by
+this tool; take it once with `scripts/backup.sh`, which dumps pg1fs, board_info,
+mfg, radio and misc as full images.
+
+| parameter | storage | how |
+|---|---|---|
+| CID | `board_info` (p3) @ 0x14, 8 chars | `fastboot oem writecid` (reboots to the bootloader) |
+| MID | `mfg` (p5) @ 0x4000, 9 chars UTF-16LE | dd |
+| version | `misc` (p24) @ 0xA0 | dd |
+| tamper | `pg2fs` (p6) @ 0x511804 | dd |
+| secure | `pg1fs` (p2) @ 0x8400 | dd, S-OFF only |
+| lock / unlock | `pg1fs` (p2) @ 0x8404, `HTCU` / `00000000` | dd, S-OFF only |
+| red text | `hboot` (p26), six strings located at run time | dd, S-OFF only |
+| first screen | `sp1` (p12) @ 0, 1080x1920 RGB565 | dd, S-OFF only |
+
+### Red text and the first screen
+
+`noredtext` finds the six lines by content, not by a hard-coded offset.  It
+dumps the whole 4 MB `hboot` partition, searches for the six strings, blanks
+the first byte of each, writes them back and reads them back.  The offsets move
+between builds - `0x8C340` on 6.12.1540.4, `0x8C3F8` on the 6.31.1402.1 dump,
+`0x899CE` on the older m8_ul image - which is exactly why the search is dynamic.
+
+Two things to know before running it:
+
+- hboot carries the HTC signature.  Changing bytes breaks it; S-OFF is what
+  makes the SBL skip the check.  Never run this while S-ON, and keep the dumped
+  `<ts>.hboot.img` - `noredtext --restore` writes it straight back.
+- On the 6.12.1540.4 hboot these six strings have **no static cross reference**
+  in the image.  Every form was scanned: absolute address, raw file offset,
+  low-20-bit match, ARM and Thumb `movw`/`movt`, and the literal pool of the
+  code section.  The banner is assembled at run time, so blanking the strings is
+  the only safe edit - there is no "draw function" with a patchable argument to
+  find.
+
+`splash` converts a PNG into what the `sp1` partition actually holds: little-endian
+RGB565, 1080x1920 (4,147,200 bytes) unless `--size=WxH` says otherwise; the rest of
+the partition is padding.  The frame size is checked against the partition size
+before anything is written.
+
+The conversion is done by `scripts/png2rgb565.py`, pure standard
+library on purpose (a bare Windows box has no ffmpeg, no PIL, no ImageMagick).
+It takes non-interlaced 8-bit PNG in grey, grey+alpha, RGB, RGBA or palette and
+scales with bilinear filtering; anything else is rejected with a clear message
+(JPEG included - re-save it as PNG first).
+
+A source that is not 9:16 is handled by `--fit`, and the command says so:
+
+| `--fit` | what happens |
+|---|---|
+| `contain` (default) | scale to fit, centre, pad the rest with `--bg=RRGGBB` (default black) |
+| `cover` | scale to fill, centre-crop the overflow - no bars, edges lost |
+| `stretch` | scale each axis independently - **distorts**, prints a warning |
+
+The old behaviour was always `stretch`, which silently turned a 1920x1080 photo
+into a squashed 1080x1920 one.  `contain` is the default now because a boot
+screen with black bars is a smaller mistake than a stretched logo.
+
+The converter checks the container, not the picture: it verifies the PNG is
+readable, the colour type and bit depth are supported, the result is exactly
+4,147,200 bytes, and the written bytes read back identical.  It cannot tell you
+that the image is upside down, all black, all white, or too low resolution to
+look good - that is on you.
+
+Both commands need S-OFF, back up the whole target partition first, and verify
+by reading the bytes back.
+
+---
+
+## How it works
+
+### 1. The wall
+
+The S-OFF state is one byte in the `pg1fs` partition:
+
+| offset | meaning | S-ON | S-OFF |
+|---|---|---|---|
+| `0x8400` | secure flag (u32 LE) | `03 00 00 00` | `00 00 00 00` |
+| `0x8404` | tag | `"HTCU"` | `"HTCU"` |
+
+`fastboot oem readsecureflag` reads exactly this value, and `getvar all` derives
+`version-misc: PVT SHIP S-ON/S-OFF` and `security: on/off` from it.
+
+Writing it as root fails, and the reason is neither SELinux nor the filesystem:
+at every boot hboot sets the eMMC's **power-on write protection** on the
+firmware groups. `CMD31` (SEND_WRITE_PROT_TYPE) reports 2 bits per group:
+
+```
+00 = not protected   01 = temporary   10 = power-on   11 = permanent
+```
+
+A stock, booted M8 answers:
+
+```
+CMD31 -> aaaaaaaa2aaaaaaa
+         8 bytes, 2 bits per group; 10b = power-on
+```
+
+Power-on protection is only cleared by a power cycle. `CMD29`
+(CLEAR_WRITE_PROT) has no effect on it, and `dd` to `pg1fs` comes back with
+`card status 0x400d00` — bit 22, `WP_ERASE_SKIP`.
+
+So the problem reduces to: cut VCC to the eMMC and bring it back, without
+rebooting the SoC.
+
+### 2. Why userspace cannot do that
+
+The rail is **PM8941 LDO20** (`8941_l20`, 2.95 V), managed through RPM-SMD. The
+device tree node for the eMMC controller says:
+
+```dts
+&sdhc_1 {
+	vdd-supply = <&pm8941_l20>;
+	qcom,vdd-always-on;
+	...
+```
+
+Three independent blockers:
+
+1. **`qcom,vdd-always-on`** — `sdhci_msm` enables the rail at probe and never
+   disables it.
+2. **regulator core short-circuit** — after forcing the rail off via debugfs,
+   `regulator_enable()` still refuses to call `->enable()`:
+
+   ```c
+   static int _regulator_enable(struct regulator_dev *rdev)
+   {
+           if (rdev->use_count == 0) {
+                   ret = _regulator_is_enabled(rdev);
+                   if (ret == -EINVAL || ret == 0) {
+                           ...
+                           ret = rdev->desc->ops->enable(rdev);
+   ```
+
+   `rpm_vreg_is_enabled()` returns the driver's cached request bit, which stays
+   "on" for an always-on rail, so the core concludes the rail is already up and
+   never touches the hardware. `echo 1 > .../enable` returns success and does
+   nothing.
+3. **No rescan hook** — `sdhci` has no userspace "rescan" attribute, unbinding
+   the driver does not cut power, and `device_release_driver()` can block
+   forever if a filesystem on that gendisk is still writable.
+
+What does work from userspace is the first half only:
+
+```sh
+echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC really drops
+```
+
+The card disappears, `mmcblk0*` vanish — and there is no way back except a
+reboot. That is the wall.
+
+### 3. The module
+
+`kmod/pwrsq_impl.h` does four things:
+
+1. **Resolve the regulator** — `regulator_get(NULL, "8941_l20")`. `struct
+   regulator` is private to `drivers/regulator/core.c`, so the module carries a
+   copy of the struct to reach `->rdev`.
+2. **Call the driver ops directly** — `rdev->desc->ops->disable(rdev)` and later
+   `->enable(rdev)`. This bypasses `_regulator_enable()` and therefore the
+   `is_enabled()` short-circuit.
+3. **Find the MMC host** — walk `rdev->consumer_list`, pick the entry whose
+   device name is `msm_sdcc.1`, read its drvdata (which `sdhci_pltfm_init()`
+   sets to the `sdhci_host`), and take `sdhci_host->mmc`.
+4. **Ask for a rescan** — `mmc_detect_change(host, 0)` schedules `mmc_rescan()`,
+   which re-runs card identification.
+
+Three build variants come from the same source: `diag` (stage 3, read only),
+`off` (stage 1) and `on` (stage 2, which sleeps 1.5 s first so the rail
+discharges before power is restored).
+
+The log these produce is shown in [Quick start](#quick-start); the two lines that
+matter here are `ops->disable ret=0` and `ops->enable ret=0` - they mean the driver
+ops really ran instead of being short-circuited by the core.  The `mmc_reinit_card`
+pair at the end is HTC's own re-initialisation path in `sdhci_msm`: the card comes
+back, with its partitions, without rebooting.
+
+### 4. The write
+
+```sh
+dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
+```
+
+`33792` is `0x8400`. Only the low byte changes (`03` -> `00`); the tag at
+`0x8404` is already `HTCU` on shipping devices.  The before/after bytes and the
+reason for the `drop_caches` afterwards are in [Quick start](#quick-start); what
+this section is about is that the write is 4 bytes and nothing else in the record
+has to move.
+
+There is a second 4-byte field at `pg1fs + 0x424` that the old
+Firewater/Sunshine payload also writes. On this device it is **not** required:
+the partition head (0..0x1000, including `0x424`) stayed byte-identical to the
+pre-change backup after a successful S-OFF, and the phone booted normally. Leave
+it alone.
+
+### 5. Why it stays off
+
+After the reboot hboot reads `secure_flag = 0` and takes its S-OFF path — which
+includes **not arming the power-on write protection**. That is why a second
+`CMD31` on the S-OFF device returns all zeroes, and why `pg1fs` stays writable
+from then on. The protection was never "defeated"; it simply stopped being set.
+
+### 6. Why the module loads at all
+
+The kernel is built with `CONFIG_MODVERSIONS=y` and we do not have its
+`Module.symvers`. Two consequences, both handled:
+
+* every imported symbol would need a matching crc — so the module imports
+  **none**: all function addresses come from `/proc/kallsyms` at build time
+  (`kmod/addr.h`);
+* `module_layout` is checked unconditionally, so the module carries its own
+  `__versions` entry with the crc copied from a stock `.ko` on the device.
 
 ---
 
