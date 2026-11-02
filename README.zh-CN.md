@@ -35,18 +35,20 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   ← hboot 不再设写
 # 0. 前置检查
 adb shell id                                     # uid=0，否则见上面的说明
 adb shell getenforce                             # Permissive
-adb shell cat /proc/sys/kernel/modules_disabled  # 0
+adb shell cat /proc/sys/kernel/modules_disabled  # 0 = 允许加载模块
+# kptr_restrict 归零，/proc/kallsyms 才显示地址
 adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
+# pwrsq_diag 要在 debugfs 下找稳压器目录
 adb shell 'mount -t debugfs none /sys/kernel/debug'
 
 # 1. 从手机读符号地址和 module_layout 的 crc
 scripts/gen_addr.sh
 
-# 2. 针对准备好的内核树编译三个模块
+# 2. 编译三个内核模块和 mmc_cmd
 scripts/build.sh /path/to/kernel-tree
+make -C tools CROSS=arm-none-linux-gnueabihf-
 
 # 3. 剩下的交给一条命令：备份、诊断、断电上电、写 flag、验证
-make -C tools CROSS=arm-none-linux-gnueabihf-    # 还没编 mmc_cmd 的话
 scripts/stool.sh soff
 ```
 
