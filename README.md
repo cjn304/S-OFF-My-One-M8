@@ -18,8 +18,8 @@ regulator ops directly, followed by writing the one byte hboot reads.
 
 ## Requirements
 
-* [Unlock bootloader](http://www.htcdev.com/bootloader/). Then root, with Magisk,
-  etc. or flash a firmware that ships root. The kernel has to be able to load
+* [Unlock bootloader](http://www.htcdev.com/bootloader/). Then root, e.g. with 
+  Magisk or flash a firmware that ships root. The kernel has to be able to load
   modules: e.g. LineageOS 17.1 for M8 is disabled. Using some exploits to get
   a temporary root without unlocking works too, once S-OFF the BL is yours.
 * The kernel source your firmware was close to.  HTC publishes the official
