@@ -66,8 +66,7 @@ scripts/stool.sh son
 ## stool.sh
 
 `scripts/stool.sh` is the entry point for every command below. All of them
-need S-OFF except `status`, `backup` and `soff` itself, which is the one that
-gets you there.
+need S-OFF except `status`, `backup` and `soff` itself.
 
 ```sh
 scripts/stool.sh status                  # S state + every parameter (Android or fastboot)

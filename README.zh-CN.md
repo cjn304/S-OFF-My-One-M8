@@ -47,7 +47,7 @@ scripts/stool.sh son
 
 ## stool.sh
 
-`scripts/stool.sh` 是下面全部命令的入口。除 `status`、`backup` 和 `soff` 本身，其余都要先 S-OFF —— `soff` 正是拿到 S-OFF 的那一条。
+`scripts/stool.sh` 是下面全部命令的入口。除 `status`、`backup` 和 `soff` 本身，其余都要先 S-OFF。
 
 ```sh
 scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
