@@ -32,8 +32,8 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   ← hboot 不再设写
 下面的命令假设 `adb shell` 本身就是 root（`adb root`、userdebug ROM 或 TWRP）。官方 ROM 用 Magisk 时不是这样：两条设置命令要套一层 `su -c`，例如 `adb shell 'su -c "echo 0 > /proc/sys/kernel/kptr_restrict"'`。`stool.sh status` 和 `stool.sh soff` 会自己探测 root。
 
 ```sh
-# 0. 前置检查
-scripts/stool.sh status  # root、S 状态、modules_disabled、SELinux
+# 0. 检查 root、S 状态、modules_disabled、SELinux
+scripts/stool.sh status
 
 # 1. kptr_restrict 归零，kallsyms 才显示地址，然后读地址
 adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
@@ -43,7 +43,7 @@ scripts/gen_addr.sh
 scripts/build.sh /path/to/kernel-tree
 make -C tools CROSS=arm-none-linux-gnueabihf-
 
-# 3. pwrsq_diag 要在 debugfs 下找稳压器目录，然后跑剩下的
+# 3. 在 debugfs 下找稳压器目录，然后备份、诊断、断电上电、写 flag、验证
 adb shell 'mount -t debugfs none /sys/kernel/debug'
 scripts/stool.sh soff
 ```
@@ -247,7 +247,7 @@ nm -u kmod/pwrsq_on.ko                           # 什么都不输出
 make -C tools CROSS=arm-none-linux-gnueabihf-
 ```
 
-推到 `/dev`（tmpfs）以 root 运行，见[快速开始](#快速开始)。
+推到 `/dev`（tmpfs）以 root 运行，见[快速开始](#快速开始)。没有它，`stool.sh soff` 会在动手机之前停下：写保护检查是唯一能证明断电生效的依据。
 
 ### 7. 移植
 

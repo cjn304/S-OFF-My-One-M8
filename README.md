@@ -48,8 +48,8 @@ commands in `su -c`, e.g.
 and `stool.sh soff` find root on their own.
 
 ```sh
-# 0. pre-flight
-scripts/stool.sh status  # root, S state, modules_disabled, SELinux
+# 0. check root, S state, modules_disabled, SELinux
+scripts/stool.sh status
 
 # 1. kallsyms hides addresses until kptr_restrict is 0; then read them
 adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
@@ -59,7 +59,7 @@ scripts/gen_addr.sh
 scripts/build.sh /path/to/kernel-tree
 make -C tools CROSS=arm-none-linux-gnueabihf-
 
-# 3. pwrsq_diag looks for its regulator under debugfs; then run the rest
+# 3. mount debugfs, then backup, diagnose, power cycle, write, verify
 adb shell 'mount -t debugfs none /sys/kernel/debug'
 scripts/stool.sh soff
 ```
@@ -305,6 +305,8 @@ make -C tools CROSS=arm-none-linux-gnueabihf-
 ```
 
 Push it to `/dev` (tmpfs) and run it as root, as in [Quick start](#quick-start).
+Without it `stool.sh soff` stops before touching the phone: the write-protection
+check is the only thing that proves the power cycle worked.
 
 ### 7. Porting
 

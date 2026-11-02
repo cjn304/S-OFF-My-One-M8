@@ -503,7 +503,8 @@ push_module() { # diag|off|on
 
 check_write_protection() {
 	bin=$ROOT/tools/mmc_cmd
-	[ -x "$bin" ] || { warn "tools/mmc_cmd not built - skipping the write-protection check"; return 0; }
+	[ -x "$bin" ] ||
+		die "missing $bin - build first (make -C tools CROSS=arm-none-linux-gnueabihf-)"
 	"$ADB" push "$bin" //dev/mmc_cmd >/dev/null 2>&1
 	"$ADB" shell 'chmod 755 /dev/mmc_cmd'
 	out=$("$ADB" shell '/dev/mmc_cmd wp' 2>&1 | tr -d '\r')
@@ -522,6 +523,10 @@ cmd_soff() {
 		die "module loading is disabled on this kernel"
 	[ "$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')" = Permissive ] ||
 		warn "SELinux is not permissive - loading the module may be denied"
+	# Failed here rather than after the power cycle: without mmc_cmd there is no
+	# way to tell whether the cut cleared the write protection.
+	[ -x "$ROOT/tools/mmc_cmd" ] ||
+		die "missing tools/mmc_cmd - build first (make -C tools CROSS=arm-none-linux-gnueabihf-)"
 
 	say ""
 	say "== backup =="
@@ -566,9 +571,15 @@ cmd_soff() {
 	"$ADB" reboot bootloader
 	wait_fastboot
 	sf=$("$FB" oem readsecureflag 2>&1 | sed -n 's/.*secure_flag: //p' | tr -d '\r')
-	sec=$("$FB" getvar security 2>&1 | sed -n 's/.*security: //p' | tr -d '\r')
+	sec=$("$FB" getvar security 2>&1 | sed -n 's/.*security: //p' | tr -d '\r' |
+		tr 'A-Z' 'a-z')
 	say "secure_flag: $sf   security: $sec"
 	[ "$sf" = 0 ] || die "secure_flag is $sf, expected 0"
+	case $sec in
+	off) ;;
+	"") warn "could not read 'getvar security' - relying on secure_flag" ;;
+	*) die "security is $sec, expected off - hboot still reports S-ON" ;;
+	esac
 	"$FB" reboot
 	wait_android
 	say ""
