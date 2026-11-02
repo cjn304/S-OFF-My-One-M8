@@ -15,13 +15,13 @@
 * [解锁 BL](http://www.htcdev.com/bootloader/) 并 root，比如用 Magisk，或刷入自带 root 的固件。内核得能加载模块：M8 的 LineageOS 17.1 就不行。不解锁 BL 找到一些办法临时 root 也可以，S-OFF 之后 BL 就随便解锁。
 * 与固件接近的内核源码，HTC 官方的在 [htcdev.com](https://www.htcdev.com/devcenter/downloads) 发布。
 * 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows](#windows)）。
-* 备份（见[风险](#风险)）。
+* 备份（见[风险](#风险)）和准备（见[构建](#构建)）。
 
 ---
 
 ## 快速开始
 
-下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反 —— 重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。`stool.sh status`、`soff` 和 `son` 会自己探测 root；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。准备工作见[构建](#构建)，出错见[期望输出与故障处理](#期望输出与故障处理)。
+下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反 —— 重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。`stool.sh status`、`soff` 和 `son` 会自己探测 root；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。见[期望输出与故障处理](#期望输出与故障处理)。
 
 ```sh
 # 0. 检查 root、S 状态、modules_disabled、SELinux

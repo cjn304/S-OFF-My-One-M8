@@ -26,7 +26,8 @@ regulator ops directly, followed by writing the one byte hboot reads.
   ones on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
   (see [Windows](#windows)).
-* Backups (see [Warnings](#warnings)).
+* Backups (see [Warnings](#warnings)) and preparation
+  (see [Building](#building)).
 
 ---
 
@@ -37,9 +38,8 @@ The commands below assume `adb shell` is root: a userdebug or eng ROM, where
 `adb shell 'su -c "..."'`. The quoting matters - the redirection has to sit
 inside the su command, or the non-root shell performs it first and fails with
 `Permission denied`. `stool.sh status`, `soff` and `son` find root on their own;
-`gen_addr.sh` needs none: `/proc/kallsyms` is world-readable once
-`kptr_restrict` is 0. Preparation is in [Building](#building); when something
-goes wrong, see [troubleshooting](#expected-output-and-troubleshooting).
+`gen_addr.sh` needs none: once `kptr_restrict` is 0, `/proc/kallsyms` is
+world-readable. See [troubleshooting](#expected-output-and-troubleshooting).
 
 ```sh
 # 0. check root, S state, modules_disabled, SELinux
