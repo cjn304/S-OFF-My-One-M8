@@ -6,15 +6,7 @@
 
 这不是内存破坏漏洞。hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规范只有掉电才清除。所有用户态的通路都被堵死，所以这里用一个小内核模块在内核态把 PMIC 的电真断一次再上电，最后写 hboot 读的那一个字节。
 
-已在 HTC One M8，hboot 3.19.0.0000 上测试成功（其它机型见[移植](#7-移植)）。
-
-```
-之前                            之后
-secure_flag: 3                  secure_flag: 0
-PVT SHIP S-ON                   PVT SHIP S-OFF
-security: on                    security: off
-CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   ← hboot 不再设写保护
-```
+已在 HTC One M8，hboot 3.19.0.0000 上[测试成功](#实测记录)（其它机型见[移植](#7-移植)）。
 
 ---
 
@@ -133,7 +125,7 @@ pwrsq: done
 
 `name=8941_l20` 说明稳压器找到了；`consumer 'msm_sdcc.1'` 加上非空的 `mmc_host` 说明重扫这条路能用。`Failed to create debugfs directory` 是无害的（重复的 consumer 目录）。`regulator 8941_l20 not found - wrong device/kernel?` 说明模块和这个内核不匹配，`soff` 就停在这里。
 
-`== quiesce ==` —— `framework stopped, caches flushed`，也就是 `stop; sleep 8; sync; sync`：卡马上要断电，不能有人正在写。`/data` 是 `errors=panic` 挂载的，对死卡的一次写入就会 panic。想把 `/data` 也摘出去，在第 3 步之前先挂成只读：
+`== quiesce ==` —— `framework stopped, caches flushed`，也就是 `stop; sleep 8; sync; sync`：eMMC 马上要断电，不能有人正在写。`/data` 是 `errors=panic` 挂载的，往已断电的 eMMC 写一次就会 panic。想把 `/data` 也摘出去，在第 3 步之前先挂成只读：
 
 ```sh
 adb shell 'su -c "mount -o remount,ro /data"'
@@ -152,7 +144,7 @@ bitmap: 00 00 00 00 00 00 00 00
 
 只要还有任何一组被列出来，`soff` 就停在 `eMMC write protection is still active - power cycle did not take effect`。这个状态下什么都不要写。
 
-`== write secure flag ==` —— `pg1fs 0x8400 = 0`。写入 `00` 后把这 4 个字节读回来，回读之前做了 `dd` + `sync` + `drop_caches`，所以值来自卡，不是页缓存。这个区别很关键：写保护状态下 `dd` 也会“成功”，因为它只更新了缓存。对不上时停在 `read-back mismatch`。
+`== write secure flag ==` —— `pg1fs 0x8400 = 0`。写入 `00` 后把这 4 个字节读回来，回读之前做了 `dd` + `sync` + `drop_caches`，所以值来自 eMMC，不是页缓存。这个区别很关键：写保护状态下 `dd` 也会“成功”，因为它只更新了缓存。对不上时停在 `read-back mismatch`。
 
 `== verify from bootloader ==` —— `secure_flag: 0   security: off`，随后手机重启回 Android，最后一行 `done - S-OFF`。两个值都有断言：`secure_flag is ..., expected 0` 或 `security is ..., expected off` 都会在 `done` 之前停下。为什么这才是真凭据，见[第 5 节](#5-为什么之后一直有效)。
 
@@ -353,7 +345,7 @@ scripts/stool.sh splash photo.png --size=1440x2560     # 其它分辨率的屏
 scripts/stool.sh splash --restore <sp1.img>
 ```
 
-每个命令都会先读 S 状态。任何写操作在动卡之前都会存一份快照到 `backup/<时间戳>.{txt,img}`：五个整分区，外加一份 txt，一半是给人看的摘要，一半是 `raw:<分区>:<偏移>=<hex>` 形式的原始字节，`restore` 靠它逐字节写回。
+每个命令都会先读 S 状态。任何写操作在动 eMMC 之前都会存一份快照到 `backup/<时间戳>.{txt,img}`：五个整分区，外加一份 txt，一半是给人看的摘要，一半是 `raw:<分区>:<偏移>=<hex>` 形式的原始字节，`restore` 靠它逐字节写回。
 
 `set secure 0` 在 S-ON 状态下会直接拒绝：写 flag 需要先把写保护清掉，而清写保护正是 `soff` 做的事。
 
@@ -477,7 +469,7 @@ power-on 保护只能靠掉电清除。`CMD29`（CLEAR_WRITE_PROT）对它无效
 echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC 真的断了
 ```
 
-卡消失了，`mmcblk0*` 全没了 —— 除了重启没有回头路。这就是墙。
+eMMC 消失了，`mmcblk0*` 全没了 —— 除了重启没有回头路。这就是墙。
 
 ### 3. 模块做了什么
 
@@ -486,11 +478,11 @@ echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC 真的断了
 1. **拿到稳压器** —— `regulator_get(NULL, "8941_l20")`。`struct regulator` 是 `drivers/regulator/core.c` 的私有结构，所以模块里复制了一份，用来取 `->rdev`。
 2. **直接调驱动 ops** —— `rdev->desc->ops->disable(rdev)`，之后再 `->enable(rdev)`。这一步绕开了 `_regulator_enable()`，也就绕开了 `is_enabled()` 的短路。
 3. **找到 mmc_host** —— 遍历 `rdev->consumer_list`，挑出设备名为 `msm_sdcc.1` 的那一项，读它的 drvdata（`sdhci_pltfm_init()` 往这里存的就是 `sdhci_host`），取 `sdhci_host->mmc`。
-4. **请求重扫** —— `mmc_detect_change(host, 0)` 调度 `mmc_rescan()`，重新走一遍卡识别。
+4. **请求重扫** —— `mmc_detect_change(host, 0)` 调度 `mmc_rescan()`，重新走一遍 eMMC 的识别。
 
 同一份源码编出三个变体：`diag`（stage 3，只读）、`off`（stage 1）、`on`（stage 2，先 `msleep(1500)` 让电放干净再上电）。
 
-它打出来的日志就在[快速开始](#快速开始)里；这一节真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行 —— 它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：卡回来了，分区都在，手机没重启。
+它打出来的日志就在[快速开始](#快速开始)里；这一节真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行 —— 它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：eMMC 回来了，分区都在，手机没重启。
 
 ### 4. 写哪一个字节
 
@@ -603,7 +595,7 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 
 按顺序排查。
 
-**卡没回来。** 打印了 `SEQ_DONE`，但 `/proc/partitions` 里没有 `mmcblk0`。
+**eMMC 没回来。** 打印了 `SEQ_DONE`，但 `/proc/partitions` 里没有 `mmcblk0`。
 
 1. 等 10 秒 —— `mmc_detect_change()` 是丢到 workqueue 上跑的。
 2. `adb shell 'dmesg | tail -40'`，找 `mmc_reinit_card`、`AUTO CMD err`、`Controller never released inhibit bit(s)`。
@@ -612,16 +604,16 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 
 断电失败不会造成永久损坏 —— flag 是在最后一步才写的。
 
-**内核 panic。** `/data` 是 `errors=panic`，任何一次落到死卡上的写都会 panic。手机会自己重启，写保护重新挂上，flag 没动。修掉原因（停框架、`sync`、把 `/data` 挂只读）再来一次。
+**内核 panic。** `/data` 是 `errors=panic`，任何一次落到已断电的 eMMC 上的写都会 panic。手机会自己重启，写保护重新挂上，flag 没动。修掉原因（停框架、`sync`、把 `/data` 挂只读）再来一次。
 
-**`dd` 报成功但字节没变。** 写根本没到卡上。
+**`dd` 报成功但字节没变。** 写根本没到 eMMC 上。
 
 ```sh
 adb shell '/dev/mmc_cmd wp'                    # 有非零组 => 保护还在
 adb shell 'dmesg | grep -i "card status"'
 ```
 
-* `card status 0x400d00`（第 22 位，`WP_ERASE_SKIP`）—— 保护还在，说明断电实际上没发生。`dmesg` 里必须有 `pwrsq: ops->disable ret=0`，并且卡消失期间 `cat /sys/kernel/debug/regulator/8941_l20/enable` 应当是 0。
+* `card status 0x400d00`（第 22 位，`WP_ERASE_SKIP`）—— 保护还在，说明断电实际上没发生。`dmesg` 里必须有 `pwrsq: ops->disable ret=0`，并且 eMMC 消失期间 `cat /sys/kernel/debug/regulator/8941_l20/enable` 应当是 0。
 * 完全没有 card status 报错 —— 你读的是页缓存。验证之前永远先 `sync` +`echo 3 > /proc/sys/vm/drop_caches`。
 
 **还原备份。** S-OFF 之后固件分区可写，还原就是普通的 `dd`：
@@ -649,8 +641,8 @@ adb reboot bootloader && fastboot oem readsecureflag
 
 仅用于**自己持有设备**上的安全研究与系统维护。在 Android 运行时切断 eMMC 供电不是受支持的操作。
 
-* 断电之前把 `/data` 挂成只读，或者至少停掉框架。`/data` 是 `errors=panic`，对死卡的一次写入就会 panic。
-* 卡如果没重新枚举，手机要手动断电才能再启动。数据不会丢，但你需要能够碰到机器。
+* 断电之前把 `/data` 挂成只读，或者至少停掉框架。`/data` 是 `errors=panic`，往已断电的 eMMC 写一次就会 panic。
+* eMMC 如果没重新枚举，手机要手动断电才能再启动。数据不会丢，但你需要能够碰到机器。
 * `stool.sh backup` 之所以存在，是因为"应该不会出事"不叫恢复方案。镜像留在电脑上，不要留在手机里。
 * 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。真正没法原地撤销的是改过的 `hboot`（`noredtext`）—— 回 S-ON 之前先把 dump 的镜像写回去。
 
@@ -662,7 +654,7 @@ adb reboot bootloader && fastboot oem readsecureflag
 
 本项目相当一部分代码和文字是在 AI 协助下写成的。但每一个地址、每一个偏移、每一条声称已验证的结论，都在真机上核对过：实验、失败分析，以及保留什么、放弃什么的决定，是人做的。
 
-* HTC 公开内核源码，以及 `sdhci_msm` 里那条 `mmc_reinit_card` —— 卡不用重启就能回来。
+* HTC 公开内核源码，以及 `sdhci_msm` 里那条 `mmc_reinit_card` —— eMMC 不用重启就能回来。
 * XDA/ARHD 社区关于 RUU/CID/MID 的整理，本项目的判断建立在这些之上。
 * Firewater/Sunshine 时代的研究，把 S-OFF flag 到底是什么讲清楚了。
 

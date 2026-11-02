@@ -7,21 +7,12 @@ HTC S-OFF tool.
 
 This is not a memory-corruption exploit. hboot protects the firmware partitions
 with the eMMC's power-on write protection, which by design only clears on a real
-power cycle of the card. Every userspace route to cycle that rail is blocked, so
+power cycle. Every userspace route to cycle that rail is blocked, so
 the cycle is done from kernel context with a small module that calls the PMIC
 regulator ops directly, followed by writing the one byte hboot reads.
 
-Tested on the HTC One M8, hboot 3.19.0.0000 (other devices: see
-[Porting](#7-porting)).
-
-```
-before                          after
-------                          -----
-secure_flag: 3                  secure_flag: 0
-PVT SHIP S-ON                   PVT SHIP S-OFF
-security: on                    security: off
-CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   <- hboot stops arming WP
-```
+[Tested](#field-evidence) on the HTC One M8, hboot 3.19.0.0000
+(other devices: see [Porting](#7-porting)).
 
 ---
 
@@ -168,9 +159,9 @@ non-null `mmc_host` means the rescan path will work.
 match this kernel, and `soff` stops there.
 
 `== quiesce ==` - `framework stopped, caches flushed`, after `stop`, a `sleep`
-and two `sync` calls. The card is about to lose power, so nothing may be
+and two `sync` calls. The eMMC is about to lose power, so nothing may be
 writing to it. `/data` is mounted `errors=panic`, so a single write to a dead
-card panics the kernel. To take `/data` out of the picture as well, remount it
+eMMC panics the kernel. To take `/data` out of the picture as well, remount it
 read-only before starting step 3:
 
 ```sh
@@ -198,8 +189,8 @@ Nothing may be written in that state.
 
 `== write secure flag ==` - `pg1fs 0x8400 = 0`. It writes `00` and reads the 4
 bytes back; the read-back follows `dd` + `sync` + `drop_caches`, so the value
-came off the card and not out of the page cache. That distinction matters: a
-`dd` that "succeeds" against a write-protected card still updates the cache. A
+came off the eMMC and not out of the page cache. That distinction matters: a
+`dd` that "succeeds" against a write-protected eMMC still updates the cache. A
 mismatch stops the run with `read-back mismatch`.
 
 `== verify from bootloader ==` - `secure_flag: 0   security: off`, the phone
@@ -478,7 +469,7 @@ scripts/stool.sh splash --restore <sp1.img>
 ```
 
 Every command reads the S state first. Anything that writes saves a snapshot
-into `backup/<timestamp>.{txt,img}` before touching the card: five whole
+into `backup/<timestamp>.{txt,img}` before touching the eMMC: five whole
 partitions, plus a txt with a readable summary and a
 `raw:<part>:<offset>=<hex>` block that `restore` replays byte for byte.
 
@@ -650,7 +641,7 @@ What does work from userspace is the first half only:
 echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC really drops
 ```
 
-The card disappears, `mmcblk0*` vanish — and there is no way back except a
+The eMMC disappears, `mmcblk0*` vanish — and there is no way back except a
 reboot. That is the wall.
 
 ### 3. The module
@@ -667,7 +658,7 @@ reboot. That is the wall.
    device name is `msm_sdcc.1`, read its drvdata (which `sdhci_pltfm_init()`
    sets to the `sdhci_host`), and take `sdhci_host->mmc`.
 4. **Ask for a rescan** — `mmc_detect_change(host, 0)` schedules `mmc_rescan()`,
-   which re-runs card identification.
+   which re-runs the identification sequence.
 
 Three build variants come from the same source: `diag` (stage 3, read only),
 `off` (stage 1) and `on` (stage 2, which sleeps 1.5 s first so the rail
@@ -676,7 +667,7 @@ discharges before power is restored).
 The log these produce is shown in [Quick start](#quick-start); the two lines that
 matter here are `ops->disable ret=0` and `ops->enable ret=0` - they mean the driver
 ops really ran instead of being short-circuited by the core.  The `mmc_reinit_card`
-pair at the end is HTC's own re-initialisation path in `sdhci_msm`: the card comes
+pair at the end is HTC's own re-initialisation path in `sdhci_msm`: the eMMC comes
 back, with its partitions, without rebooting.
 
 ### 4. The write
@@ -823,7 +814,7 @@ changed — which is why this tool writes exactly one byte.
 
 Work through this in order.
 
-**The card did not come back.** `SEQ_DONE` was printed but `/proc/partitions`
+**The eMMC did not come back.** `SEQ_DONE` was printed but `/proc/partitions`
 has no `mmcblk0`.
 
 1. Wait 10 s — `mmc_detect_change()` runs on a workqueue.
@@ -837,12 +828,12 @@ Nothing is permanently damaged by a failed power cycle — the flag is only
 written in the last step.
 
 **The kernel panicked.** `/data` is mounted `errors=panic`, so any write that
-reaches a dead card panics. The phone reboots by itself, the protection is
+reaches a dead eMMC panics. The phone reboots by itself, the protection is
 re-armed, the flag is untouched. Fix the cause (stop the framework, `sync`,
 remount `/data` read-only) and retry.
 
 **`dd` reports success but the byte does not change.** The write never reached
-the card.
+the eMMC.
 
 ```sh
 adb shell '/dev/mmc_cmd wp'                    # any non-zero group => still protected
@@ -852,8 +843,8 @@ adb shell 'dmesg | grep -i "card status"'
 * `card status 0x400d00` (bit 22, `WP_ERASE_SKIP`) — protection still active;
   the power cycle did not actually happen. `pwrsq: ops->disable ret=0` must
   appear in `dmesg`, and `cat /sys/kernel/debug/regulator/8941_l20/enable` must
-  read 0 while the card is gone.
-* no card-status error at all — you read back from the page cache. Always
+  read 0 while the eMMC is gone.
+* no `card status` error at all — you read back from the page cache. Always
   `sync` + `echo 3 > /proc/sys/vm/drop_caches` before verifying.
 
 **Restoring a backup.** With S-OFF the firmware partitions are writable, so a
@@ -896,8 +887,8 @@ Intended for security research and maintenance on devices you own. Cutting power
 to an eMMC while Android is running is not a supported operation.
 
 * Remount `/data` read-only or stop the framework before the power cycle.
-  `/data` is `errors=panic`; a write to a dead card panics the kernel.
-* If the card does not re-enumerate, the phone will not boot until it is power
+  `/data` is `errors=panic`; a write to a dead eMMC panics the kernel.
+* If the eMMC does not re-enumerate, the phone will not boot until it is power
   cycled by hand. Nothing is lost, but you need physical access.
 * `stool.sh backup` exists because "should not happen" is not a recovery plan.
   Keep the images on a PC, not on the phone.
@@ -919,7 +910,7 @@ experiments, the failure analysis and the decisions about what to keep are human
 work.
 
 * HTC for publishing the kernel source, and for the `mmc_reinit_card` path that
-  makes the card come back without a reboot.
+  makes the eMMC come back without a reboot.
 * The XDA/ARHD community for the RUU/CID/MID knowledge this relies on.
 * The Firewater/Sunshine era research for documenting what the S-OFF flag is.
 
