@@ -72,7 +72,7 @@ need S-OFF except `status`, `backup` and `soff` itself.
 scripts/stool.sh status                  # S state + every parameter (Android or fastboot)
 scripts/stool.sh soff                    # full S-OFF: backup, diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
-scripts/stool.sh backup                  # five partitions + parameters, ~196 MB
+scripts/stool.sh backup                  # five partitions + parameters, ~144 MB
 scripts/stool.sh restore <snapshot>      # write a snapshot back
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
@@ -112,23 +112,14 @@ What a snapshot holds:
 | `<ts>.pg1fs.img` | whole p2 — the secure flag lives here | 119 MB |
 | `<ts>.board_info.img` | whole p3 — CID, IMEI, board data | 16 KB |
 | `<ts>.mfg.img` | whole p5 — MID lives here | 256 KB |
-| `<ts>.radio.img` | whole p20 — baseband | 75 MB |
+| `<ts>.pg2fs.img` | whole p6 — the tamper flag lives here | 24 MB |
 | `<ts>.misc.img` | whole p24 — version-main lives here | 1 MB |
 
-`set cid` goes through `fastboot oem writecid`, which is opaque, so the whole p3
-image matters more than the 8 bytes in the txt. Radio (p20) is never written by
-this tool. The whole set is ~196 MB and takes about a minute over USB.
-
-| parameter | storage | how |
-|---|---|---|
-| CID | `board_info` (p3) @ 0x14, 8 chars | `fastboot oem writecid` (reboots to the bootloader) |
-| MID | `mfg` (p5) @ 0x4000, 9 chars UTF-16LE | dd |
-| version | `misc` (p24) @ 0xA0 | dd |
-| tamper | `pg2fs` (p6) @ 0x511804 | dd |
-| secure | `pg1fs` (p2) @ 0x8400 | dd, S-OFF only |
-| lock / unlock | `pg1fs` (p2) @ 0x8404, `HTCU` / `00000000` | dd, S-OFF only |
-| red text | `hboot` (p26), six strings located at run time | dd, S-OFF only |
-| first screen | `sp1` (p12) @ 0, 1080x1920 RGB565 | dd, S-OFF only |
+`set cid` writes its 8 bytes at `board_info` 0x14 with `dd`, like the rest;
+hboot reads it at boot, so `getvar cidnum` only changes after a reboot. The
+whole p3 image is still kept - the CID sits next to the IMEI and board data this
+tool never touches. Radio (p20) is never written, so it is not dumped. The whole
+set is ~144 MB and takes about a minute over USB.
 
 ### CID, MID and flashing
 
@@ -136,9 +127,9 @@ MID names the model variant - `0P6B62000` is the China Unicom M8, `0P6B12000`
 the Dev Edition - and CID names the carrier or region (`HTCCN703` for China
 Unicom). An RUU checks both against the image and refuses to flash when either
 does not match, which is why changing them is the usual prerequisite for
-another region's firmware: `set mid` writes the mfg partition, `set cid` has to
-go through `fastboot oem writecid`, and CID `11111111` (SuperCID) makes the
-phone accept any CID - the MID check still applies. What each package expects
+another region's firmware: `set mid` writes mfg 0x4000, `set cid` writes
+board_info 0x14, and CID `11111111` (SuperCID) makes the phone accept any CID -
+the MID check still applies. What each package expects
 is listed in
 [this M8 firmware sheet](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0).
 
@@ -408,7 +399,7 @@ module that loads and then does the wrong thing:
    `msm_sdcc` driver store their own host struct, and reading `->mmc` off it is
    garbage.
 3. The rail name follows the PMIC, not the SoC.
-4. Every offset in the parameter table has to be re-derived.
+4. Every offset in `stool.sh` has to be re-derived.
 
 `pwrsq_diag.ko` exists to answer 2 and 3 from the device instead of from a
 guess: it resolves the regulator, prints every consumer and the mmc_host it
@@ -417,9 +408,11 @@ found, and writes nothing.
 **D. HTC 10 and later:** e.g. Desire 10 pro and the later models that still use
 eMMC; nothing carries over unchanged. From the HTC 10 partition table on XDA
 (thread 3374048): the bootloader is `aboot`; the parameter partitions move -
-`board_info` at p1, `mfg` p2, `pg1fs` p3, `pg2fs` p4 and 23.6 MB instead of a
-few hundred KB; `sp1` at p21, 10 MB, on a 1440x2560 panel; by-name under
-`/dev/block/platform/soc/7464900.sdhci/by-name`.
+`board_info` at p1, `mfg` p2, `pg1fs` p3, `pg2fs` p4 (23.6 MB, about the same
+as the M8); `sp1` at p21, 10 MB, on a 1440x2560 panel; by-name under
+`/dev/block/platform/soc/7464900.sdhci/by-name`. `by-name` is the directory of
+symlinks ueventd creates from the partition table, one per partition name - the
+scripts resolve through it instead of hard-coding `mmcblk0pN`.
 
 Porting to them, in order of severity:
 
@@ -427,7 +420,7 @@ Porting to them, in order of severity:
    from each other.
 2. drvdata: newer kernels store `sdhci_pltfm_host` and expect
    `pltfm_host->host`.
-3. Every offset in the parameter table re-derived; only the pg1fs record is
+3. Every offset in `stool.sh` re-derived; only the pg1fs record is
    likely to keep its shape.
 
 And from the U11 on, HTC ships UFS 2.1 instead of eMMC. There is no `mmcblk0`
@@ -660,12 +653,12 @@ order they print, each with the failure that stops it.
   pg1fs        124746752 bytes
   board_info       16384 bytes
   mfg             262144 bytes
-  radio         78644224 bytes
+  pg2fs         24837120 bytes
   misc           1048576 bytes
 saved: /path/to/repo/backup/20261102-231500.txt
 ```
 
-Five whole partitions, about 196 MB and a minute over USB; the file layout is
+Five whole partitions, about 144 MB and a minute over USB; the file layout is
 in [the snapshot table](#stoolsh). A partition that cannot be read gives
 `warning: could not dump <part>` and the run continues; a short image gives
 `<part>: expected N bytes, got M`.
@@ -781,7 +774,7 @@ adb shell 'sync; rm -f /dev/pg1fs.img'
 adb reboot bootloader && fastboot oem readsecureflag
 ```
 
-Same for `board_info` (p3), `mfg` (p5), `radio` (p20) and `misc` (p24).
+Same for `board_info` (p3), `mfg` (p5), `pg2fs` (p6) and `misc` (p24).
 Restoring `pg1fs.img` puts `0x8400` back to `03` — i.e. S-ON.
 
 ### Do not

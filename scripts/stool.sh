@@ -334,12 +334,11 @@ cmd_backup() {
 	snapshot_write "$f"
 	[ -s "$f" ] || die "backup failed"
 
-	# The txt only holds the bytes this tool writes, and `set cid` goes through
-	# `fastboot oem writecid`, which is opaque to us.  So keep whole images of
-	# every partition this tool can touch - pg1fs carries the secure flag and is
-	# the largest of them at ~119 MB on the M8.  Radio is never written here,
-	# but a complete set is what makes a restore possible at all.
-	for part in pg1fs board_info mfg radio misc; do
+	# The txt only holds the bytes this tool writes - six small ranges.  Keep
+	# whole images of every partition this tool writes: pg1fs carries the secure
+	# flag and is the largest at ~119 MB, pg2fs carries the tamper flag.  Radio is
+	# never written here, so it is not dumped.
+	for part in pg1fs board_info mfg pg2fs misc; do
 		img=$BACKUP_DIR/$ts.$part.img
 		want=$(devsh "blockdev --getsize64 $DEV/$part 2>/dev/null" | tr -d '\r')
 		if ! dump_part "$part" "$img"; then
@@ -420,14 +419,11 @@ cmd_set() {
 	case "$param" in
 	cid)
 		[ ${#val} -eq 8 ] || die "CID must be exactly 8 characters (got '$val')"
-		say "CID: $(p_cid) -> $val   (fastboot oem writecid)"
-		"$ADB" reboot bootloader
-		wait_fastboot
-		"$FB" oem writecid "$val" || die "writecid failed (needs S-OFF)"
-		"$FB" reboot-bootloader >/dev/null 2>&1 || true
-		wait_fastboot
-		say "now: $("$FB" getvar cidnum 2>&1 | sed -n 's/.*cidnum: //p' | tr -d '\r')"
-		"$FB" reboot
+		hx=$(str2hex "$val")
+		say "CID: $(p_cid) -> $val"
+		write_hex board_info $OFF_CID "$hx"
+		verify_hex board_info $OFF_CID "$hx"
+		say "now: $(p_cid)"
 		;;
 	mid)
 		[ ${#val} -eq 9 ] || die "MID must be exactly 9 characters (got '$val')"

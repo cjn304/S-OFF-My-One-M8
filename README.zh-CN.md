@@ -53,7 +53,7 @@ scripts/stool.sh son
 scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
 scripts/stool.sh soff                    # 完整 S-OFF：备份、诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
-scripts/stool.sh backup                  # 五个整分区 + 参数，约 196 MB
+scripts/stool.sh backup                  # 五个整分区 + 参数，约 144 MB
 scripts/stool.sh restore <snapshot>      # 用快照还原
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
@@ -82,25 +82,14 @@ scripts/stool.sh splash --restore <sp1.img>
 | `<ts>.pg1fs.img` | 整个 p2 —— secure flag 在这里 | 119 MB |
 | `<ts>.board_info.img` | 整个 p3 —— CID、IMEI、板级数据 | 16 KB |
 | `<ts>.mfg.img` | 整个 p5 —— MID 在这里 | 256 KB |
-| `<ts>.radio.img` | 整个 p20 —— 基带 | 75 MB |
+| `<ts>.pg2fs.img` | 整个 p6 —— tamper flag 在这里 | 24 MB |
 | `<ts>.misc.img` | 整个 p24 —— version-main 在这里 | 1 MB |
 
-`set cid` 走的是 `fastboot oem writecid`，那一步对我们不透明，所以整块 p3 镜像比 txt 里那 8 个字节更重要。radio（p20）本工具不写入。整套约 196 MB，走 USB 大概一分钟。
-
-| 参数 | 存储位置 | 改法 |
-|---|---|---|
-| CID | `board_info`（p3）@ 0x14，8 字符 | `fastboot oem writecid`（会重启到 bootloader） |
-| MID | `mfg`（p5）@ 0x4000，9 字符 UTF-16LE | dd |
-| version | `misc`（p24）@ 0xA0 | dd |
-| tamper | `pg2fs`（p6）@ 0x511804 | dd |
-| secure | `pg1fs`（p2）@ 0x8400 | dd，仅 S-OFF |
-| lock / unlock | `pg1fs`（p2）@ 0x8404，`HTCU` / `00000000` | dd，仅 S-OFF |
-| 红字 | `hboot`（p26），六行字符串运行期定位 | dd，仅 S-OFF |
-| 第一屏 | `sp1`（p12）@ 0，1080x1920 RGB565 | dd，仅 S-OFF |
+`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留 —— CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 144 MB，走 USB 大概一分钟。
 
 ### CID、MID 和刷机的关系
 
-MID 标明机型变体 —— `0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。RUU 会把镜像要求的 MID、CID 和手机上的值比对，任一对不上就拒绝刷入 —— 所以换区刷固件前通常先改这两项：`set mid` 直接写 mfg 分区，`set cid` 必须走 `fastboot oem writecid`，把 CID 改成 `11111111`（SuperCID）可以让手机接受任意 CID，但 MID 的检查依然有效。各固件包对应的 MID/CID 见[这份 M8 固件表](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
+MID 标明机型变体 —— `0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。RUU 会把镜像要求的 MID、CID 和手机上的值比对，任一对不上就拒绝刷入 —— 所以换区刷固件前通常先改这两项：`set mid` 写 mfg 0x4000，`set cid` 写 board_info 0x14，把 CID 改成 `11111111`（SuperCID）可以让手机接受任意 CID，但 MID 的检查依然有效。各固件包对应的 MID/CID 见[这份 M8 固件表](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
 
 ### 开机红字
 
@@ -284,17 +273,17 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 1. `struct regulator` 是 `drivers/regulator/core.c` 的私有结构，本文件里存的是一份拷贝，必须按目标树重新抄。
 2. drvdata：本内核存的是 `sdhci_host`；绑老 `msm_sdcc` 驱动的变体存的是它自己的 host 结构体，从上面读 `->mmc` 拿到的是垃圾。
 3. 供电轨名跟的是 PMIC，不是 SoC。
-4. 参数表里每一个偏移都要重新定位。
+4. `stool.sh` 里每一个偏移都要重新定位。
 
 `pwrsq_diag.ko` 就是为了用设备实测回答第 2、3 条，而不是靠猜：它解析稳压器、打印全部 consumer 和找到的 mmc_host，且不写任何东西。
 
-**D. HTC 10 及以后的：** 如 Desire 10 pro，以及之后仍用 eMMC 的机型，没有任何一项能原样沿用。按 XDA 上的 HTC 10 分区表（thread 3374048）：bootloader 是 `aboot`；参数分区整体挪位 —— `board_info` 在 p1、`mfg` 在 p2、`pg1fs` 在 p3、`pg2fs` 在 p4 且是 23.6 MB 而不是几百 KB；`sp1` 在 p21、10 MB，屏幕 1440x2560；by-name 在 `/dev/block/platform/soc/7464900.sdhci/by-name`。
+**D. HTC 10 及以后的：** 如 Desire 10 pro，以及之后仍用 eMMC 的机型，没有任何一项能原样沿用。按 XDA 上的 HTC 10 分区表（thread 3374048）：bootloader 是 `aboot`；参数分区整体挪位 —— `board_info` 在 p1、`mfg` 在 p2、`pg1fs` 在 p3、`pg2fs` 在 p4（23.6 MB，和 M8 差不多）；`sp1` 在 p21、10 MB，屏幕 1440x2560；by-name 在 `/dev/block/platform/soc/7464900.sdhci/by-name`。by-name 是 ueventd 按分区表建的一组符号链接，一个分区名一个；脚本通过它找分区，而不是写死 `mmcblk0pN`。
 
 要移植到这些机型，需要改的地方按严重程度排：
 
 1. `struct regulator` 按分支重新抄 —— 新版内核跟 3.4 不一样，各分支之间也不一样。
 2. drvdata：新内核存 `sdhci_pltfm_host`，要取 `pltfm_host->host`。
-3. 参数表里每个偏移重新定位；只有 pg1fs 那条记录的形状大概能保持不变。
+3. `stool.sh` 里每个偏移重新定位；只有 pg1fs 那条记录的形状大概能保持不变。
 
 另外从 U11 这一代起，HTC 改用 UFS 2.1 而不是 eMMC。没有 `mmcblk0`，也没有 CMD28/29/31 那套写保护组，所以不管其余部分移植多少，本工具赖以成立的机制在那些机器上都不存在。
 
@@ -468,12 +457,12 @@ pwrsq_on: (no undefined symbols)
   pg1fs        124746752 bytes
   board_info       16384 bytes
   mfg             262144 bytes
-  radio         78644224 bytes
+  pg2fs         24837120 bytes
   misc           1048576 bytes
 saved: /path/to/repo/backup/20261102-231500.txt
 ```
 
-五个整分区，约 196 MB，USB 上大约一分钟；文件构成见[快照表](#stoolsh)。某个分区读不出来会打 `warning: could not dump <分区>`，流程继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
+五个整分区，约 144 MB，USB 上大约一分钟；文件构成见[快照表](#stoolsh)。某个分区读不出来会打 `warning: could not dump <分区>`，流程继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
 
 #### 诊断
 
@@ -552,7 +541,7 @@ adb shell 'sync; rm -f /dev/pg1fs.img'
 adb reboot bootloader && fastboot oem readsecureflag
 ```
 
-`board_info`（p3）、`mfg`（p5）、`radio`（p20）、`misc`（p24）同理。还原 `pg1fs.img` 会把 `0x8400` 写回 `03`，也就是 S-ON。
+`board_info`（p3）、`mfg`（p5）、`pg2fs`（p6）、`misc`（p24）同理。还原 `pg1fs.img` 会把 `0x8400` 写回 `03`，也就是 S-ON。
 
 ### 不要做
 
