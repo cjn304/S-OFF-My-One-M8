@@ -29,7 +29,7 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   ← hboot 不再设写
 
 ## 快速开始
 
-下面的命令假设 `adb shell` 本身就是 root（`adb root`、userdebug ROM 或 TWRP）。官方 ROM 用 Magisk 时不是这样：每条设备命令都要套一层 `su -c`，例如 `adb shell 'su -c "insmod /dev/pwrsq_diag.ko"'`；或者直接跑 `scripts/stool.sh soff`，它会自己探测 root 并完成包装。
+下面的命令假设 `adb shell` 本身就是 root（`adb root`、userdebug ROM 或 TWRP）。官方 ROM 用 Magisk 时不是这样：前置检查要套一层 `su -c`，例如 `adb shell 'su -c "echo 0 > /proc/sys/kernel/kptr_restrict"'`。第 3 步的 `stool.sh soff` 会自己探测 root。
 
 ```sh
 # 0. 前置检查
@@ -39,32 +39,15 @@ adb shell cat /proc/sys/kernel/modules_disabled  # 0
 adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
 adb shell 'mount -t debugfs none /sys/kernel/debug'
 
-# 1. 先备份 pg1fs / board_info / mfg / radio / misc
-scripts/backup.sh
-
-# 2. 从手机读符号地址和 module_layout 的 crc
+# 1. 从手机读符号地址和 module_layout 的 crc
 scripts/gen_addr.sh
 
-# 3. 针对准备好的内核树编译三个模块
+# 2. 针对准备好的内核树编译三个模块
 scripts/build.sh /path/to/kernel-tree
 
-# 4. 先跑诊断版，确认链路正确（无副作用）
-adb push kmod/pwrsq_diag.ko /dev/
-adb shell 'dmesg -c >/dev/null; insmod /dev/pwrsq_diag.ko; dmesg | grep pwrsq'
-#    期望：rdev=... name=8941_l20 / consumer 'msm_sdcc.1' / mmc_host=...
-
-# 5. 停框架、sync，然后断电再上电
-adb shell 'stop; sleep 8; sync'
-scripts/powercycle.sh
-
-# 6. 确认写保护已消失，再写 flag
-make -C tools CROSS=arm-none-linux-gnueabihf-    # 还没编的话
-adb push tools/mmc_cmd /dev/ && adb shell chmod 755 /dev/mmc_cmd
-adb shell '/dev/mmc_cmd wp'                      # 必须全 0
-scripts/write_flag.sh 0
-
-# 7. 从 bootloader 验证
-adb reboot bootloader && fastboot oem readsecureflag   # 应为 0
+# 3. 剩下的交给一条命令：备份、诊断、断电上电、写 flag、验证
+make -C tools CROSS=arm-none-linux-gnueabihf-    # 还没编 mmc_cmd 的话
+scripts/stool.sh soff
 ```
 
 ### 逐条说明与期望输出
@@ -351,11 +334,13 @@ scripts/stool.sh splash --restore <sp1.img>
 | 文件 | 内容 | 大小 |
 |---|---|---|
 | `<ts>.txt` | 全部参数的值 + 可以还原的精确字节区间 | 约 0.5 KB |
+| `<ts>.pg1fs.img` | 整个 p2 —— secure flag 在这里 | 119 MB |
 | `<ts>.board_info.img` | 整个 p3 —— CID、IMEI、板级数据 | 16 KB |
 | `<ts>.mfg.img` | 整个 p5 —— MID 在这里 | 256 KB |
+| `<ts>.radio.img` | 整个 p20 —— 基带 | 75 MB |
 | `<ts>.misc.img` | 整个 p24 —— version-main 在这里 | 1 MB |
 
-`set cid` 走的是 `fastboot oem writecid`，那一步对我们不透明，所以整块 p3 镜像比 txt 里那 8 个字节更重要。radio（p20）本工具从不写入；需要的话用 `scripts/backup.sh` 整体备份一次，它会导出 pg1fs、board_info、mfg、radio、misc 的完整镜像。
+`set cid` 走的是 `fastboot oem writecid`，那一步对我们不透明，所以整块 p3 镜像比 txt 里那 8 个字节更重要。radio（p20）本工具不写入。整套约 196 MB，走 USB 大概一分钟。
 
 | 参数 | 存储位置 | 改法 |
 |---|---|---|
@@ -612,7 +597,7 @@ adb shell 'dmesg | grep -i "card status"'
 **还原备份。** S-OFF 之后固件分区可写，还原就是普通的 `dd`：
 
 ```sh
-adb push backup-.../pg1fs.img /dev/pg1fs.img
+adb push backup/<ts>.pg1fs.img /dev/pg1fs.img
 adb shell 'dd if=/dev/pg1fs.img of=/dev/block/bootdevice/by-name/pg1fs bs=1048576'
 adb shell 'sync; rm -f /dev/pg1fs.img'
 adb reboot bootloader && fastboot oem readsecureflag
@@ -646,7 +631,7 @@ scripts/write_flag.sh 3 && adb reboot bootloader && fastboot oem readsecureflag
 
 * 断电之前把 `/data` 挂成只读，或者至少停掉框架。`/data` 是 `errors=panic`，对死卡的一次写入就会 panic。
 * 卡如果没重新枚举，手机要手动断电才能再启动。数据不会丢，但你需要能够碰到机器。
-* `scripts/backup.sh` 之所以存在，是因为"应该不会出事"不叫恢复方案。镜像留在电脑上，不要留在手机里。
+* `stool.sh backup` 之所以存在，是因为"应该不会出事"不叫恢复方案。镜像留在电脑上，不要留在手机里。
 * 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。真正没法原地撤销的是改过的 `hboot`（`noredtext`）—— 回 S-ON 之前先把 dump 的镜像写回去。
 
 不提供任何形式的担保；作者不对数据丢失或保修失效负责。刷坏了自负。

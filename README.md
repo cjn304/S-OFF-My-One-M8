@@ -42,44 +42,28 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   <- hboot stops arming 
 ## Quick start
 
 The commands below assume `adb shell` is already root (`adb root`, a userdebug
-ROM, or TWRP). On a Magisk-rooted stock ROM it is not: wrap each device command
-in `su -c`, e.g. `adb shell 'su -c "insmod /dev/pwrsq_diag.ko"'`, or run
-`scripts/stool.sh soff`, which detects root and does the wrapping itself.
+ROM, or TWRP). On a Magisk-rooted stock ROM it is not: wrap the pre-flight
+commands in `su -c`, e.g.
+`adb shell 'su -c "echo 0 > /proc/sys/kernel/kptr_restrict"'`. `stool.sh soff`
+in step 3 finds root on its own.
 
 ```sh
 # 0. pre-flight
-adb shell id                                     # uid=0, else see the note above
+adb shell id                                     # uid=0, or see the note above
 adb shell getenforce                             # Permissive
 adb shell cat /proc/sys/kernel/modules_disabled  # 0
 adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
 adb shell 'mount -t debugfs none /sys/kernel/debug'
 
-# 1. backups first - pg1fs, board_info, mfg, radio, misc
-scripts/backup.sh
-
-# 2. read the symbol addresses and the module_layout crc from the phone
+# 1. read the symbol addresses and the module_layout crc from the phone
 scripts/gen_addr.sh
 
-# 3. build the three modules against your prepared kernel tree
+# 2. build the three modules against your prepared kernel tree
 scripts/build.sh /path/to/kernel-tree
 
-# 4. make sure the plumbing is right (no side effects)
-adb push kmod/pwrsq_diag.ko /dev/
-adb shell 'dmesg -c >/dev/null; insmod /dev/pwrsq_diag.ko; dmesg | grep pwrsq'
-#    expect: rdev=... name=8941_l20 / consumer 'msm_sdcc.1' / mmc_host=...
-
-# 5. stop the framework, flush, then cut and restore VCC
-adb shell 'stop; sleep 8; sync'
-scripts/powercycle.sh
-
-# 6. confirm the write protection is gone, then set the flag
-make -C tools CROSS=arm-none-linux-gnueabihf-    # if not built yet
-adb push tools/mmc_cmd /dev/ && adb shell chmod 755 /dev/mmc_cmd
-adb shell '/dev/mmc_cmd wp'                      # expect all zeroes
-scripts/write_flag.sh 0
-
-# 7. verify from the bootloader
-adb reboot bootloader && fastboot oem readsecureflag   # expect: 0
+# 3. the rest is one command: backup, diagnose, power cycle, write, verify
+make -C tools CROSS=arm-none-linux-gnueabihf-    # mmc_cmd, if not built yet
+scripts/stool.sh soff
 ```
 
 ### Step by step, with expected output
@@ -457,14 +441,15 @@ What a snapshot holds:
 | file | content | size |
 |---|---|---|
 | `<ts>.txt` | every parameter, plus the exact byte ranges to restore | ~0.5 KB |
+| `<ts>.pg1fs.img` | whole p2 — the secure flag lives here | 119 MB |
 | `<ts>.board_info.img` | whole p3 — CID, IMEI, board data | 16 KB |
 | `<ts>.mfg.img` | whole p5 — MID lives here | 256 KB |
+| `<ts>.radio.img` | whole p20 — baseband | 75 MB |
 | `<ts>.misc.img` | whole p24 — version-main lives here | 1 MB |
 
 `set cid` goes through `fastboot oem writecid`, which is opaque, so the whole p3
 image matters more than the 8 bytes in the txt. Radio (p20) is never written by
-this tool; take it once with `scripts/backup.sh`, which dumps pg1fs, board_info,
-mfg, radio and misc as full images.
+this tool. The whole set is ~196 MB and takes about a minute over USB.
 
 | parameter | storage | how |
 |---|---|---|
@@ -820,7 +805,7 @@ adb shell 'dmesg | grep -i "card status"'
 restore is a plain `dd`:
 
 ```sh
-adb push backup-.../pg1fs.img /dev/pg1fs.img
+adb push backup/<ts>.pg1fs.img /dev/pg1fs.img
 adb shell 'dd if=/dev/pg1fs.img of=/dev/block/bootdevice/by-name/pg1fs bs=1048576'
 adb shell 'sync; rm -f /dev/pg1fs.img'
 adb reboot bootloader && fastboot oem readsecureflag
@@ -872,7 +857,7 @@ to an eMMC while Android is running is not a supported operation.
   `/data` is `errors=panic`; a write to a dead card panics the kernel.
 * If the card does not re-enumerate, the phone will not boot until it is power
   cycled by hand. Nothing is lost, but you need physical access.
-* `scripts/backup.sh` exists because "should not happen" is not a recovery plan.
+* `stool.sh backup` exists because "should not happen" is not a recovery plan.
   Keep the images on a PC, not on the phone.
 * Writing `0x8400` is the last step and the only one that flips S-ON/S-OFF:
   `00` = S-OFF, `03` = S-ON, and it can be written back. What cannot be undone

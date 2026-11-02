@@ -328,12 +328,23 @@ cmd_backup() {
 	snapshot_write "$f"
 	[ -s "$f" ] || die "backup failed"
 
-	# The txt only holds the bytes this tool writes.  `set cid` goes through
-	# `fastboot oem writecid`, which is opaque to us, so keep whole images of
-	# the three metadata partitions as well - they are 1.3 MB together.
-	for part in board_info mfg misc; do
+	# The txt only holds the bytes this tool writes, and `set cid` goes through
+	# `fastboot oem writecid`, which is opaque to us.  So keep whole images of
+	# every partition this tool can touch - pg1fs carries the secure flag and is
+	# the largest of them at ~119 MB on the M8.  Radio is never written here,
+	# but a complete set is what makes a restore possible at all.
+	for part in pg1fs board_info mfg radio misc; do
 		img=$BACKUP_DIR/$ts.$part.img
-		dump_part "$part" "$img" || warn "could not dump $part"
+		want=$(devsh "blockdev --getsize64 $DEV/$part 2>/dev/null" | tr -d '\r')
+		if ! dump_part "$part" "$img"; then
+			warn "could not dump $part"
+			continue
+		fi
+		got=$(wc -c < "$img" | tr -d ' ')
+		printf '  %-11s %10s bytes\n' "$part" "$got" >&2
+		if [ -n "${want:-}" ] && [ "$want" != "$got" ]; then
+			warn "$part: expected $want bytes, got $got"
+		fi
 	done
 
 	printf '%s\n' "$f"
