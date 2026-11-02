@@ -42,29 +42,25 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   <- hboot stops arming 
 ## Quick start
 
 The commands below assume `adb shell` is already root (`adb root`, a userdebug
-ROM, or TWRP). On a Magisk-rooted stock ROM it is not: wrap the pre-flight
+ROM, or TWRP). On a Magisk-rooted stock ROM it is not: wrap the two setup
 commands in `su -c`, e.g.
-`adb shell 'su -c "echo 0 > /proc/sys/kernel/kptr_restrict"'`. `stool.sh soff`
-in step 3 finds root on its own.
+`adb shell 'su -c "echo 0 > /proc/sys/kernel/kptr_restrict"'`. `stool.sh status`
+and `stool.sh soff` find root on their own.
 
 ```sh
 # 0. pre-flight
-adb shell id                                     # uid=0, or see the note above
-adb shell getenforce                             # Permissive
-adb shell cat /proc/sys/kernel/modules_disabled  # 0 = loading allowed
-# kallsyms hides addresses unless kptr_restrict is 0
-adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
-# pwrsq_diag looks for its regulator under debugfs
-adb shell 'mount -t debugfs none /sys/kernel/debug'
+scripts/stool.sh status  # root, S state, modules_disabled, SELinux
 
-# 1. read the symbol addresses and the module_layout crc from the phone
+# 1. kallsyms hides addresses until kptr_restrict is 0; then read them
+adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
 scripts/gen_addr.sh
 
 # 2. build the three modules and the mmc_cmd helper
 scripts/build.sh /path/to/kernel-tree
 make -C tools CROSS=arm-none-linux-gnueabihf-
 
-# 3. the rest is one command: backup, diagnose, power cycle, write, verify
+# 3. pwrsq_diag looks for its regulator under debugfs; then run the rest
+adb shell 'mount -t debugfs none /sys/kernel/debug'
 scripts/stool.sh soff
 ```
 
