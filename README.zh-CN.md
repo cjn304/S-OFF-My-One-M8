@@ -69,7 +69,7 @@ scripts/stool.sh splash photo.png --size=1440x2560     # 其它分辨率的屏
 scripts/stool.sh splash --restore <sp1.img>
 ```
 
-每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个分区布局一节，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝 —— 要加一节，见[第 6 节](#6-参数偏移)。
+每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
 每个命令都会先读 S 状态。任何写操作在动 eMMC 之前都会存一份快照到 `backup/<时间戳>.{txt,img}`：五个整分区，外加一份 txt，一半是给人看的摘要，一半是 `raw:<分区>:<偏移>=<hex>` 形式的原始字节，`restore` 靠它逐字节写回。
 
@@ -212,16 +212,16 @@ cat kmod/addr.h
 
 ### 6. 参数偏移
 
-`kmod/addr.h` 管的是内核符号；参数偏移也不由任何脚本生成。它们跟着分区布局走，所以放在 `targets.conf` 里 —— 一个布局一节，目前只有 `[m8]` 是实测过的。
+`kmod/addr.h` 管的是内核符号；参数偏移也不由任何脚本生成。它们跟着分区布局走，所以放在 `targets.conf` 里。
 
-选哪一节，是拿它的 `layout` 行去比设备在 `/sys/class/block/*/uevent` 里报的尺寸（`PARTNAME` 加 `size`，单位 512 字节扇区；无需 root）。用尺寸当键是有道理的：改 MID 或 CID 不会挪动任何东西，因为那两项都是分区里的内容；换了固件，装这些记录的分区尺寸就跟着变。一节都对不上时，脚本在动卡之前停下，把看到的布局原样打出来：
+选哪一项，是拿它的 `layout` 行去比设备在 `/sys/class/block/*/uevent` 里报的尺寸（`PARTNAME` 加 `size`，单位 512 字节扇区；无需 root）。用尺寸当键是有道理的：改 MID 或 CID 不会挪动任何东西，因为那两项都是分区里的内容；换了固件，装这些记录的分区尺寸就跟着变。一项都对不上时，脚本在动卡之前停下，把看到的布局原样打出来：
 
 ```
 error: no section in targets.conf matches this device.
   observed: hboot:8192 sp1:10240 pg1fs:243646 board_info:32 ...
 ```
 
-把这一行贴进新的 `[name]` 节，再补偏移 —— 偏移仍然只能人工推导。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
+把这一行贴进新的 `[name]` 项，再补偏移；偏移仍然只能人工推导。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
 
 ```sh
 for p in board_info mfg misc pg1fs pg2fs hboot sp1; do
@@ -305,7 +305,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 移植按要重做的量分四种情况，A 到 D，未实测。
 
-**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够 —— 按[第 6 节](#6-参数偏移)的办法找出分区、偏移和记录形状，填进 `targets.conf` 的一节，`stool.sh set secure 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
+**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够：按[6. 参数偏移](#6-参数偏移)的办法找出分区、偏移和记录形状，填进 `targets.conf` 的一项，`stool.sh set secure 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
 
 **B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
@@ -412,7 +412,7 @@ eMMC 消失了，`mmcblk0*` 全没了 —— 除了重启没有回头路。这�
 
 同一份源码编出三个变体：`diag`（stage 3，只读）、`off`（stage 1）、`on`（stage 2，先 `msleep(1500)` 让电放干净再上电）。
 
-它打出来的日志在[诊断](#诊断)里；这一节真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行 —— 它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：eMMC 回来了，分区都在，手机没重启。
+它打出来的日志在[诊断](#诊断)里；这里真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行 —— 它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：eMMC 回来了，分区都在，手机没重启。
 
 ### 4. 写哪一个字节
 
@@ -420,7 +420,7 @@ eMMC 消失了，`mmcblk0*` 全没了 —— 除了重启没有回头路。这�
 dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 ```
 
-`33792` 就是 `0x8400`。只有最低字节变（`03` -> `00`），上面三个本来就是 0。`0x8404` 那 4 个字节是 bootloader 的锁状态，不属于 flag —— `HTCU` 解锁、`00000000` 锁定 —— 只写 0x8400 时它原样不动。回读和之后为什么要 `drop_caches`，见[写 flag](#写-flag)；这一节要说清的是：只有一个字节变。
+`33792` 就是 `0x8400`。只有最低字节变（`03` -> `00`），上面三个本来就是 0。`0x8404` 那 4 个字节是 bootloader 的锁状态，不属于 flag —— `HTCU` 解锁、`00000000` 锁定 —— 只写 0x8400 时它原样不动。回读和之后为什么要 `drop_caches`，见[写 flag](#写-flag)；这里要说清的是：只有一个字节变。
 
 `pg1fs + 0x424` 还有 4 个字节，老版 Firewater/Sunshine 的配方会一起写。**这台机器上不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，手机正常启动。不要动它。
 
@@ -461,7 +461,7 @@ modules   0 (0 = allowed)
 selinux   Enforcing
 ```
 
-`target` 是命中的 `targets.conf` 节，也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新的一节即可（见[第 6 节](#6-参数偏移)）。`S state` 必须是 `S-ON`；出现 `unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`modules` 必须是 `0`，否则 `insmod` 会被拒。`selinux Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
+`target` 是 `targets.conf` 里命中的那一项，也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。`S state` 必须是 `S-ON`；出现 `unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`modules` 必须是 `0`，否则 `insmod` 会被拒。`selinux Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `gen_addr.sh`
 
@@ -570,7 +570,7 @@ adb shell 'dmesg | grep -i "card status"'
 
 #### 验证
 
-`== verify from bootloader ==` —— `secure_flag: 0   security: off`，随后手机重启回 Android，最后一行 `done - S-OFF`。两个值都有断言：`secure_flag is ..., expected 0` 或 `security is ..., expected off` 都会在 `done` 之前停下。为什么这才是真凭据，见[第 5 节](#5-为什么之后一直有效)。
+`== verify from bootloader ==` —— `secure_flag: 0   security: off`，随后手机重启回 Android，最后一行 `done - S-OFF`。两个值都有断言：`secure_flag is ..., expected 0` 或 `security is ..., expected off` 都会在 `done` 之前停下。为什么这才是真凭据，见[为什么之后一直有效](#5-为什么之后一直有效)。
 
 ### `son`
 
