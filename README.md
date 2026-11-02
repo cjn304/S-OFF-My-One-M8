@@ -830,8 +830,7 @@ not stick: see the two bullets above.
 `== verify from bootloader ==` - `secure_flag: 0   security: off`, the phone
 reboots into Android, and the last line is `done - S-OFF`. Both values are
 asserted: `secure_flag is ..., expected 0` or `security is ..., expected off`
-stops the run before `done`. Why this is the real proof:
-[section 5](#5-why-it-stays-off).
+stops the run before `done`.
 
 ### `son`
 
