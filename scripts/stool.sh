@@ -22,7 +22,10 @@
 # full parameter snapshot into backup/<YYYYmmdd-HHMMSS>.txt before touching
 # anything; the file is both human readable and restorable.
 #
-# The parameter table, with the offsets this script uses:
+# Where each parameter lives is not fixed here.  targets.conf holds one section
+# per partition layout and the script picks one by comparing the sizes the
+# device reports in /sys/class/block/*/uevent; no match means no run, rather than
+# writing at the M8 offsets on a phone that is not an M8.  The M8 section:
 #
 #   CID       board_info (p3)  @ 0x0014   8 chars, ASCII
 #   MID       mfg        (p5)  @ 0x4000   9 chars, UTF-16LE
@@ -31,14 +34,13 @@
 #   secure    pg1fs      (p2)  @ 0x8400   u32 LE  (0 = S-OFF, 3 = S-ON)
 #   bl lock   pg1fs      (p2)  @ 0x8404   4 chars ("HTCU" = unlocked, 00000000 = locked)
 #
-# Two commands touch partitions that are not part of that table:
+# Two commands touch partitions that are not part of that layout:
 #
 #   noredtext hboot      (p26)  six NUL terminated lines, located at run time
-	#   splash    sp1        (p12)  little-endian RGB565, 1080x1920 unless
-	#                               --size=WxH says otherwise
+#   splash    sp1        (p12)  little-endian RGB565, 1080x1920 unless --size=WxH
 #
 # Both need S-OFF and a full backup; noredtext rewrites hboot, which is the only
-# way to brick this device.  It always dumps the 4 MB hboot partition first.
+# way to brick this device.  It always dumps the whole hboot partition first.
 #
 # Licensed GPL-2.0.
 set -u
@@ -49,12 +51,18 @@ DEV=
 BACKUP_DIR=${BACKUP_DIR:-$ROOT/backup}
 STOOL_TMP=$ROOT/.stool.tmp
 
-OFF_CID=20            # 0x0014
-OFF_MID=16384         # 0x4000
-OFF_VER=160           # 0x00A0
-OFF_SECURE=33792      # 0x8400
-OFF_BLMAGIC=33796     # 0x8404
-OFF_TAMPER=5314564    # 0x511804
+# Where each parameter lives is a property of the partition layout, so it is not
+# hard-coded here: targets.conf holds one section per layout and the values below
+# are filled in by load_target() once the sizes match.  They stay empty until
+# then, which is deliberate - a command that reached a read with no target would
+# dd from an empty partition name and fail loudly instead of writing at the M8
+# offsets on a phone that is not an M8.
+TARGET= TARGET_DEVICE= TARGET_HBOOT= LAYOUT_MAP= OBSERVED_LAYOUT=
+PART_CID= PART_MID= PART_VER= PART_TAMPER= PART_SECURE= PART_BLMAGIC=
+PART_HBOOT= PART_SPLASH=
+OFF_CID= OFF_MID= OFF_VER= OFF_TAMPER= OFF_SECURE= OFF_BLMAGIC= OFF_SPLASH=
+LEN_CID= LEN_MID= LEN_VER= LEN_TAMPER= LEN_SECURE= LEN_BLMAGIC=
+HB_BYTES=0 SCREEN=1080x1920 DUMP= FV=
 
 say()  { printf '%s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
@@ -111,11 +119,177 @@ detect_root() {
 }
 
 devsh() { # run one command on the device as root; $1 must not contain single quotes
+	# stdin from /dev/null: adb shell forwards its own stdin to the device, so a
+	# call inside a `while read` loop eats the rest of the loop's input.
 	if [ "$DEV_SU" = 1 ]; then
-		"$ADB" shell "su -c '$1'"
+		"$ADB" shell "su -c '$1'" </dev/null
 	else
-		"$ADB" shell "$1"
+		"$ADB" shell "$1" </dev/null
 	fi
+}
+
+# ---------------------------------------------------------------- targets
+
+CONF=${CONF:-$ROOT/targets.conf}
+
+conf_dump() { # every line as section|key|value; comments and blanks dropped
+	# No die here: the caller runs this inside $( ), where an exit only ends the
+	# subshell.  target_find checks the file exists first.
+	[ -f "$CONF" ] || return 1
+	awk '
+	{ sub(/\r$/, "") }
+	/^[ \t]*#/ { next }
+	/^[ \t]*$/ { next }
+	/^\[/ {
+		s = $0
+		sub(/^\[[ \t]*/, "", s)
+		sub(/[ \t]*\].*$/, "", s)
+		next
+	}
+	{
+		i = index($0, "=")
+		if (i == 0) next
+		k = substr($0, 1, i - 1); gsub(/[ \t]+$/, "", k)
+		v = substr($0, i + 1)
+		sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
+		if (s != "") printf "%s|%s|%s\n", s, k, v
+	}
+	' "$CONF"
+}
+
+conf_get() { # dump section key -> value, empty when absent
+	printf '%s\n' "$1" | awk -F'|' -v s="$2" -v k="$3" \
+		'$1 == s && $2 == k { print $3; exit }'
+}
+
+# Sets FV.  It has to run in the calling shell: a die inside a $( ) only ends
+# the subshell, and the caller would carry on with an empty value.
+field_req() { # key
+	FV=$(conf_get "$DUMP" "$TARGET" "$1")
+	[ -n "$FV" ] || die "targets.conf: [$TARGET] is missing '$1'"
+	case "$FV" in
+	"" | :* | *: | *::*)
+		die "targets.conf: [$TARGET] '$1' must be <partition>:<offset>:<length>:<encoding>" ;;
+	esac
+}
+
+# /sys/class/block/*/uevent carries PARTNAME and size (512-byte sectors) and is
+# world-readable, so the layout can be read before root and before $DEV.  Both
+# matter: the table decides which partition to look for, so it cannot come from
+# detect_dev, and this has to work on a phone whose names we do not know yet.
+layout_probe() {
+	[ -n "$LAYOUT_MAP" ] && return 0
+	LAYOUT_MAP=$("$ADB" shell 'for f in /sys/class/block/*/uevent; do
+		n=
+		while IFS="=" read -r k v; do [ "$k" = PARTNAME ] && n=$v; done < "$f"
+		[ -n "$n" ] && printf "%s %s\n" "$n" "$(cat "${f%/uevent}/size" 2>/dev/null)"
+	done' 2>/dev/null | tr -d '\r')
+	[ -n "$LAYOUT_MAP" ]
+}
+
+part_sectors() { # name -> sectors, "-" when the partition is absent
+	printf '%s\n' "$LAYOUT_MAP" | awk -v n="$1" \
+		'$1 == n { print $2; f = 1 } END { if (!f) print "-" }'
+}
+
+target_apply() { # dump section - fills the PART_/OFF_ variables
+	DUMP=$1
+	TARGET=$2
+	TARGET_DEVICE=$(conf_get "$DUMP" "$TARGET" device)
+	TARGET_HBOOT=$(conf_get "$DUMP" "$TARGET" hboot)
+	field_req cid
+	IFS=: read -r PART_CID OFF_CID LEN_CID _ <<EOF
+$FV
+EOF
+	field_req mid
+	IFS=: read -r PART_MID OFF_MID LEN_MID _ <<EOF
+$FV
+EOF
+	field_req version
+	IFS=: read -r PART_VER OFF_VER LEN_VER _ <<EOF
+$FV
+EOF
+	field_req tamper
+	IFS=: read -r PART_TAMPER OFF_TAMPER LEN_TAMPER _ <<EOF
+$FV
+EOF
+	field_req secure
+	IFS=: read -r PART_SECURE OFF_SECURE LEN_SECURE _ <<EOF
+$FV
+EOF
+	field_req blmagic
+	IFS=: read -r PART_BLMAGIC OFF_BLMAGIC LEN_BLMAGIC _ <<EOF
+$FV
+EOF
+	field_req hbootpart
+	IFS=: read -r PART_HBOOT _ _ _ <<EOF
+$FV
+EOF
+	field_req splash
+	IFS=: read -r PART_SPLASH OFF_SPLASH _ _ <<EOF
+$FV
+EOF
+	SCREEN=$(conf_get "$DUMP" "$TARGET" screen)
+	[ -n "$SCREEN" ] || SCREEN=1080x1920
+	# hboot image size, so noredtext does not carry 4194304 as a literal
+	hs=$(part_sectors "$PART_HBOOT")
+	case "$hs" in
+	"" | - | *[!0-9]*) HB_BYTES=0 ;;
+	*) HB_BYTES=$((hs * 512)) ;;
+	esac
+}
+
+target_find() { # 0 when a section's layout matches this device; no side effects
+	[ -n "$TARGET" ] && return 0
+	[ -f "$CONF" ] || die "missing $CONF"
+	layout_probe || return 1
+	dump=$(conf_dump)
+	secs=$(printf '%s\n' "$dump" | cut -d'|' -f1 | awk '!seen[$0]++')
+	for s in $secs; do
+		lay=$(conf_get "$dump" "$s" layout)
+		[ -n "$lay" ] || continue
+		ok=1
+		for pair in $lay; do
+			want=${pair##*:}
+			got=$(part_sectors "${pair%:*}")
+			[ "$got" = "$want" ] || { ok=0; break; }
+		done
+		[ "$ok" = 1 ] && { target_apply "$dump" "$s"; return 0; }
+	done
+	# Report the sizes the sections ask about, so the line below can be pasted
+	# into targets.conf as-is.
+	names=$(printf '%s\n' "$dump" |
+		awk -F'|' '$2 == "layout" { n = split($3, a, " "); for (i = 1; i <= n; i++) { split(a[i], b, ":"); print b[1] } }' |
+		awk '!seen[$0]++')
+	OBSERVED_LAYOUT=
+	for n in $names; do
+		OBSERVED_LAYOUT="$OBSERVED_LAYOUT $n:$(part_sectors "$n")"
+	done
+	return 1
+}
+
+load_target() {
+	target_find && return 0
+	die "no section in targets.conf matches this device.
+  observed:$OBSERVED_LAYOUT
+  add a [name] section holding that layout and the offsets from README section 6.
+  Nothing has been written."
+}
+
+# The layout being right is a strong hint but not proof: two partitions can have
+# the same size and a different internal record.  These two reads are the ones
+# whose result is a closed set, so they double as a check of the offsets.
+target_check() {
+	s=$(p_secure)
+	case "$s" in
+	0 | 3) ;;
+	*) die "secure flag at $PART_SECURE+$OFF_SECURE reads '$s', expected 0 or 3 - these offsets do not fit this device" ;;
+	esac
+	m=$(hex_at "$PART_BLMAGIC" "$OFF_BLMAGIC" 4)
+	case "$m" in
+	48544355 | 00000000) ;;
+	*) die "BL magic at $PART_BLMAGIC+$OFF_BLMAGIC reads '$m', expected HTCU or 00000000 - these offsets do not fit this device" ;;
+	esac
 }
 
 in_recovery() { # 0 if adbd is a recovery ramdisk rather than Android
@@ -124,7 +298,7 @@ in_recovery() { # 0 if adbd is a recovery ramdisk rather than Android
 	[ -n "$("$ADB" shell 'getprop ro.twrp.version' 2>/dev/null | tr -d '\r')" ]
 }
 
-require_android() {
+require_android() { # $1 = "ro" for commands that never write: skips target_check
 	case "$(device_mode)" in
 	android) ;;
 	fastboot)
@@ -133,7 +307,9 @@ require_android() {
 		die "no device found: check the cable and that adb debugging is on" ;;
 	esac
 	detect_root || die "adb shell is neither root nor able to run su - install Magisk or use a userdebug build"
-	detect_dev || die "no by-name directory containing pg1fs (looked in bootdevice, by-name and platform/*)"
+	load_target
+	detect_dev || die "no by-name directory containing $PART_SECURE (looked in bootdevice, by-name and platform/*)"
+	[ "${1:-}" = ro ] || target_check
 }
 
 # The by-name directory moved between SoCs and Android releases:
@@ -142,15 +318,16 @@ require_android() {
 # probe for a directory that actually contains pg1fs instead of assuming.
 detect_dev() {
 	[ -n "$DEV" ] && return 0
+	want=${PART_SECURE:-pg1fs}
 	for c in /dev/block/bootdevice/by-name /dev/block/by-name; do
-		if devsh "test -e $c/pg1fs && echo ok" 2>/dev/null | tr -d '\r' | grep -qx ok; then
+		if devsh "test -e $c/$want && echo ok" 2>/dev/null | tr -d '\r' | grep -qx ok; then
 			DEV=$c
 			return 0
 		fi
 	done
 	for c in $(devsh "ls -d /dev/block/platform/*/by-name /dev/block/platform/*/*/by-name 2>/dev/null" |
 		tr -d '\r'); do
-		if devsh "test -e $c/pg1fs && echo ok" 2>/dev/null | tr -d '\r' | grep -qx ok; then
+		if devsh "test -e $c/$want && echo ok" 2>/dev/null | tr -d '\r' | grep -qx ok; then
 			DEV=$c
 			return 0
 		fi
@@ -180,7 +357,7 @@ wait_android() {
 # ---------------------------------------------------------------- byte access
 
 hex_at() { # part offset len -> lowercase hex, no separators
-	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing pg1fs"
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing $PART_SECURE"
 	# dd on the device wants decimal; callers may pass 0x...
 	off=$(( $2 ))
 	devsh "dd if=$DEV/$1 bs=1 skip=$off count=$3 2>/dev/null" |
@@ -209,14 +386,15 @@ le32()     { "$PY" -c 'import sys,binascii;print(int.from_bytes(binascii.unhexli
 u32hex()   { "$PY" -c 'import sys,struct;print(struct.pack("<I",int(sys.argv[1])).hex())' "$1"; }
 
 write_hex() { # part offset hexstring
-	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing pg1fs"
 	part=$1; off=$(( $2 )); hx=$3
+	[ -n "$part" ] || die "write_hex: no partition given"
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing $PART_SECURE"
 	n=$(( ${#hx} / 2 ))
 	"$PY" - "$hx" > "$STOOL_TMP" <<'EOF'
 import sys, binascii
 sys.stdout.buffer.write(binascii.unhexlify(sys.argv[1]))
 EOF
-	"$ADB" push "$STOOL_TMP" //data/local/tmp/stool.bin >/dev/null 2>&1 || die "adb push failed"
+	"$ADB" push "$STOOL_TMP" //data/local/tmp/stool.bin >/dev/null 2>&1 </dev/null || die "adb push failed"
 	devsh "dd if=/data/local/tmp/stool.bin of=$DEV/$part bs=1 seek=$off count=$n 2>&1 | tail -1" >&2
 	devsh "rm -f /data/local/tmp/stool.bin" >/dev/null 2>&1
 	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
@@ -230,34 +408,38 @@ verify_hex() { # part offset hexstring -> 0 if the card returns the same bytes
 }
 
 dump_part() { # part dest-file  (whole partition, pulled to the PC)
-	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing pg1fs"
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing $PART_SECURE"
 	# The double slash is for Git Bash: a single leading /data/... gets
 	# rewritten into a Windows path before adb ever sees it.
 	devsh "dd if=$DEV/$1 of=/data/local/tmp/stool_$1.img bs=4096" >/dev/null 2>&1
 	devsh "chmod 644 /data/local/tmp/stool_$1.img" >/dev/null 2>&1
-	"$ADB" pull "//data/local/tmp/stool_$1.img" "$2" >/dev/null 2>&1
+	"$ADB" pull "//data/local/tmp/stool_$1.img" "$2" >/dev/null 2>&1 </dev/null
 	devsh "rm -f /data/local/tmp/stool_$1.img" >/dev/null 2>&1
 	[ -s "$2" ]
 }
 
 # ---------------------------------------------------------------- parameters
 
-p_cid()     { hex2str   "$(hex_at board_info $OFF_CID 8)"; }
-p_mid()     { hex2utf16 "$(hex_at mfg        $OFF_MID 18)"; }
-p_version() { hex2str   "$(hex_at misc       $OFF_VER 16)"; }
-p_tamper()  { le32      "$(hex_at pg2fs      $OFF_TAMPER 4)"; }
-p_secure()  { le32      "$(hex_at pg1fs      $OFF_SECURE 4)"; }
-p_bl()      { h=$(hex_at pg1fs $OFF_BLMAGIC 4)
+p_cid()     { hex2str   "$(hex_at "$PART_CID"    "$OFF_CID"    "$LEN_CID")"; }
+p_mid()     { hex2utf16 "$(hex_at "$PART_MID"    "$OFF_MID"    "$LEN_MID")"; }
+p_version() { hex2str   "$(hex_at "$PART_VER"    "$OFF_VER"    "$LEN_VER")"; }
+p_tamper()  { le32      "$(hex_at "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"; }
+p_secure()  { le32      "$(hex_at "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"; }
+p_bl()      { h=$(hex_at "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")
 	case "$h" in 48544355) printf "HTCU (unlocked)";;
 	             00000000) printf "00000000 (locked)";;
 	             *) printf "%s" "$h";; esac; }
+
+raw_line() { # part offset len -> the replayable line `restore` consumes
+	printf 'raw:%s:0x%x=%s\n' "$1" "$(( $2 ))" "$(hex_at "$1" "$2" "$3")"
+}
 
 secure_state() { # "off" | "on"
 	[ "$(p_secure)" = 0 ] && printf off || printf on
 }
 
 bl_state() { # "unlocked" | "locked"
-	case "$(hex_at pg1fs $OFF_BLMAGIC 4)" in
+	case "$(hex_at "$PART_BLMAGIC" "$OFF_BLMAGIC" 4)" in
 	48544355) printf unlocked ;;
 	*) printf locked ;;
 	esac
@@ -270,15 +452,20 @@ print_state() {
 			say "S state : unknown (no root - TWRP, adb root or Magisk su needed)"
 			return 0
 		fi
-		if ! detect_dev; then
-			say "S state : unknown (no by-name directory contains pg1fs -"
-			say "          this looks like a device this tool does not cover)"
+		if ! target_find; then
+			say "target  : unknown - no targets.conf section matches"
+			say "  observed:$OBSERVED_LAYOUT"
 			return 0
 		fi
+		if ! detect_dev; then
+			say "target  : $TARGET (layout ok) but no by-name directory holds $PART_SECURE"
+			return 0
+		fi
+		say "target  : $TARGET  [$TARGET_DEVICE, hboot $TARGET_HBOOT]"
 		st=$(secure_state)
 		if [ "$st" = off ]; then say "S state : S-OFF (secure_flag 0)"
 		else say "S state : S-ON  (secure_flag $(p_secure))"; fi
-		say "BL state: $(bl_state) (pg1fs 0x8404 = $(p_bl))"
+		say "BL state: $(bl_state) ($PART_BLMAGIC 0x$(printf '%x' "$((OFF_BLMAGIC))") = $(p_bl))"
 		;;
 	fastboot)
 		sf=$("$FB" oem readsecureflag 2>&1 | sed -n 's/.*secure_flag: //p' | tr -d '\r')
@@ -309,6 +496,7 @@ snapshot_write() { # target file
 		printf '# time=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 		printf '# kernel=%s\n' "$("$ADB" shell uname -r 2>/dev/null | tr -d '\r')"
 		printf '# device=%s\n' "$("$ADB" shell getprop ro.product.device 2>/dev/null | tr -d '\r')"
+		printf '# target=%s\n' "$TARGET"
 		printf 'state=%s\n' "$(secure_state)"
 		printf 'cid=%s\n' "$(p_cid)"
 		printf 'mid=%s\n' "$(p_mid)"
@@ -317,17 +505,17 @@ snapshot_write() { # target file
 		printf 'secure=%s\n' "$(p_secure)"
 		printf 'bl=%s\n'     "$(bl_state)"
 		printf '# raw bytes, restorable with: stool.sh restore <this file>\n'
-		printf 'raw:board_info:0x%04x=%s\n' $OFF_CID    "$(hex_at board_info $OFF_CID 8)"
-		printf 'raw:mfg:0x%04x=%s\n'        $OFF_MID    "$(hex_at mfg        $OFF_MID 18)"
-		printf 'raw:misc:0x%04x=%s\n'       $OFF_VER    "$(hex_at misc       $OFF_VER 16)"
-		printf 'raw:pg2fs:0x%x=%s\n'        $OFF_TAMPER "$(hex_at pg2fs      $OFF_TAMPER 4)"
-		printf 'raw:pg1fs:0x%x=%s\n'        $OFF_SECURE "$(hex_at pg1fs      $OFF_SECURE 4)"
-		printf 'raw:pg1fs:0x%x=%s\n'        $OFF_BLMAGIC "$(hex_at pg1fs     $OFF_BLMAGIC 4)"
+		raw_line "$PART_CID"     "$OFF_CID"     "$LEN_CID"
+		raw_line "$PART_MID"     "$OFF_MID"     "$LEN_MID"
+		raw_line "$PART_VER"     "$OFF_VER"     "$LEN_VER"
+		raw_line "$PART_TAMPER"  "$OFF_TAMPER"  "$LEN_TAMPER"
+		raw_line "$PART_SECURE"  "$OFF_SECURE"  "$LEN_SECURE"
+		raw_line "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC"
 	} > "$f"
 }
 
 cmd_backup() {
-	require_android
+	require_android ro
 	mkdir -p "$BACKUP_DIR"
 	ts=$(date +%Y%m%d-%H%M%S)
 	f=$BACKUP_DIR/$ts.txt
@@ -335,10 +523,17 @@ cmd_backup() {
 	[ -s "$f" ] || die "backup failed"
 
 	# The txt only holds the bytes this tool writes - six small ranges.  Keep
-	# whole images of every partition this tool writes: pg1fs carries the secure
-	# flag and is the largest at ~119 MB, pg2fs carries the tamper flag.  Radio is
-	# never written here, so it is not dumped.
-	for part in pg1fs board_info mfg pg2fs misc; do
+	# whole images of every partition this tool writes: the one carrying the
+	# secure flag is the largest (pg1fs, ~119 MB on the M8), the tamper flag has
+	# its own.  Radio is never written here, so it is not dumped.  The names come
+	# from targets.conf; pg1fs appears twice there (flag and BL magic), so dedupe.
+	parts=
+	for p in "$PART_SECURE" "$PART_CID" "$PART_MID" "$PART_TAMPER" "$PART_VER"; do
+		[ -n "$p" ] || continue
+		case " $parts " in *" $p "*) continue ;; esac
+		parts="$parts $p"
+	done
+	for part in $parts; do
 		img=$BACKUP_DIR/$ts.$part.img
 		want=$(devsh "blockdev --getsize64 $DEV/$part 2>/dev/null" | tr -d '\r')
 		if ! dump_part "$part" "$img"; then
@@ -379,15 +574,15 @@ cmd_status() {
 	fi
 	# print_state already explained why it could not read anything
 	detect_root && detect_dev || return 0
-	require_android
+	require_android ro
 	say ""
 	say "== parameters =="
-	printf '%-9s %-12s %s\n' CID      "$(p_cid)"     "board_info p3 @ 0x14"
-	printf '%-9s %-12s %s\n' MID      "$(p_mid)"     "mfg p5 @ 0x4000 (UTF-16LE)"
-	printf '%-9s %-12s %s\n' version  "$(p_version)" "misc p24 @ 0xA0"
-	printf '%-9s %-12s %s\n' tamper   "$(p_tamper)"  "pg2fs p6 @ 0x511804"
-	printf '%-9s %-12s %s\n' secure   "$(p_secure)"  "pg1fs p2 @ 0x8400"
-	printf '%-9s %-12s %s\n' "BL lock" "$(bl_state)" "pg1fs p2 @ 0x8404"
+	printf '%-9s %-12s %s @ 0x%x\n' CID      "$(p_cid)"     "$PART_CID"    "$((OFF_CID))"
+	printf '%-9s %-12s %s @ 0x%x\n' MID      "$(p_mid)"     "$PART_MID"    "$((OFF_MID))"
+	printf '%-9s %-12s %s @ 0x%x\n' version  "$(p_version)" "$PART_VER"    "$((OFF_VER))"
+	printf '%-9s %-12s %s @ 0x%x\n' tamper   "$(p_tamper)"  "$PART_TAMPER" "$((OFF_TAMPER))"
+	printf '%-9s %-12s %s @ 0x%x\n' secure   "$(p_secure)"  "$PART_SECURE" "$((OFF_SECURE))"
+	printf '%-9s %-12s %s @ 0x%x\n' "BL lock" "$(bl_state)" "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
 	say ""
 	printf '%-9s %s\n' modules  "$(devsh "cat /proc/sys/kernel/modules_disabled 2>/dev/null" | tr -d '\r') (0 = allowed)"
 	printf '%-9s %s\n' selinux  "$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')"
@@ -421,8 +616,8 @@ cmd_set() {
 		[ ${#val} -eq 8 ] || die "CID must be exactly 8 characters (got '$val')"
 		hx=$(str2hex "$val")
 		say "CID: $(p_cid) -> $val"
-		write_hex board_info $OFF_CID "$hx"
-		verify_hex board_info $OFF_CID "$hx"
+		write_hex "$PART_CID" "$OFF_CID" "$hx"
+		verify_hex "$PART_CID" "$OFF_CID" "$hx"
 		say "now: $(p_cid)"
 		;;
 	mid)
@@ -430,8 +625,8 @@ cmd_set() {
 		hx=$(utf2hex "$val" | sed 's/\(..\)/\1/g')
 		hx=$("$PY" -c 'import sys;h=sys.argv[1];print((h+"00"*16)[:36])' "$hx")
 		say "MID: $(p_mid) -> $val"
-		write_hex mfg $OFF_MID "$hx"
-		verify_hex mfg $OFF_MID "$hx"
+		write_hex "$PART_MID" "$OFF_MID" "$hx"
+		verify_hex "$PART_MID" "$OFF_MID" "$hx"
 		say "ok"
 		;;
 	version)
@@ -440,8 +635,8 @@ cmd_set() {
 		hx=$(str2hex "$val")
 		hx=$("$PY" -c 'import sys;h=sys.argv[1];print((h+"00"*16)[:32])' "$hx")
 		say "version: $(p_version) -> $val"
-		write_hex misc $OFF_VER "$hx"
-		verify_hex misc $OFF_VER "$hx"
+		write_hex "$PART_VER" "$OFF_VER" "$hx"
+		verify_hex "$PART_VER" "$OFF_VER" "$hx"
 		say "ok"
 		;;
 	tamper)
@@ -449,8 +644,8 @@ cmd_set() {
 		[ "$val" -le 255 ] || die "tamper out of range"
 		hx=$(u32hex "$val")
 		say "tamper: $(p_tamper) -> $val"
-		write_hex pg2fs $OFF_TAMPER "$hx"
-		verify_hex pg2fs $OFF_TAMPER "$hx"
+		write_hex "$PART_TAMPER" "$OFF_TAMPER" "$hx"
+		verify_hex "$PART_TAMPER" "$OFF_TAMPER" "$hx"
 		say "ok"
 		;;
 	secure)
@@ -463,8 +658,8 @@ cmd_set() {
 		fi
 		hx=$(u32hex "$val")
 		say "secure: $(p_secure) -> $val"
-		write_hex pg1fs $OFF_SECURE "$hx"
-		verify_hex pg1fs $OFF_SECURE "$hx"
+		write_hex "$PART_SECURE" "$OFF_SECURE" "$hx"
+		verify_hex "$PART_SECURE" "$OFF_SECURE" "$hx"
 		say "ok"
 		;;
 	esac
@@ -491,9 +686,9 @@ cmd_bl() { # locked | unlocked
 		hx=48544355
 	fi
 	say ""
-	say "BL lock: $(bl_state) -> $want   (pg1fs 0x8404 = $hx)"
-	write_hex pg1fs $OFF_BLMAGIC "$hx"
-	verify_hex pg1fs $OFF_BLMAGIC "$hx"
+	say "BL lock: $(bl_state) -> $want   ($PART_BLMAGIC 0x$(printf '%x' "$((OFF_BLMAGIC))") = $hx)"
+	write_hex "$PART_BLMAGIC" "$OFF_BLMAGIC" "$hx"
+	verify_hex "$PART_BLMAGIC" "$OFF_BLMAGIC" "$hx"
 	say "ok - reboot to the bootloader to see it"
 }
 
@@ -573,9 +768,9 @@ cmd_soff() {
 
 	say ""
 	say "== write secure flag =="
-	write_hex pg1fs $OFF_SECURE "$(u32hex 0)"
-	verify_hex pg1fs $OFF_SECURE 00000000
-	say "pg1fs 0x8400 = 0"
+	write_hex "$PART_SECURE" "$OFF_SECURE" "$(u32hex 0)"
+	verify_hex "$PART_SECURE" "$OFF_SECURE" 00000000
+	say "$PART_SECURE 0x$(printf '%x' "$((OFF_SECURE))") = 0"
 
 	say ""
 	say "== verify from bootloader =="
@@ -609,9 +804,9 @@ cmd_son() {
 
 	say ""
 	say "== write secure flag =="
-	write_hex pg1fs $OFF_SECURE "$(u32hex 3)"
-	verify_hex pg1fs $OFF_SECURE 03000000
-	say "pg1fs 0x8400 = 3"
+	write_hex "$PART_SECURE" "$OFF_SECURE" "$(u32hex 3)"
+	verify_hex "$PART_SECURE" "$OFF_SECURE" 03000000
+	say "$PART_SECURE 0x$(printf '%x' "$((OFF_SECURE))") = 3"
 
 	say ""
 	say "== verify from bootloader =="
@@ -643,20 +838,21 @@ cmd_restore() {
 	say "== restoring $f =="
 
 	grep '^raw:' "$f" > "$STOOL_TMP.list"
-	while IFS= read -r line; do
+	# fd 3, not stdin: adb inherits stdin and would swallow the unread lines
+	while IFS= read -r line <&3; do
 		key=${line%%=*}
 		val=${line#*=}
 		rest=${key#raw:}
 		part=${rest%%:*}
 		off=${rest#*:}
 		case "$part" in
-		pg1fs|board_info|mfg|pg2fs|misc) ;;
-		*) warn "skip unknown partition '$part'"; continue ;;
+		"$PART_SECURE"|"$PART_CID"|"$PART_MID"|"$PART_TAMPER"|"$PART_VER") ;;
+		*) warn "skip '$part' - not a partition this target writes"; continue ;;
 		esac
 		say "  $part @ $off = $val"
 		write_hex "$part" "$off" "$val"
 		verify_hex "$part" "$off" "$val"
-	done < "$STOOL_TMP.list"
+	done 3< "$STOOL_TMP.list"
 	rm -f "$STOOL_TMP.list"
 
 	say ""
@@ -668,9 +864,9 @@ cmd_restore() {
 winpath() { cygpath -w "$1" 2>/dev/null || printf '%s' "$1"; }
 
 flash_part() { # part src-file  (write a whole image, used by the --restore paths)
-	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing pg1fs"
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing $PART_SECURE"
 	say "writing $(wc -c < "$2" | tr -d ' ') bytes to $1"
-	"$ADB" push "$2" //data/local/tmp/stool_flash.img >/dev/null 2>&1 || die "adb push failed"
+	"$ADB" push "$2" //data/local/tmp/stool_flash.img >/dev/null 2>&1 </dev/null || die "adb push failed"
 	devsh "dd if=/data/local/tmp/stool_flash.img of=$DEV/$1 bs=4096 2>&1 | tail -2" >&2
 	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
 	devsh "rm -f /data/local/tmp/stool_flash.img" >/dev/null 2>&1
@@ -682,8 +878,11 @@ cmd_noredtext() {
 		[ -n "$src" ] && [ -f "$src" ] || die "usage: stool.sh noredtext --restore <hboot.img>"
 		require_android
 		[ "$(secure_state)" = off ] || die "writing hboot needs S-OFF"
-		[ "$(wc -c < "$src" | tr -d ' ')" = 4194304 ] || die "not a 4 MB hboot image: $src"
-		flash_part hboot "$src"
+		[ -n "$HB_BYTES" ] && [ "$HB_BYTES" -gt 0 ] ||
+			die "targets.conf does not give a size for $PART_HBOOT"
+		[ "$(wc -c < "$src" | tr -d ' ')" = "$HB_BYTES" ] ||
+			die "not a $HB_BYTES-byte $PART_HBOOT image: $src"
+		flash_part "$PART_HBOOT" "$src"
 		say "ok - reboot to see it"
 		return 0
 	fi
@@ -699,11 +898,11 @@ cmd_noredtext() {
 	pf=$(cmd_backup)
 	say "params : $pf"
 	ts=$(date +%Y%m%d-%H%M%S)
-	hb=$BACKUP_DIR/$ts.hboot.img
-	dump_part hboot "$hb" || die "could not dump the hboot partition"
+	hb=$BACKUP_DIR/$ts.$PART_HBOOT.img
+	dump_part "$PART_HBOOT" "$hb" || die "could not dump the $PART_HBOOT partition"
 	sz=$(wc -c < "$hb" | tr -d ' ')
 	say "hboot  : $hb ($sz bytes)"
-	[ "$sz" = 4194304 ] || die "hboot dump is $sz bytes, expected 4194304 - aborting"
+	[ "$sz" = "$HB_BYTES" ] || die "$PART_HBOOT dump is $sz bytes, expected $HB_BYTES - aborting"
 
 	say ""
 	say "== locate =="
@@ -711,7 +910,7 @@ cmd_noredtext() {
 		die "the six red-text lines were not found in this hboot"
 
 	for o in $offs; do
-		b=$(hex_at hboot "$o" 1)
+		b=$(hex_at "$PART_HBOOT" "$o" 1)
 		say "  0x$(printf '%06x' "$o")  first byte = $b"
 	done
 
@@ -720,8 +919,8 @@ cmd_noredtext() {
 	printf '\000' > "$STOOL_TMP.zero"
 	printf '#!/system/bin/sh\n' > "$STOOL_TMP.nr.sh"
 	for o in $offs; do
-		printf 'dd if=/data/local/tmp/stool_zero.bin of=%s/hboot bs=1 seek=%s count=1 || exit 1\n' \
-			"$DEV" "$o" >> "$STOOL_TMP.nr.sh"
+		printf 'dd if=/data/local/tmp/stool_zero.bin of=%s/%s bs=1 seek=%s count=1 || exit 1\n' \
+			"$DEV" "$PART_HBOOT" "$o" >> "$STOOL_TMP.nr.sh"
 	done
 	printf 'sync\n' >> "$STOOL_TMP.nr.sh"
 
@@ -735,7 +934,7 @@ cmd_noredtext() {
 	say ""
 	say "== verify =="
 	for o in $offs; do
-		verify_hex hboot "$o" 00
+		verify_hex "$PART_HBOOT" "$o" 00
 		say "  0x$(printf '%06x' "$o")  ok"
 	done
 
@@ -749,8 +948,8 @@ cmd_splash() {
 		src=${2:-}
 		[ -n "$src" ] && [ -f "$src" ] || die "usage: stool.sh splash --restore <sp1.img>"
 		require_android
-		[ "$(secure_state)" = off ] || die "writing sp1 needs S-OFF"
-		flash_part sp1 "$src"
+		[ "$(secure_state)" = off ] || die "writing $PART_SPLASH needs S-OFF"
+		flash_part "$PART_SPLASH" "$src"
 		say "ok - reboot to see it"
 		return 0
 	fi
@@ -758,9 +957,11 @@ cmd_splash() {
 	img=${1:-}
 	[ -n "$img" ] || die "usage: stool.sh splash <image.png> [--size=WxH] [--fit=cover|stretch]   or   stool.sh splash --restore <sp1.img>"
 	[ -f "$img" ] || die "no such file: $img"
+	require_android
 	shift
-	# --size is ours; everything else goes to the converter
-	size=1080x1920
+	# --size is ours; everything else goes to the converter.  The default comes
+	# from targets.conf, so a 1440x2560 panel does not need --size every time.
+	size=$SCREEN
 	fitarg=
 	for a in "$@"; do
 		case $a in
@@ -775,7 +976,6 @@ cmd_splash() {
 	esac
 	exp=$((w * h * 2))
 	say "size   : ${w}x${h} -> $exp bytes per frame"
-	require_android
 
 	say "== convert =="
 	raw=$STOOL_TMP.splash
@@ -786,9 +986,9 @@ cmd_splash() {
 	say "raw    : $sz bytes"
 	[ "$sz" = "$exp" ] || die "converted image is $sz bytes, expected $exp"
 	# check before dumping 10 MB of partition that we cannot use anyway
-	psz=$(devsh "blockdev --getsize64 $DEV/sp1 2>/dev/null" | tr -d '\r')
+	psz=$(devsh "blockdev --getsize64 $DEV/$PART_SPLASH 2>/dev/null" | tr -d '\r')
 	if [ -n "$psz" ] && [ "$exp" -gt "$psz" ]; then
-		die "a ${w}x${h} frame is $exp bytes but sp1 is only $psz bytes"
+		die "a ${w}x${h} frame is $exp bytes but $PART_SPLASH is only $psz bytes"
 	fi
 
 	say ""
@@ -796,25 +996,25 @@ cmd_splash() {
 	pf=$(cmd_backup)
 	say "params : $pf"
 	ts=$(date +%Y%m%d-%H%M%S)
-	sp=$BACKUP_DIR/$ts.sp1.img
-	dump_part sp1 "$sp" || die "could not dump the sp1 partition"
-	say "sp1    : $sp ($(wc -c < "$sp" | tr -d ' ') bytes)"
+	sp=$BACKUP_DIR/$ts.$PART_SPLASH.img
+	dump_part "$PART_SPLASH" "$sp" || die "could not dump the $PART_SPLASH partition"
+	say "$PART_SPLASH : $sp ($(wc -c < "$sp" | tr -d ' ') bytes)"
 
 	say ""
 	say "== write =="
 	"$ADB" push "$raw" //data/local/tmp/stool_splash.raw >/dev/null 2>&1 || die "adb push failed"
-	devsh "dd if=/data/local/tmp/stool_splash.raw of=$DEV/sp1 bs=4096 2>&1 | tail -2" >&2
+	devsh "dd if=/data/local/tmp/stool_splash.raw of=$DEV/$PART_SPLASH bs=4096 2>&1 | tail -2" >&2
 	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
 	devsh "rm -f /data/local/tmp/stool_splash.raw" >/dev/null 2>&1
 
 	say ""
 	say "== verify =="
 	cnt=$(( (exp + 4095) / 4096 ))
-	devsh "dd if=$DEV/sp1 of=/data/local/tmp/stool_chk.img bs=4096 count=$cnt" >/dev/null 2>&1
+	devsh "dd if=$DEV/$PART_SPLASH of=/data/local/tmp/stool_chk.img bs=4096 count=$cnt" >/dev/null 2>&1
 	devsh "chmod 644 /data/local/tmp/stool_chk.img" >/dev/null 2>&1
 	"$ADB" pull "//data/local/tmp/stool_chk.img" "$STOOL_TMP.chk" >/dev/null 2>&1
 	devsh "rm -f /data/local/tmp/stool_chk.img" >/dev/null 2>&1
-	[ -s "$STOOL_TMP.chk" ] || die "could not read sp1 back"
+	[ -s "$STOOL_TMP.chk" ] || die "could not read $PART_SPLASH back"
 
 	a=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(int(sys.argv[2]))).hexdigest())" "$(winpath "$raw")" "$exp")
 	b=$("$PY" -c "import hashlib,sys;print(hashlib.md5(open(sys.argv[1],'rb').read(int(sys.argv[2]))).hexdigest())" "$(winpath "$STOOL_TMP.chk")" "$exp")

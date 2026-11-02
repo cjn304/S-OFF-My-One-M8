@@ -69,6 +69,8 @@ scripts/stool.sh splash photo.png --size=1440x2560     # 其它分辨率的屏
 scripts/stool.sh splash --restore <sp1.img>
 ```
 
+每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个分区布局一节，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝 —— 要加一节，见[第 6 节](#6-参数偏移)。
+
 每个命令都会先读 S 状态。任何写操作在动 eMMC 之前都会存一份快照到 `backup/<时间戳>.{txt,img}`：五个整分区，外加一份 txt，一半是给人看的摘要，一半是 `raw:<分区>:<偏移>=<hex>` 形式的原始字节，`restore` 靠它逐字节写回。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
@@ -210,7 +212,16 @@ cat kmod/addr.h
 
 ### 6. 参数偏移
 
-`kmod/addr.h` 管的是内核符号；参数偏移不由任何脚本生成 —— 它们是 `stool.sh` 里的常量（`OFF_CID` 那一组），分区布局一变就得重新定位。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
+`kmod/addr.h` 管的是内核符号；参数偏移也不由任何脚本生成。它们跟着分区布局走，所以放在 `targets.conf` 里 —— 一个布局一节，目前只有 `[m8]` 是实测过的。
+
+选哪一节，是拿它的 `layout` 行去比设备在 `/sys/class/block/*/uevent` 里报的尺寸（`PARTNAME` 加 `size`，单位 512 字节扇区；无需 root）。用尺寸当键是有道理的：改 MID 或 CID 不会挪动任何东西，因为那两项都是分区里的内容；换了固件，装这些记录的分区尺寸就跟着变。一节都对不上时，脚本在动卡之前停下，把看到的布局原样打出来：
+
+```
+error: no section in targets.conf matches this device.
+  observed: hboot:8192 sp1:10240 pg1fs:243646 board_info:32 ...
+```
+
+把这一行贴进新的 `[name]` 节，再补偏移 —— 偏移仍然只能人工推导。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
 
 ```sh
 for p in board_info mfg misc pg1fs pg2fs hboot sp1; do
@@ -221,16 +232,18 @@ done
 
 `su -c` 是按 Magisk 环境写的；`adb shell` 本身就是 root 时去掉它。
 
-| 字段 | 位置 | M8 上的值 | 怎么定位的 |
-|---|---|---|---|
-| CID | `board_info` p3 | 0x14，8 字符 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
-| MID | `mfg` p5 | 0x4000，9 字符 UTF-16LE | `modelid` 字符串的 UTF-16LE 编码 |
-| version | `misc` p24 | 0xA0，16 字节 ASCII | `version-main` 字符串 |
-| tamper | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时读作 4，Official 时是 0 |
-| secure | `pg1fs` p2 | 0x8400，u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
-| BL lock | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
-| 红字 | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
-| 第一屏 | `sp1` p12 | 0 | 画面从 0 开始：W x H x 2 字节 |
+| 字段 | 键 | 位置 | M8 上的值 | 怎么定位的 |
+|---|---|---|---|---|
+| CID | `cid` | `board_info` p3 | 0x14，8 字符 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
+| MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `modelid` 字符串的 UTF-16LE 编码，每字符 2 字节 |
+| version | `version` | `misc` p24 | 0xA0，16 字节 ASCII | `version-main` 字符串 |
+| tamper | `tamper` | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时读作 4，Official 时是 0 |
+| secure | `secure` | `pg1fs` p2 | 0x8400，u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
+| BL 锁 | `blmagic` | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
+| 红字 | `hbootpart` | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
+| 第一屏 | `splash` | `sp1` p12 | 0 | 画面从 0 开始：W x H x 2 字节 |
+
+`screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`hbootpart` 则提供 noredtext 用来校验镜像大小的分区。
 
 换构建时重复这套流程，有两条规矩：
 
@@ -292,7 +305,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 移植按要重做的量分四种情况，A 到 D，未实测。
 
-**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够 —— 按[第 6 节](#6-参数偏移)的办法找出分区、偏移和记录形状，把那次写入里的 `pg1fs` 参数和 `OFF_SECURE` 改成它们，`stool.sh set secure 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
+**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够 —— 按[第 6 节](#6-参数偏移)的办法找出分区、偏移和记录形状，填进 `targets.conf` 的一节，`stool.sh set secure 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
 
 **B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
@@ -305,7 +318,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 1. `struct regulator` 是 `drivers/regulator/core.c` 的私有结构，本文件里存的是一份拷贝，必须按目标树重新抄。
 2. drvdata：本内核存的是 `sdhci_host`；绑老 `msm_sdcc` 驱动的变体存的是它自己的 host 结构体，从上面读 `->mmc` 拿到的是垃圾。
 3. 供电轨名跟的是 PMIC，不是 SoC。
-4. `stool.sh` 里每一个偏移都要重新定位。
+4. `targets.conf` 里每一个偏移都要重新定位。
 
 `pwrsq_diag.ko` 就是为了用设备实测回答第 2、3 条，而不是靠猜：它解析稳压器、打印全部 consumer 和找到的 mmc_host，且不写任何东西。
 
@@ -315,7 +328,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 1. `struct regulator` 按分支重新抄 —— 新版内核跟 3.4 不一样，各分支之间也不一样。
 2. drvdata：新内核存 `sdhci_pltfm_host`，要取 `pltfm_host->host`。
-3. `stool.sh` 里每个偏移重新定位；只有 pg1fs 那条记录的形状大概能保持不变。
+3. `targets.conf` 里每个偏移重新定位；只有 pg1fs 那条记录的形状大概能保持不变。
 
 另外从 U11 这一代起，HTC 改用 UFS 2.1 而不是 eMMC。没有 `mmcblk0`，也没有 CMD28/29/31 那套写保护组，所以不管其余部分移植多少，本工具赖以成立的机制在那些机器上都不存在。
 
@@ -432,22 +445,23 @@ dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 
 ```
 == state ==
+target  : m8  [htc_m8, hboot 3.19.*]
 S state : S-ON  (secure_flag 3)
 BL state: unlocked (pg1fs 0x8404 = HTCU (unlocked))
 
 == parameters ==
-CID       11111111     board_info p3 @ 0x14
-MID       0P6B12000    mfg p5 @ 0x4000 (UTF-16LE)
-version   6.12.1540.4  misc p24 @ 0xA0
-tamper    0            pg2fs p6 @ 0x511804
-secure    3            pg1fs p2 @ 0x8400
-BL lock   unlocked     pg1fs p2 @ 0x8404
+CID       11111111     board_info @ 0x14
+MID       0P6B12000    mfg @ 0x4000
+version   6.12.1540.4  misc @ 0xa0
+tamper    0            pg2fs @ 0x511804
+secure    3            pg1fs @ 0x8400
+BL lock   unlocked     pg1fs @ 0x8404
 
 modules   0 (0 = allowed)
 selinux   Enforcing
 ```
 
-`S state` 必须是 `S-ON`；出现 `unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`modules` 必须是 `0`，否则 `insmod` 会被拒。`selinux Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
+`target` 是命中的 `targets.conf` 节，也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新的一节即可（见[第 6 节](#6-参数偏移)）。`S state` 必须是 `S-ON`；出现 `unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`modules` 必须是 `0`，否则 `insmod` 会被拒。`selinux Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `gen_addr.sh`
 
