@@ -10,3 +10,4 @@
 Makefile text eol=lf
 .gitignore text eol=lf
 LICENSE text eol=lf
+targets.conf text eol=lf
