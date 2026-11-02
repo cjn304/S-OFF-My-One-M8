@@ -38,8 +38,8 @@ The commands below assume `adb shell` is root: a userdebug or eng ROM, where
 inside the su command, or the non-root shell performs it first and fails with
 `Permission denied`. `stool.sh status`, `soff` and `son` find root on their own;
 `gen_addr.sh` needs none: `/proc/kallsyms` is world-readable once
-`kptr_restrict` is 0. What each step prints, and what to do when it does not:
-[Expected output and troubleshooting](#expected-output-and-troubleshooting).
+`kptr_restrict` is 0. Preparation is in [Building](#building); when something
+goes wrong, see [troubleshooting](#expected-output-and-troubleshooting).
 
 ```sh
 # 0. check root, S state, modules_disabled, SELinux
@@ -563,108 +563,6 @@ The kernel is built with `CONFIG_MODVERSIONS=y` and we do not have its
 
 ---
 
-## Windows
-
-The `.sh` files are POSIX shell scripts; Windows cannot execute them directly.
-Use one of:
-
-* **Git Bash** (ships with Git for Windows) or **MSYS2** — what this project was
-  developed and verified with. Open the shell in the repo root:
-  `./scripts/build.sh /d/kernel-src/kernel` or `sh scripts/build.sh ...`.
-* **WSL** — works, but `adb`, `make` and the toolchain must exist inside the
-  distro, and USB needs `usbipd`.
-* **Cygwin** — untested.
-
-Four things bite on Windows:
-
-1. **Line endings.** A script saved with CRLF dies with
-   `$'\r': command not found`. The repo pins `*.sh text eol=lf` in
-   `.gitattributes`, so a fresh clone is fine; if you copy files around, run
-   `sed -i 's/\r$//'`.
-2. **Device paths.** MSYS rewrites absolute paths before `adb` sees them:
-   `adb push x /data/local/tmp/x` arrives as
-   `C:/Program Files/Git/data/local/tmp/x`. Prefix device paths with `//`
-   (`//data/local/tmp/x`) to keep them literal; the scripts in this repo do.
-3. **Host paths.** Git Bash understands `/d/...`; kbuild does not accept
-   `D:/...` as `M=` because the colon looks like a make target separator. Pass
-   MSYS paths to `scripts/build.sh`.
-4. **PATH.** `adb`, `make` and `python3` must be visible from that shell. Git
-   Bash does not bundle `make`; install MSYS2 or add it to `PATH`.
-
-Toolchain actually used here: Git Bash, GNU Make 4.4.1 from MSYS2, Python 3.13,
-adb 1.0.41, `arm-none-linux-gnueabihf-gcc` 13.3.1 (MinGW host build). The steps
-in this README were executed as the equivalent raw commands;
-`scripts/gen_addr.sh` was additionally run end-to-end.
-
----
-
-## Field evidence
-
-Trimmed captures from the reference device. Serial and IMEI removed.
-
-**Before**
-
-```
-(bootloader) version-bootloader: 3.19.0.0000
-(bootloader) version-main: 6.31.1402.1
-(bootloader) version-misc: PVT SHIP S-ON
-(bootloader) product: m8_ul
-(bootloader) modelid: 0P6B62000
-(bootloader) cidnum: HTCCN703
-(bootloader) security: on
-
-$ fastboot oem readsecureflag
-(bootloader) secure_flag: 3
-
-$ mmc_cmd wp
-bitmap: aa aa aa aa 2a aa aa aa      -> 10b = power-on
-```
-
-**During the power cycle**
-
-```
-pwrsq: rdev=f0326c00 name=8941_l20 use_count=4
-pwrsq: consumer 'msm_sdcc.1'
-pwrsq: mmc_host=f0032000
-pwrsq: ops->disable ret=0
-pwrsq: ops->enable ret=0
-pwrsq: detect_change queued
-mmc0: sdhci_cmd_irq: AUTO CMD err sts 0x00000002
-mmc0: mmc_blk_issue_rw_rq status 4 retry 0
-mmc0: mmc_reinit_card
-mmc0: mmc_reinit_card return 0
-```
-
-**After**
-
-```
-$ mmc_cmd wp
-bitmap: 00 00 00 00 00 00 00 00
-  -> no write protection at all
-
-00008400  00 00 00 00 48 54 43 55
-
-$ fastboot oem readsecureflag
-(bootloader) secure_flag: 0
-(bootloader) version-misc: PVT SHIP S-OFF
-(bootloader) security: off
-```
-
-Two cold boots later both `readsecureflag` and `mmc_cmd wp` still report zero.
-
-**Integrity of the rest of the partition.** `md5` of `pg1fs[0x0000..0x1000]`
-before and after:
-
-```
-f22ff5ac41ac26e1a3ecd2997ba6ca3a   before (backup)
-f22ff5ac41ac26e1a3ecd2997ba6ca3a   after
-```
-
-Identical, including the device-specific 4-byte field at `0x424`. Only `0x8400`
-changed — which is why this tool writes exactly one byte.
-
----
-
 ## Expected output and troubleshooting
 
 Every command in the order it runs, with the output that says it worked and the
@@ -885,6 +783,108 @@ flash recovers you; S-OFF with a dead Android can be fixed with any matching
 RUU. If hboot does not come up, the problem is not in `pg1fs` - the S-OFF
 procedure never touches `hboot`, `sbl1` or `tz`. `noredtext` is the one command
 that writes `hboot`, and it keeps a dump.
+
+---
+
+## Windows
+
+The `.sh` files are POSIX shell scripts; Windows cannot execute them directly.
+Use one of:
+
+* **Git Bash** (ships with Git for Windows) or **MSYS2** — what this project was
+  developed and verified with. Open the shell in the repo root:
+  `./scripts/build.sh /d/kernel-src/kernel` or `sh scripts/build.sh ...`.
+* **WSL** — works, but `adb`, `make` and the toolchain must exist inside the
+  distro, and USB needs `usbipd`.
+* **Cygwin** — untested.
+
+Four things bite on Windows:
+
+1. **Line endings.** A script saved with CRLF dies with
+   `$'\r': command not found`. The repo pins `*.sh text eol=lf` in
+   `.gitattributes`, so a fresh clone is fine; if you copy files around, run
+   `sed -i 's/\r$//'`.
+2. **Device paths.** MSYS rewrites absolute paths before `adb` sees them:
+   `adb push x /data/local/tmp/x` arrives as
+   `C:/Program Files/Git/data/local/tmp/x`. Prefix device paths with `//`
+   (`//data/local/tmp/x`) to keep them literal; the scripts in this repo do.
+3. **Host paths.** Git Bash understands `/d/...`; kbuild does not accept
+   `D:/...` as `M=` because the colon looks like a make target separator. Pass
+   MSYS paths to `scripts/build.sh`.
+4. **PATH.** `adb`, `make` and `python3` must be visible from that shell. Git
+   Bash does not bundle `make`; install MSYS2 or add it to `PATH`.
+
+Toolchain actually used here: Git Bash, GNU Make 4.4.1 from MSYS2, Python 3.13,
+adb 1.0.41, `arm-none-linux-gnueabihf-gcc` 13.3.1 (MinGW host build). The steps
+in this README were executed as the equivalent raw commands;
+`scripts/gen_addr.sh` was additionally run end-to-end.
+
+---
+
+## Field evidence
+
+Trimmed captures from the reference device. Serial and IMEI removed.
+
+**Before**
+
+```
+(bootloader) version-bootloader: 3.19.0.0000
+(bootloader) version-main: 6.31.1402.1
+(bootloader) version-misc: PVT SHIP S-ON
+(bootloader) product: m8_ul
+(bootloader) modelid: 0P6B62000
+(bootloader) cidnum: HTCCN703
+(bootloader) security: on
+
+$ fastboot oem readsecureflag
+(bootloader) secure_flag: 3
+
+$ mmc_cmd wp
+bitmap: aa aa aa aa 2a aa aa aa      -> 10b = power-on
+```
+
+**During the power cycle**
+
+```
+pwrsq: rdev=f0326c00 name=8941_l20 use_count=4
+pwrsq: consumer 'msm_sdcc.1'
+pwrsq: mmc_host=f0032000
+pwrsq: ops->disable ret=0
+pwrsq: ops->enable ret=0
+pwrsq: detect_change queued
+mmc0: sdhci_cmd_irq: AUTO CMD err sts 0x00000002
+mmc0: mmc_blk_issue_rw_rq status 4 retry 0
+mmc0: mmc_reinit_card
+mmc0: mmc_reinit_card return 0
+```
+
+**After**
+
+```
+$ mmc_cmd wp
+bitmap: 00 00 00 00 00 00 00 00
+  -> no write protection at all
+
+00008400  00 00 00 00 48 54 43 55
+
+$ fastboot oem readsecureflag
+(bootloader) secure_flag: 0
+(bootloader) version-misc: PVT SHIP S-OFF
+(bootloader) security: off
+```
+
+Two cold boots later both `readsecureflag` and `mmc_cmd wp` still report zero.
+
+**Integrity of the rest of the partition.** `md5` of `pg1fs[0x0000..0x1000]`
+before and after:
+
+```
+f22ff5ac41ac26e1a3ecd2997ba6ca3a   before (backup)
+f22ff5ac41ac26e1a3ecd2997ba6ca3a   after
+```
+
+Identical, including the device-specific 4-byte field at `0x424`. Only `0x8400`
+changed — which is why this tool writes exactly one byte.
 
 ---
 

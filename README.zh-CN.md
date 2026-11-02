@@ -21,7 +21,7 @@
 
 ## 快速开始
 
-下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反 —— 重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。`stool.sh status`、`soff` 和 `son` 会自己探测 root；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。每一步该打印什么、不对时怎么办，见[期望输出与故障处理](#期望输出与故障处理)。
+下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反 —— 重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。`stool.sh status`、`soff` 和 `son` 会自己探测 root；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。准备工作见[构建](#构建)，出错见[期望输出与故障处理](#期望输出与故障处理)。
 
 ```sh
 # 0. 检查 root、S 状态、modules_disabled、SELinux
@@ -398,90 +398,6 @@ dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 
 ---
 
-## Windows
-
-`.sh` 是 POSIX shell 脚本，Windows 不能直接执行。三种跑法：
-
-* **Git Bash**（Git for Windows 自带）或 **MSYS2** —— 本项目开发和验证用的就是它。在仓库根目录打开 shell：`./scripts/build.sh /d/kernel-src/kernel`，或者 `sh scripts/build.sh ...`。
-* **WSL** —— 能用，但 `adb`、`make` 和工具链都得装在发行版里，USB 还要 `usbipd`。
-* **Cygwin** —— 没试过。
-
-Windows 上有四件事会咬人：
-
-1. **行尾。** 存成 CRLF 的脚本会死在 `$'\r': command not found`。仓库在 `.gitattributes` 里钉了 `*.sh text eol=lf`，正常 clone 不会出问题；如果你手动拷来拷去，跑一次 `sed -i 's/\r$//'`。
-2. **设备路径。** MSYS 会在 `adb` 看到之前把绝对路径改写成 Windows 路径：`adb push x /data/local/tmp/x` 到手的会是 `C:/Program Files/Git/data/local/tmp/x`。手机上的路径前面加 `//`（`//data/local/tmp/x`）才是字面量；仓库里的脚本已经这么写了。
-3. **主机路径。** Git Bash 认识 `/d/...`；kbuild 不接受 `D:/...` 作为 `M=`，因为冒号看起来像 make 的目标分隔符。给 `scripts/build.sh` 传 MSYS 路径。
-4. **PATH。** `adb`、`make`、`python3` 都必须在这个 shell 里能找到。Git Bash 本身不带 `make`，装 MSYS2 或把它加进 PATH。
-
-本次实际使用的组合：Git Bash、MSYS2 的 GNU Make 4.4.1、Python 3.13、adb 1.0.41、`arm-none-linux-gnueabihf-gcc` 13.3.1（MinGW 宿主版）。README 里的步骤是以等价的原生命令逐条执行的；`scripts/gen_addr.sh` 另外完整跑通过一次。
-
----
-
-## 实测记录
-
-参考机的原始输出，已去掉序列号和 IMEI。
-
-**之前**
-
-```
-(bootloader) version-bootloader: 3.19.0.0000
-(bootloader) version-main: 6.31.1402.1
-(bootloader) version-misc: PVT SHIP S-ON
-(bootloader) product: m8_ul
-(bootloader) modelid: 0P6B62000
-(bootloader) cidnum: HTCCN703
-(bootloader) security: on
-
-$ fastboot oem readsecureflag
-(bootloader) secure_flag: 3
-
-$ mmc_cmd wp
-bitmap: aa aa aa aa 2a aa aa aa      -> 10b = power-on
-```
-
-**断电上电期间**
-
-```
-pwrsq: rdev=f0326c00 name=8941_l20 use_count=4
-pwrsq: consumer 'msm_sdcc.1'
-pwrsq: mmc_host=f0032000
-pwrsq: ops->disable ret=0
-pwrsq: ops->enable ret=0
-pwrsq: detect_change queued
-mmc0: sdhci_cmd_irq: AUTO CMD err sts 0x00000002
-mmc0: mmc_blk_issue_rw_rq status 4 retry 0
-mmc0: mmc_reinit_card
-mmc0: mmc_reinit_card return 0
-```
-
-**之后**
-
-```
-$ mmc_cmd wp
-bitmap: 00 00 00 00 00 00 00 00
-  -> no write protection at all
-
-00008400  00 00 00 00 48 54 43 55
-
-$ fastboot oem readsecureflag
-(bootloader) secure_flag: 0
-(bootloader) version-misc: PVT SHIP S-OFF
-(bootloader) security: off
-```
-
-再冷启动两次，`readsecureflag` 和 `mmc_cmd wp` 依旧全是 0。
-
-**分区其余部分的完整性。** `pg1fs[0x0000..0x1000]` 改动前后的 `md5`：
-
-```
-f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动前（备份）
-f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
-```
-
-完全一致，包括 `0x424` 那 4 个设备相关字节。只有 `0x8400` 变了 —— 这就是本工具只写一个字节的原因。
-
----
-
 ## 期望输出与故障处理
 
 按执行顺序列出每条命令：什么输出说明它成了，以及对应会卡在哪。
@@ -642,6 +558,90 @@ adb reboot bootloader && fastboot oem readsecureflag
 ### 整机不启动
 
 进 bootloader（音量下 + 电源）。如果 hboot 能起来，`fastboot getvar all`：还是 S-ON 说明什么都没改，正常刷 ROM 即可恢复；S-OFF 但系统坏了，刷对应 RUU 就行。如果 hboot 都起不来，问题不在 `pg1fs` —— S-OFF 流程从不碰 `hboot`、`sbl1`、`tz`。唯一会写 `hboot` 的是 `noredtext`，而它会先留一份 dump。
+
+---
+
+## Windows
+
+`.sh` 是 POSIX shell 脚本，Windows 不能直接执行。三种跑法：
+
+* **Git Bash**（Git for Windows 自带）或 **MSYS2** —— 本项目开发和验证用的就是它。在仓库根目录打开 shell：`./scripts/build.sh /d/kernel-src/kernel`，或者 `sh scripts/build.sh ...`。
+* **WSL** —— 能用，但 `adb`、`make` 和工具链都得装在发行版里，USB 还要 `usbipd`。
+* **Cygwin** —— 没试过。
+
+Windows 上有四件事会咬人：
+
+1. **行尾。** 存成 CRLF 的脚本会死在 `$'\r': command not found`。仓库在 `.gitattributes` 里钉了 `*.sh text eol=lf`，正常 clone 不会出问题；如果你手动拷来拷去，跑一次 `sed -i 's/\r$//'`。
+2. **设备路径。** MSYS 会在 `adb` 看到之前把绝对路径改写成 Windows 路径：`adb push x /data/local/tmp/x` 到手的会是 `C:/Program Files/Git/data/local/tmp/x`。手机上的路径前面加 `//`（`//data/local/tmp/x`）才是字面量；仓库里的脚本已经这么写了。
+3. **主机路径。** Git Bash 认识 `/d/...`；kbuild 不接受 `D:/...` 作为 `M=`，因为冒号看起来像 make 的目标分隔符。给 `scripts/build.sh` 传 MSYS 路径。
+4. **PATH。** `adb`、`make`、`python3` 都必须在这个 shell 里能找到。Git Bash 本身不带 `make`，装 MSYS2 或把它加进 PATH。
+
+本次实际使用的组合：Git Bash、MSYS2 的 GNU Make 4.4.1、Python 3.13、adb 1.0.41、`arm-none-linux-gnueabihf-gcc` 13.3.1（MinGW 宿主版）。README 里的步骤是以等价的原生命令逐条执行的；`scripts/gen_addr.sh` 另外完整跑通过一次。
+
+---
+
+## 实测记录
+
+参考机的原始输出，已去掉序列号和 IMEI。
+
+**之前**
+
+```
+(bootloader) version-bootloader: 3.19.0.0000
+(bootloader) version-main: 6.31.1402.1
+(bootloader) version-misc: PVT SHIP S-ON
+(bootloader) product: m8_ul
+(bootloader) modelid: 0P6B62000
+(bootloader) cidnum: HTCCN703
+(bootloader) security: on
+
+$ fastboot oem readsecureflag
+(bootloader) secure_flag: 3
+
+$ mmc_cmd wp
+bitmap: aa aa aa aa 2a aa aa aa      -> 10b = power-on
+```
+
+**断电上电期间**
+
+```
+pwrsq: rdev=f0326c00 name=8941_l20 use_count=4
+pwrsq: consumer 'msm_sdcc.1'
+pwrsq: mmc_host=f0032000
+pwrsq: ops->disable ret=0
+pwrsq: ops->enable ret=0
+pwrsq: detect_change queued
+mmc0: sdhci_cmd_irq: AUTO CMD err sts 0x00000002
+mmc0: mmc_blk_issue_rw_rq status 4 retry 0
+mmc0: mmc_reinit_card
+mmc0: mmc_reinit_card return 0
+```
+
+**之后**
+
+```
+$ mmc_cmd wp
+bitmap: 00 00 00 00 00 00 00 00
+  -> no write protection at all
+
+00008400  00 00 00 00 48 54 43 55
+
+$ fastboot oem readsecureflag
+(bootloader) secure_flag: 0
+(bootloader) version-misc: PVT SHIP S-OFF
+(bootloader) security: off
+```
+
+再冷启动两次，`readsecureflag` 和 `mmc_cmd wp` 依旧全是 0。
+
+**分区其余部分的完整性。** `pg1fs[0x0000..0x1000]` 改动前后的 `md5`：
+
+```
+f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动前（备份）
+f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
+```
+
+完全一致，包括 `0x424` 那 4 个设备相关字节。只有 `0x8400` 变了 —— 这就是本工具只写一个字节的原因。
 
 ---
 
