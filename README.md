@@ -41,13 +41,13 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   <- hboot stops arming 
 
 ## Quick start
 
-The commands below assume `adb shell` is already root (`adb root`, a userdebug
-ROM, or TWRP). On a Magisk-rooted stock ROM it is not: every `adb shell ...`
-below has to become `adb shell 'su -c "..."'`, and the quoting matters - the
-redirection has to sit inside the su command, or the non-root shell performs it
-first and fails with `Permission denied`. `stool.sh status` and `stool.sh soff`
-find root on their own. `gen_addr.sh` does not need it: once `kptr_restrict` is
-0, `/proc/kallsyms` is world-readable and the addresses come back real.
+The commands below assume `adb shell` is root: a userdebug or eng ROM, where
+`adb root` works, or a rooted stock ROM, where every `adb shell ...` becomes
+`adb shell 'su -c "..."'`. The quoting matters - the redirection has to sit
+inside the su command, or the non-root shell performs it first and fails with
+`Permission denied`. `stool.sh status` and `soff` find root on their own;
+`gen_addr.sh` needs none: `/proc/kallsyms` is world-readable once
+`kptr_restrict` is 0.
 
 ```sh
 # 0. check root, S state, modules_disabled, SELinux

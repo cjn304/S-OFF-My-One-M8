@@ -18,6 +18,14 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT="$ROOT/kmod/addr.h"
 KO=${1:-}
 
+# In recovery the symbols belong to the recovery kernel, and the resulting
+# addr.h would be silently wrong rather than obviously broken.  Output, not
+# exit status: adb shell on this Android version always returns 0.
+if [ -n "$($ADB shell 'getprop ro.twrp.version' 2>/dev/null | tr -d '\r')" ]; then
+	echo "running in recovery - kallsyms is the recovery kernel's; boot Android first" >&2
+	exit 1
+fi
+
 PY=
 for c in python3 python; do
 	if command -v "$c" >/dev/null 2>&1; then PY=$c; break; fi

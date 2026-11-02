@@ -118,6 +118,12 @@ devsh() { # run one command on the device as root; $1 must not contain single qu
 	fi
 }
 
+in_recovery() { # 0 if adbd is a recovery ramdisk rather than Android
+	# Property, not `adb shell test`: on this Android version adb shell exits 0
+	# whatever the remote command returns.
+	[ -n "$("$ADB" shell 'getprop ro.twrp.version' 2>/dev/null | tr -d '\r')" ]
+}
+
 require_android() {
 	case "$(device_mode)" in
 	android) ;;
@@ -126,7 +132,7 @@ require_android() {
 	*)
 		die "no device found: check the cable and that adb debugging is on" ;;
 	esac
-	detect_root || die "adb shell is neither root nor able to run su - check Magisk/TWRP"
+	detect_root || die "adb shell is neither root nor able to run su - install Magisk or use a userdebug build"
 	detect_dev || die "no by-name directory containing pg1fs (looked in bootdevice, by-name and platform/*)"
 }
 
@@ -515,6 +521,9 @@ check_write_protection() {
 
 cmd_soff() {
 	require_android
+	if in_recovery; then
+		die "running in recovery - kmod only loads into the Android kernel; boot Android and retry"
+	fi
 	say "== state before =="
 	print_state
 	[ "$(secure_state)" = off ] && { say ""; say "already S-OFF, nothing to do"; return 0; }
@@ -553,7 +562,8 @@ cmd_soff() {
 	"$ADB" shell 'insmod /dev/pwrsq_off.ko; insmod /dev/pwrsq_on.ko; echo SEQ_DONE' | tr -d '\r'
 	sleep 3
 
-	"$ADB" shell 'test -b /dev/block/mmcblk0p2' ||
+	# adb shell always exits 0 on this Android version, so ask for output.
+	[ "$(devsh 'test -b /dev/block/mmcblk0p2 && echo present')" = present ] ||
 		die "eMMC did not come back - hold power ~10s, then retry"
 
 	say ""

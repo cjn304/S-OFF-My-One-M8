@@ -29,7 +29,7 @@ CMD31: aaaaaaaa2aaaaaaa         CMD31: 0000000000000000   ← hboot 不再设写
 
 ## 快速开始
 
-下面的命令假设 `adb shell` 本身就是 root（`adb root`、userdebug ROM 或 TWRP）。官方 ROM 用 Magisk 时不是这样：下面每一条 `adb shell ...` 都要改成 `adb shell 'su -c "..."'`，而且引号顺序不能反 —— 重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。`stool.sh status` 和 `stool.sh soff` 会自己探测 root。`gen_addr.sh` 不需要：`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读，地址就是真的。
+下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反 —— 重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。`stool.sh status` 和 `soff` 会自己探测 root；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。
 
 ```sh
 # 0. 检查 root、S 状态、modules_disabled、SELinux
