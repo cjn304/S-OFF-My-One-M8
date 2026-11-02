@@ -101,10 +101,11 @@ That byte is the only input to hboot's `Software status:` line: `04` prints
 `set secure 0` refuses to run while S-ON: writing the flag needs the write
 protection cleared, and clearing it is what `soff` does.
 
-`set secure` on its own is one stage of `soff`, not the whole run: it writes
-the flag and reads it back, with no power cycle and no reboot. That is what a
-restore needs afterwards - putting `pg1fs.img` back sets `0x8400` to `03` -
-and what `3` needs when `son`'s reboot is not wanted.
+`set secure` is the same write as the last step of `soff`, run on its own: a
+snapshot first, then `00` or `03` at `0x8400`, then a read-back - no power
+cycle and no reboot. `soff` and `son` do not call it; both carry those two
+lines inline. It is what a restore needs afterwards (`pg1fs.img` puts `03`
+back), and what flips to `3` without `son`'s reboot.
 
 `lock bootloader` / `unlock bootloader` write the four bytes at `pg1fs` (p2)
 0x8404 directly: `HTCU` = unlocked, `00000000` = locked. That is the same magic

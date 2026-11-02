@@ -75,7 +75,7 @@ scripts/stool.sh splash --restore <sp1.img>
 
 `set secure 0` 在 S-ON 状态下会直接拒绝：写 flag 需要先把写保护清掉，而清写保护正是 `soff` 做的事。
 
-`set secure` 单独用时只是 `soff` 里的一个阶段，不是整套流程：写 flag、回读，不碰电也不重启。还原之后就需要它 —— 把 `pg1fs.img` 写回会把 `0x8400` 变回 `03`；不想走 `son` 的重启时，改 `3` 也用它。
+`set secure` 做的事和 `soff` 最后一步相同，只是单独跑：先存快照，再写 `0x8400`，再回读 —— 不断电也不重启。`soff` 和 `son` 不调用它，两者都是自己内联那两行。还原之后要用它（`pg1fs.img` 会把 `0x8400` 写回 `03`）；不想走 `son` 的重启、只把状态改成 `3` 时也用它。
 
 `lock bootloader` / `unlock bootloader` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不需要在官网申请的解锁码了；也不走 `fastboot oem lock` —— 那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
 
