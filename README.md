@@ -52,8 +52,9 @@ scripts/gen_addr.sh
 scripts/build.sh /path/to/kernel-tree
 make -C tools CROSS=arm-none-linux-gnueabihf-
 
-# 3. mount debugfs, then backup, diagnose, power cycle, write, verify
+# 3. mount debugfs, back up, then diagnose, power cycle, write, verify
 adb shell 'mount -t debugfs none /sys/kernel/debug'
+scripts/stool.sh backup
 scripts/stool.sh soff
 
 # 4. undo: back to S-ON; the write protection returns on the next boot
@@ -70,10 +71,10 @@ phone whose hboot never armed the protection.
 
 ```sh
 scripts/stool.sh status                  # S state + every parameter (Android or fastboot)
-scripts/stool.sh soff                    # full S-OFF: backup, diag, power cycle, write, verify
+scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup                  # five partitions + parameters, ~144 MB
-scripts/stool.sh restore <snapshot>      # write a snapshot back
+scripts/stool.sh restore <timestamp>     # write backup/<ts>.*.img back
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
@@ -94,22 +95,21 @@ device reports in `/sys/class/block/*/uevent`. A phone whose layout has no
 section is refused before anything is written - see
 [section 6](#6-parameter-offsets) to add one.
 
-Every command reads the S state first. Anything that writes saves a snapshot
-into `backup/<timestamp>.{txt,img}` before touching the eMMC: five whole
-partitions, plus a txt with a readable summary and a
-`raw:<part>:<offset>=<hex>` block that `restore` replays byte for byte.
+Every command reads the S state first. Nothing is snapshotted automatically:
+`backup` writes `backup/<timestamp>.{txt,img}` - five whole partitions plus a
+txt with a readable summary - and `restore <timestamp>` writes those images
+back. The backup you fall back on is one you took on purpose.
 
 `set tamper` takes any decimal 0..255, but only `0` and `4` mean anything.
 That byte is the only input to hboot's `Software status:` line: `04` prints
 `*** Software status: Modified ***`, `00` prints
 `*** Software status: Official ***`.
 
-`set secure` is the write from the last stage of `soff`, on its own: a snapshot
-first, then `00` or `03` at `0x8400`, then a read-back - no power cycle and no
-reboot. `00` while S-ON is refused unless `mmc_cmd wp` reports no write
-protection, which is the old-hboot case in [Porting](#8-porting); there it is
-the plain write that sets the flag. On an S-OFF phone it re-applies `00` after a
-`pg1fs.img` restore.
+`set secure` is the write from the last stage of `soff`, on its own: `00` or
+`03` at `0x8400`, then a read-back - no power cycle and no reboot. `00` while
+S-ON is refused unless `mmc_cmd wp` reports no write protection, which is the
+old-hboot case in [Porting](#8-porting); there it is the plain write that sets
+the flag. On an S-OFF phone it re-applies `00` after a `pg1fs.img` restore.
 
 `lock` / `unlock` write the four bytes at `pg1fs` (p2)
 0x8404 directly: `HTCU` = unlocked, `00000000` = locked. That is the same magic
@@ -122,18 +122,19 @@ What a snapshot holds:
 
 | file | content | size |
 |---|---|---|
-| `<ts>.txt` | every parameter, plus the exact byte ranges to restore | ~0.5 KB |
+| `<ts>.txt` | every parameter, plus the exact bytes at the six offsets | ~0.5 KB |
 | `<ts>.pg1fs.img` | whole p2 — the secure flag lives here | 119 MB |
 | `<ts>.board_info.img` | whole p3 — CID, IMEI, board data | 16 KB |
 | `<ts>.mfg.img` | whole p5 — MID lives here | 256 KB |
 | `<ts>.pg2fs.img` | whole p6 — the tamper flag lives here | 24 MB |
 | `<ts>.misc.img` | whole p24 — version-main lives here | 1 MB |
 
-`set cid` writes its 8 bytes at `board_info` 0x14 with `dd`, like the rest;
-hboot reads it at boot, so `getvar cidnum` only changes after a reboot. The
-whole p3 image is still kept - the CID sits next to the IMEI and board data this
-tool never touches. Radio (p20) is never written, so it is not dumped. The whole
-set is ~144 MB and takes about a minute over USB.
+`restore <timestamp>` writes the five images back; the txt is the record you
+read. `set cid` writes its 8 bytes at `board_info` 0x14 with `dd`, like the
+rest; hboot reads it at boot, so `getvar cidnum` changes only after a reboot.
+The whole p3 image is still kept - the CID sits next to the IMEI and board data
+this tool never touches. Radio (p20) is never written, so it is not dumped. The
+whole set is ~144 MB and takes about a minute over USB.
 
 ### CID, MID and flashing
 
@@ -722,24 +723,6 @@ whether the power cycle worked.
 `== state before ==` repeats the status lines above. The stages follow in the
 order they print, each with the failure that stops it.
 
-#### Backup
-
-`== backup ==` - one size per partition on stderr, then the snapshot path:
-
-```
-  pg1fs        124746752 bytes
-  board_info       16384 bytes
-  mfg             262144 bytes
-  pg2fs         24837120 bytes
-  misc           1048576 bytes
-saved: /path/to/repo/backup/20261102-231500.txt
-```
-
-Five whole partitions, about 144 MB and a minute over USB; the file layout is
-in [the snapshot table](#stoolsh). A partition that cannot be read gives
-`warning: could not dump <part>` and the run continues; a short image gives
-`<part>: expected N bytes, got M`.
-
 #### Diagnostic
 
 ```
@@ -840,18 +823,25 @@ written and read back by then.
 
 ### Restoring a backup
 
-With S-OFF the firmware partitions are writable, so a restore is a plain `dd`.
-Run it as root - on a Magisk ROM that means `su -c`, as everywhere else:
-
 ```sh
-adb push backup/<ts>.pg1fs.img /dev/pg1fs.img
-adb shell 'dd if=/dev/pg1fs.img of=/dev/block/bootdevice/by-name/pg1fs bs=1048576'
-adb shell 'sync; rm -f /dev/pg1fs.img'
-adb reboot bootloader && fastboot oem readsecureflag
+scripts/stool.sh restore 20261102-222222
 ```
 
-Same for `board_info` (p3), `mfg` (p5), `pg2fs` (p6) and `misc` (p24).
-Restoring `pg1fs.img` puts `0x8400` back to `03` — i.e. S-ON.
+Takes the timestamp of a `backup/` run and writes every `<ts>.*.img` back to its
+partition. Run with no argument and it lists the stamps it can see. Before
+touching anything it prints the plan - one line per partition with the image
+size - and refuses a file whose size differs from the partition, so a truncated
+image stops the run instead of half-filling a partition. After each write it
+compares md5 of the image with md5 of the partition and exits on a mismatch.
+
+Two things it leaves to you:
+
+- An image missing from the set is skipped with a warning and the partition is
+  left as it is. A set taken before `pg2fs` joined the list has no tamper flag
+  in it.
+- The state inside `pg1fs.img` wins. Restoring an image taken while S-ON writes
+  `03` at `0x8400`, so the phone comes back S-ON: that is one way to undo S-OFF,
+  and also a way to surprise yourself.
 
 ### Do not
 

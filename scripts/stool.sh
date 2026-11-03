@@ -7,7 +7,7 @@
 #   stool.sh soff                   full S-OFF (power cycle + write flag)
 #   stool.sh son                    back to S-ON
 #   stool.sh backup                 snapshot all parameters to backup/<time>.txt
-#   stool.sh restore <snapshot>     write a snapshot back
+#   stool.sh restore <timestamp>    write backup/<ts>.*.img back
 #   stool.sh lock                  write the BL magic = locked   (S-OFF only)
 #   stool.sh unlock                write the BL magic = unlocked (S-OFF only)
 #   stool.sh set <param> [value]    change one parameter (backs up first)
@@ -531,7 +531,9 @@ snapshot_write() { # target file
 		printf 'tamper=%s\n' "$(p_tamper)"
 		printf 'secure=%s\n' "$(p_secure)"
 		printf 'bl=%s\n'     "$(bl_state)"
-		printf '# raw bytes, restorable with: stool.sh restore <this file>\n'
+		printf '# exact bytes at the six offsets, for reference\n'
+		printf '# whole images: %s.*.img, restorable with: stool.sh restore %s\n' \
+			"${f##*/}" "$(printf '%s' "${f##*/}" | sed 's/\.txt$//')" 
 		raw_line "$PART_CID"     "$OFF_CID"     "$LEN_CID"
 		raw_line "$PART_MID"     "$OFF_MID"     "$LEN_MID"
 		raw_line "$PART_VER"     "$OFF_VER"     "$LEN_VER"
@@ -539,6 +541,11 @@ snapshot_write() { # target file
 		raw_line "$PART_SECURE"  "$OFF_SECURE"  "$LEN_SECURE"
 		raw_line "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC"
 	} > "$f"
+}
+
+target_parts() { # partitions a backup covers, deduped (pg1fs carries two fields)
+	printf '%s\n' "$PART_SECURE" "$PART_CID" "$PART_MID" "$PART_TAMPER" "$PART_VER" |
+		awk 'NF && !seen[$0]++'
 }
 
 cmd_backup() {
@@ -554,13 +561,7 @@ cmd_backup() {
 	# secure flag is the largest (pg1fs, ~119 MB on the M8), the tamper flag has
 	# its own.  Radio is never written here, so it is not dumped.  The names come
 	# from targets.conf; pg1fs appears twice there (flag and BL magic), so dedupe.
-	parts=
-	for p in "$PART_SECURE" "$PART_CID" "$PART_MID" "$PART_TAMPER" "$PART_VER"; do
-		[ -n "$p" ] || continue
-		case " $parts " in *" $p "*) continue ;; esac
-		parts="$parts $p"
-	done
-	for part in $parts; do
+	for part in $(target_parts); do
 		img=$BACKUP_DIR/$ts.$part.img
 		want=$(devsh "blockdev --getsize64 $DEV/$part 2>/dev/null" | tr -d '\r')
 		if ! dump_part "$part" "$img"; then
@@ -634,10 +635,6 @@ cmd_set() {
 	say "== state before =="
 	print_state
 	say ""
-	say "== backup =="
-	say "saved: $(cmd_backup)"
-
-	say ""
 
 	case "$param" in
 	cid)
@@ -694,8 +691,6 @@ cmd_bl() { # locked | unlocked
 	say "== state before =="
 	print_state
 	say ""
-	say "== backup =="
-	say "saved: $(cmd_backup)"
 
 	# 0x8404 sits in the same eMMC write-protected range as the S flag.
 	[ "$(secure_state)" = off ] ||
@@ -753,10 +748,6 @@ cmd_soff() {
 	# way to tell whether the cut cleared the write protection.
 	[ -x "$ROOT/tools/mmc_cmd" ] ||
 		die "missing tools/mmc_cmd - build first (make -C tools CROSS=arm-none-linux-gnueabihf-)"
-
-	say ""
-	say "== backup =="
-	say "saved: $(cmd_backup)"
 
 	say ""
 	say "== diagnostic (no side effects) =="
@@ -820,10 +811,6 @@ cmd_son() {
 	[ "$(secure_state)" = on ] && { say ""; say "already S-ON, nothing to do"; return 0; }
 
 	say ""
-	say "== backup =="
-	say "saved: $(cmd_backup)"
-
-	say ""
 	say "== write secure flag =="
 	write_hex "$PART_SECURE" "$OFF_SECURE" "$(u32hex 3)"
 	verify_hex "$PART_SECURE" "$OFF_SECURE" 03000000
@@ -844,40 +831,82 @@ cmd_son() {
 
 # ---------------------------------------------------------------- restore
 
-cmd_restore() {
-	f=${1:-}
-	[ -n "$f" ] || die "usage: stool.sh restore <snapshot.txt>"
-	[ -f "$f" ] || die "no such file: $f"
-	require_android
+cmd_restore() { # <timestamp> - write backup/<ts>.*.img back to the card
+	ts=${1:-}
+	if [ -z "$ts" ]; then
+		say "usage: stool.sh restore <timestamp>    e.g. restore 20261102-222222"
+		say ""
+		stamps=$(ls -1 "$BACKUP_DIR"/*.img 2>/dev/null |
+			sed 's#.*/##; s#\.[^.]*\.img$##' | sort -u)
+		if [ -n "$stamps" ]; then
+			say "in $BACKUP_DIR:"
+			printf '%s\n' "$stamps" | sed 's/^/  /'
+		else
+			say "no .img files in $BACKUP_DIR - run 'stool.sh backup' first"
+		fi
+		exit 2
+	fi
+	base=${ts##*/}
+	case "$ts" in
+	*.txt)
+		die "restore writes whole images now - pass the timestamp: stool.sh restore ${base%.txt}" ;;
+	*/*) prefix=$ts ;;
+	*) prefix=$BACKUP_DIR/$ts ;;
+	esac
+	[ -n "$(ls -1 "$prefix".*.img 2>/dev/null)" ] || die "no .img files match $prefix"
 
-	say "== state now =="
+	require_android
+	[ "$(secure_state)" = off ] ||
+		die "restoring whole partitions needs S-OFF - they are write protected while S-ON"
+
+	say "== plan =="
+	plan=
+	for img in "$prefix".*.img; do
+		[ -f "$img" ] || continue
+		name=${img##*/}
+		part=${name#*.}
+		part=${part%.img}
+		case "$part" in
+		"$PART_SECURE" | "$PART_CID" | "$PART_MID" | "$PART_TAMPER" | "$PART_VER") ;;
+		*)
+			warn "skip $name - $part is not a partition this tool writes"
+			continue
+			;;
+		esac
+		want=$(devsh "blockdev --getsize64 $DEV/$part 2>/dev/null" | tr -d '\r')
+		got=$(wc -c < "$img" | tr -d ' ')
+		[ -z "$want" ] || [ "$got" = "$want" ] ||
+			die "$name is $got bytes but $part is $want - refusing a mismatched image"
+		printf '  %-11s %10s bytes  %s\n' "$part" "$got" "$name"
+		plan="$plan $part:$img"
+	done
+	[ -n "$plan" ] || die "nothing to restore from $prefix - no image matches a partition this tool writes"
+
+	for part in $(target_parts); do
+		case " $plan " in
+		*" $part:"*) ;;
+		*) warn "no image for $part - left untouched" ;;
+		esac
+	done
+
+	say ""
+	say "== write =="
+	for entry in $plan; do
+		part=${entry%%:*}
+		img=${entry#*:}
+		flash_part "$part" "$img"
+		# the image is the truth here: read the partition back and compare
+		a=$("$PY" -c 'import hashlib,sys;print(hashlib.md5(open(sys.argv[1],"rb").read()).hexdigest())' "$(winpath "$img")")
+		b=$(devsh "md5sum $DEV/$part 2>/dev/null" | tr -d '\r' | awk '{print $1}')
+		[ "$a" = "$b" ] || die "$part read-back mismatch: wrote $a, read $b"
+		say "  $part  md5 $a  ok"
+	done
+
+	say ""
+	say "== state after =="
 	print_state
 	say ""
-	say "== safety snapshot =="
-	say "saved: $(cmd_backup)"
-	say ""
-	say "== restoring $f =="
-
-	grep '^raw:' "$f" > "$STOOL_TMP.list"
-	# fd 3, not stdin: adb inherits stdin and would swallow the unread lines
-	while IFS= read -r line <&3; do
-		key=${line%%=*}
-		val=${line#*=}
-		rest=${key#raw:}
-		part=${rest%%:*}
-		off=${rest#*:}
-		case "$part" in
-		"$PART_SECURE"|"$PART_CID"|"$PART_MID"|"$PART_TAMPER"|"$PART_VER") ;;
-		*) warn "skip '$part' - not a partition this target writes"; continue ;;
-		esac
-		say "  $part @ $off = $val"
-		write_hex "$part" "$off" "$val"
-		verify_hex "$part" "$off" "$val"
-	done 3< "$STOOL_TMP.list"
-	rm -f "$STOOL_TMP.list"
-
-	say ""
-	say "done - values from the snapshot are back on the card"
+	say "done"
 }
 
 # ---------------------------------------------------------------- hboot / splash
@@ -915,9 +944,8 @@ cmd_noredtext() {
 	[ "$(secure_state)" = off ] ||
 		die "writing hboot needs S-OFF - the partition is write protected while S-ON"
 
-	say "== backup =="
-	pf=$(cmd_backup)
-	say "params : $pf"
+	say "== dump =="
+	mkdir -p "$BACKUP_DIR"
 	ts=$(date +%Y%m%d-%H%M%S)
 	hb=$BACKUP_DIR/$ts.$PART_HBOOT.img
 	dump_part "$PART_HBOOT" "$hb" || die "could not dump the $PART_HBOOT partition"
@@ -1013,9 +1041,8 @@ cmd_splash() {
 	fi
 
 	say ""
-	say "== backup =="
-	pf=$(cmd_backup)
-	say "params : $pf"
+	say "== dump =="
+	mkdir -p "$BACKUP_DIR"
 	ts=$(date +%Y%m%d-%H%M%S)
 	sp=$BACKUP_DIR/$ts.$PART_SPLASH.img
 	dump_part "$PART_SPLASH" "$sp" || die "could not dump the $PART_SPLASH partition"

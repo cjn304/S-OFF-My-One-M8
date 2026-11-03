@@ -35,8 +35,9 @@ scripts/gen_addr.sh
 scripts/build.sh /path/to/kernel-tree
 make -C tools CROSS=arm-none-linux-gnueabihf-
 
-# 3. 在 debugfs 下找稳压器目录，然后备份、诊断、断电上电、写 flag、验证
+# 3. 在 debugfs 下找稳压器目录，先备份，再诊断、断电上电、写 flag、验证
 adb shell 'mount -t debugfs none /sys/kernel/debug'
+scripts/stool.sh backup
 scripts/stool.sh soff
 
 # 4. 撤销：回到 S-ON，下次开机会恢复写保护
@@ -51,10 +52,10 @@ scripts/stool.sh son
 
 ```sh
 scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
-scripts/stool.sh soff                    # 完整 S-OFF：备份、诊断、断电上电、写入、验证
+scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup                  # 五个整分区 + 参数，约 144 MB
-scripts/stool.sh restore <snapshot>      # 用快照还原
+scripts/stool.sh restore <时间戳>        # 把 backup/<时间戳>.*.img 写回
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
@@ -71,26 +72,26 @@ scripts/stool.sh splash --restore <sp1.img>
 
 每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
-每个命令都会先读 S 状态。任何写操作在动 eMMC 之前都会存一份快照到 `backup/<时间戳>.{txt,img}`：五个整分区，外加一份 txt，一半是给人看的摘要，一半是 `raw:<分区>:<偏移>=<hex>` 形式的原始字节，`restore` 靠它逐字节写回。
+每个命令都会先读 S 状态。没有任何操作会自动备份：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <时间戳>` 再把那些 img 写回去。留作退路的备份，是你特意做的那一份。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
 
-`set secure` 就是 `soff` 最后一步的那次写入，单独跑：先存快照，再写 `0x8400`，再回读，不断电也不重启。S-ON 时写 `0` 会先探测 `mmc_cmd wp`：只有真的还有写保护才拒绝；位图全零（[移植](#8-移植) A 档那种旧 hboot）就照写。已 S-OFF 的机器上，它用来在还原 `pg1fs.img` 之后把 `00` 补回去。
+`set secure` 就是 `soff` 最后一步的那次写入，单独跑：写 `0x8400`，再回读，不断电也不重启。S-ON 时写 `0` 会先探测 `mmc_cmd wp`：只有真的还有写保护才拒绝；位图全零（[移植](#8-移植) A 档那种旧 hboot）就照写。已 S-OFF 的机器上，它用来在还原 `pg1fs.img` 之后把 `00` 补回去。
 
 `lock` / `unlock` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不需要在官网申请的解锁码了；也不走 `fastboot oem lock`：那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
 
-一次快照包含：
+`backup` 写出这些文件：
 
 | 文件 | 内容 | 大小 |
 |---|---|---|
-| `<ts>.txt` | 全部参数的值 + 可以还原的精确字节区间 | 约 0.5 KB |
+| `<ts>.txt` | 全部参数的值 + 六个偏移处的精确字节 | 约 0.5 KB |
 | `<ts>.pg1fs.img` | 整个 p2，secure flag 在这里 | 119 MB |
 | `<ts>.board_info.img` | 整个 p3，CID、IMEI、板级数据 | 16 KB |
 | `<ts>.mfg.img` | 整个 p5，MID 在这里 | 256 KB |
 | `<ts>.pg2fs.img` | 整个 p6，tamper flag 在这里 | 24 MB |
 | `<ts>.misc.img` | 整个 p24，version-main 在这里 | 1 MB |
 
-`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留：CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 144 MB，走 USB 大概一分钟。
+`restore <时间戳>` 负责把五个 img 写回去，txt 只是给人看的记录。`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留：CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 144 MB，走 USB 大概一分钟。
 
 ### CID、MID 和刷机的关系
 
@@ -495,21 +496,6 @@ pwrsq_on: (no undefined symbols)
 
 `== state before ==` 先打印上面那几行状态。之后各阶段按实际顺序排列，每一段都跟着会让它停下的故障。
 
-#### 备份
-
-`== backup ==`：每个分区的大小打到 stderr，最后一行是快照路径：
-
-```
-  pg1fs        124746752 bytes
-  board_info       16384 bytes
-  mfg             262144 bytes
-  pg2fs         24837120 bytes
-  misc           1048576 bytes
-saved: /path/to/repo/backup/20261102-231500.txt
-```
-
-五个整分区，约 144 MB，USB 上大约一分钟；文件构成见[快照表](#stoolsh)。某个分区读不出来会打 `warning: could not dump <分区>`，流程继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
-
 #### 诊断
 
 ```
@@ -578,16 +564,16 @@ adb shell 'dmesg | grep -i "card status"'
 
 ### 还原备份
 
-S-OFF 之后固件分区可写，还原就是普通的 `dd`，同样要以 root 运行（Magisk 上套 `su -c`）：
-
 ```sh
-adb push backup/<ts>.pg1fs.img /dev/pg1fs.img
-adb shell 'dd if=/dev/pg1fs.img of=/dev/block/bootdevice/by-name/pg1fs bs=1048576'
-adb shell 'sync; rm -f /dev/pg1fs.img'
-adb reboot bootloader && fastboot oem readsecureflag
+scripts/stool.sh restore 20261102-222222
 ```
 
-`board_info`（p3）、`mfg`（p5）、`pg2fs`（p6）、`misc`（p24）同理。还原 `pg1fs.img` 会把 `0x8400` 写回 `03`，也就是 S-ON。
+参数就是 `backup/` 里那一次的时间戳，它把每个 `<时间戳>.*.img` 写回对应分区。不带参数运行会列出当前能看到的全部时间戳。动手之前先打一份计划（每行一个分区和镜像大小），镜像大小和分区对不上就拒绝，所以截断的文件会停在写入之前。每个分区写完还会拿镜像的 md5 和分区回读的 md5 比对，不一致就退出。
+
+有两件事它不替你做决定：
+
+- 这一批里缺哪个 img，就只告警、那个分区原样不动。在 `pg2fs` 加入备份列表之前做的备份，里面没有 tamper flag。
+- `pg1fs.img` 里的状态说了算。还原一份 S-ON 时期拍的镜像会把 `03` 写回 `0x8400`，手机就回到 S-ON。这是撤销 S-OFF 的一条路，也是容易忽略的一条。
 
 ### 不要做
 
