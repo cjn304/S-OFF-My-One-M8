@@ -15,7 +15,7 @@ hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规�
 * [解锁 BL](http://www.htcdev.com/bootloader/) 并 root，或刷入自带 root 的固件。内核要能加载模块：M8 的 LineageOS 17.1 就不行。像 Sunshine 一样临时 root 就不用解锁 BL，S-OFF 之后随便解锁。
 * 与固件接近的内核源码，HTC 官方的在 [htcdev.com](https://www.htcdev.com/devcenter/downloads) 发布。
 * 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows](#windows)）。
-* 备份（见[风险](#风险)）和[构建](#构建)。
+* 数据备份（见[风险](#风险)）和[构建](#构建)。
 
 ---
 
