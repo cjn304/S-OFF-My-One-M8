@@ -531,9 +531,12 @@ snapshot_write() { # target file
 		printf 'tamper=%s\n' "$(p_tamper)"
 		printf 'secure=%s\n' "$(p_secure)"
 		printf 'bl=%s\n'     "$(bl_state)"
+		# the stamp the images are named after: <dir>/<stamp>.txt -> <stamp>
+		stamp=${f##*/}
+		stamp=${stamp%.txt}
 		printf '# exact bytes at the six offsets, for reference\n'
 		printf '# whole images: %s.*.img, restorable with: stool.sh restore %s\n' \
-			"${f##*/}" "$(printf '%s' "${f##*/}" | sed 's/\.txt$//')" 
+			"$stamp" "$stamp"
 		raw_line "$PART_CID"     "$OFF_CID"     "$LEN_CID"
 		raw_line "$PART_MID"     "$OFF_MID"     "$LEN_MID"
 		raw_line "$PART_VER"     "$OFF_VER"     "$LEN_VER"
