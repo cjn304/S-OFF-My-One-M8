@@ -430,8 +430,8 @@ p_bl()      { h=$(hex_at "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")
 	             00000000) printf "00000000";;
 	             *) printf "%s" "$h";; esac; }
 
-raw_line() { # part offset len -> the replayable line `restore` consumes
-	printf 'raw:%s:0x%x=%s\n' "$1" "$(( $2 ))" "$(hex_at "$1" "$2" "$3")"
+at_line() { # part offset len -> "part:0xOFF=hex", the bytes behind a value
+	printf '%s:0x%x=%s' "$1" "$(( $2 ))" "$(hex_at "$1" "$2" "$3")"
 }
 
 check_param() { # param value - dies on a value that could never be written
@@ -524,25 +524,23 @@ snapshot_write() { # target file
 		printf '# kernel=%s\n' "$("$ADB" shell uname -r 2>/dev/null | tr -d '\r')"
 		printf '# device=%s\n' "$("$ADB" shell getprop ro.product.device 2>/dev/null | tr -d '\r')"
 		printf '# target=%s\n' "$TARGET"
-		printf 'state=%s\n' "$(secure_state)"
-		printf 'cid=%s\n' "$(p_cid)"
-		printf 'mid=%s\n' "$(p_mid)"
-		printf 'version=%s\n' "$(p_version)"
-		printf 'tamper=%s\n' "$(p_tamper)"
-		printf 'secure=%s\n' "$(p_secure)"
-		printf 'bl=%s\n'     "$(bl_state)"
 		# the stamp the images are named after: <dir>/<stamp>.txt -> <stamp>
 		stamp=${f##*/}
 		stamp=${stamp%.txt}
-		printf '# exact bytes at the six offsets, for reference\n'
 		printf '# whole images: %s.*.img, restorable with: stool.sh restore %s\n' \
 			"$stamp" "$stamp"
-		raw_line "$PART_CID"     "$OFF_CID"     "$LEN_CID"
-		raw_line "$PART_MID"     "$OFF_MID"     "$LEN_MID"
-		raw_line "$PART_VER"     "$OFF_VER"     "$LEN_VER"
-		raw_line "$PART_TAMPER"  "$OFF_TAMPER"  "$LEN_TAMPER"
-		raw_line "$PART_SECURE"  "$OFF_SECURE"  "$LEN_SECURE"
-		raw_line "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC"
+		printf 'cid=%s/%s\n'     "$(p_cid)" \
+			"$(at_line "$PART_CID" "$OFF_CID" "$LEN_CID")"
+		printf 'mid=%s/%s\n'     "$(p_mid)" \
+			"$(at_line "$PART_MID" "$OFF_MID" "$LEN_MID")"
+		printf 'version=%s/%s\n' "$(p_version)" \
+			"$(at_line "$PART_VER" "$OFF_VER" "$LEN_VER")"
+		printf 'tamper=%s/%s\n'  "$(p_tamper)" \
+			"$(at_line "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"
+		printf 'secure state=%s/%s\n' "$(secure_state)" \
+			"$(at_line "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"
+		printf 'bl=%s/%s\n'      "$(bl_state)" \
+			"$(at_line "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")"
 	} > "$f"
 }
 

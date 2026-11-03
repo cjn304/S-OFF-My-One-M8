@@ -126,7 +126,7 @@ What a backup holds:
 
 | file | content | size |
 |---|---|---|
-| `<ts>.txt` | every parameter, plus the exact bytes at the six offsets | ~0.5 KB |
+| `<ts>.txt` | every parameter, with the bytes it was read from | ~0.5 KB |
 | `<ts>.pg1fs.img` | whole p2 — the secure flag lives here | 119 MB |
 | `<ts>.board_info.img` | whole p3 — CID, IMEI, board data | 16 KB |
 | `<ts>.mfg.img` | whole p5 — MID lives here | 256 KB |

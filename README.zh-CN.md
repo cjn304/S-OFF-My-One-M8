@@ -84,7 +84,7 @@ scripts/stool.sh splash --restore <sp1.img>
 
 | 文件 | 内容 | 大小 |
 |---|---|---|
-| `<ts>.txt` | 全部参数的值 + 六个偏移处的精确字节 | 约 0.5 KB |
+| `<ts>.txt` | 全部参数的值，连同上一次读到的字节 | 约 0.5 KB |
 | `<ts>.pg1fs.img` | 整个 p2，secure flag 在这里 | 119 MB |
 | `<ts>.board_info.img` | 整个 p3，CID、IMEI、板级数据 | 16 KB |
 | `<ts>.mfg.img` | 整个 p5，MID 在这里 | 256 KB |
