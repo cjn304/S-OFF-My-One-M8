@@ -434,6 +434,33 @@ raw_line() { # part offset len -> the replayable line `restore` consumes
 	printf 'raw:%s:0x%x=%s\n' "$1" "$(( $2 ))" "$(hex_at "$1" "$2" "$3")"
 }
 
+check_param() { # param value - dies on a value that could never be written
+	# Runs before require_android and before the snapshot, so a typo costs
+	# nothing.  The one thing it cannot check is the write protection, which
+	# needs the device.
+	case "$1" in
+	cid)
+		[ ${#2} -eq 8 ] || die "CID must be exactly 8 characters (got '$2')"
+		;;
+	mid)
+		[ ${#2} -eq 9 ] || die "MID must be exactly 9 characters (got '$2')"
+		;;
+	version)
+		[ -n "$2" ] || die "version must not be empty"
+		[ ${#2} -le 15 ] || die "version too long (max 15 chars)"
+		;;
+	tamper)
+		case "$2" in
+		'' | *[!0-9]*) die "tamper takes a decimal number (0-255)" ;;
+		esac
+		[ "$2" -le 255 ] || die "tamper out of range"
+		;;
+	secure)
+		case "$2" in 0 | 3) ;; *) die "secure takes 0 (S-OFF) or 3 (S-ON)" ;; esac
+		;;
+	esac
+}
+
 secure_state() { # "off" | "on"
 	[ "$(p_secure)" = 0 ] && printf off || printf on
 }
@@ -596,6 +623,7 @@ cmd_set() {
 
 	case "$param" in
 	cid|mid|version|tamper|secure)
+		check_param "$param" "$val"
 		require_android
 		;;
 	*)
@@ -613,7 +641,6 @@ cmd_set() {
 
 	case "$param" in
 	cid)
-		[ ${#val} -eq 8 ] || die "CID must be exactly 8 characters (got '$val')"
 		hx=$(str2hex "$val")
 		say "CID: $(p_cid) -> $val"
 		write_hex "$PART_CID" "$OFF_CID" "$hx"
@@ -621,7 +648,6 @@ cmd_set() {
 		say "now: $(p_cid)"
 		;;
 	mid)
-		[ ${#val} -eq 9 ] || die "MID must be exactly 9 characters (got '$val')"
 		hx=$(utf2hex "$val" | sed 's/\(..\)/\1/g')
 		hx=$("$PY" -c 'import sys;h=sys.argv[1];print((h+"00"*16)[:36])' "$hx")
 		say "MID: $(p_mid) -> $val"
@@ -630,8 +656,6 @@ cmd_set() {
 		say "ok"
 		;;
 	version)
-		[ -n "$val" ] || die "version must not be empty"
-		[ ${#val} -le 15 ] || die "version too long (max 15 chars)"
 		hx=$(str2hex "$val")
 		hx=$("$PY" -c 'import sys;h=sys.argv[1];print((h+"00"*16)[:32])' "$hx")
 		say "version: $(p_version) -> $val"
@@ -640,8 +664,6 @@ cmd_set() {
 		say "ok"
 		;;
 	tamper)
-		case "$val" in ''|*[!0-9]*) die "tamper takes a decimal number (0-255)";; esac
-		[ "$val" -le 255 ] || die "tamper out of range"
 		hx=$(u32hex "$val")
 		say "tamper: $(p_tamper) -> $val"
 		write_hex "$PART_TAMPER" "$OFF_TAMPER" "$hx"
@@ -649,7 +671,6 @@ cmd_set() {
 		say "ok"
 		;;
 	secure)
-		case "$val" in 0|3) ;; *) die "secure takes 0 (S-OFF) or 3 (S-ON)";; esac
 		if [ "$val" = 0 ] && [ "$(secure_state)" != off ]; then
 			# Not fatal by itself: an old hboot may never have armed the
 			# protection, and then a plain write works (Porting, case A).
