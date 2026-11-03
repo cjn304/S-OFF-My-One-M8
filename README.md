@@ -99,8 +99,7 @@ Every command reads the S state first. Nothing is snapshotted automatically:
 `backup` writes `backup/<timestamp>.{txt,img}` - five whole partitions plus a
 txt with a readable summary - and `restore <timestamp>` writes those images
 back, `0x8400` among them. The flag inside the image wins, so restoring a set
-taken while S-ON puts the phone back to S-ON. The backup you fall back on is one
-you took on purpose.
+taken while S-ON puts the phone back to S-ON.
 
 `set tamper` takes any decimal 0..255, but only `0` and `4` mean anything.
 That byte is the only input to hboot's `Software status:` line: `04` prints
@@ -825,12 +824,11 @@ written and read back by then.
 
 ### Do not
 
-* **`fastboot flash` a firmware partition.** While S-ON, hboot checks the HTC
+* **`fastboot flash` a firmware partition.** While S-ON, hboot checks the
   signature of every one of them and refuses anything unsigned, which is also
   what stops you from writing a corrupt or wrong-model image. After S-OFF that
   check no longer runs, so `fastboot flash pg1fs ...` writes whatever you give
-  it, whole. This tool writes a few known bytes at offsets it verified and keeps
-  a dump first; a full flash has neither.
+  it, whole.
 * **Write anything in `pg1fs` other than `0x8400`.** The header at `0x400`
   describes three records (`security`, `simlock`, `simunlock`); the 4 bytes at
   `0x424`/`0x824`/`0xc24` are device-specific and were left untouched here on

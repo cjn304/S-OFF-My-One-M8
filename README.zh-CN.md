@@ -41,7 +41,7 @@ scripts/stool.sh backup
 scripts/stool.sh soff
 
 # 4. 还原备份
-scripts/stool.sh restore <时间戳>
+scripts/stool.sh restore <ts>
 ```
 
 ---
@@ -55,7 +55,7 @@ scripts/stool.sh status                  # S 状态 + 全部参数（Android 或
 scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup                  # 五个整分区 + 参数，约 144 MB
-scripts/stool.sh restore <时间戳>        # 如 restore 20261104-031826
+scripts/stool.sh restore <ts>            # 如 restore 20261104-031826
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
@@ -72,7 +72,7 @@ scripts/stool.sh splash --restore <sp1.img>
 
 每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
-每个命令都会先读 S 状态。没有任何操作会自动备份：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <时间戳>` 再把那些 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的镜像，手机就回到 S-ON。留作退路的备份，是你特意做的那一份。
+每个命令都会先读 S 状态。没有任何操作会自动备份：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <时间戳>` 再把那些 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的镜像，手机就回到 S-ON。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
 
@@ -564,7 +564,7 @@ adb shell 'dmesg | grep -i "card status"'
 
 ### 不要做
 
-* **不要 `fastboot flash` 固件分区。** S-ON 时 hboot 会逐个核对它们的 HTC 签名，签不上就拒绝写入，这道检查同时也挡住了坏镜像和别的机型的镜像。S-OFF 之后它不再核对，`fastboot flash pg1fs ...` 会把你给的文件整块写进去，写坏了没有下一道关。本工具只改几个核过的偏移，并且先留 dump；整块刷写两样都没有。
+* **不要 `fastboot flash` 固件分区。** S-ON 时 hboot 会逐个核对它们的签名，签不上就拒绝写入，这道检查同时也挡住了坏镜像和别的机型的镜像。S-OFF 之后它不再核对，`fastboot flash pg1fs ...` 会把你给的文件整块写进去，写坏了没有下一道关。
 * **`pg1fs` 里除了 `0x8400` 什么都不要写。** `0x400` 的头部描述三条记录（`security`、`simlock`、`simunlock`），`0x424`/`0x824`/`0xc24` 那 4 字节是设备相关的，这里刻意没动。
 * **不要在 `/data` 正在写的时候做断电上电。** panic 还能恢复，写坏一半的 ext4 日志不一定。
 
