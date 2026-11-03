@@ -73,8 +73,7 @@ phone whose hboot never armed the protection.
 scripts/stool.sh status                  # S state + every parameter (Android or fastboot)
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
-scripts/stool.sh backup                  # five partitions + parameters, ~144 MB
-scripts/stool.sh backup misc             # one partition, one image
+scripts/stool.sh backup [partition]      # all five + parameters, or just one
 scripts/stool.sh restore <partition> <file.img>   # e.g. restore pg2fs 20261104-045201.pg2fs.img
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
