@@ -58,7 +58,7 @@ scripts/stool.sh backup
 scripts/stool.sh soff
 
 # 4. write a saved partition image back
-scripts/stool.sh restore 20261104-045201.pg2fs.img
+scripts/stool.sh restore pg2fs 20261104-045201.pg2fs.img
 ```
 
 ---
@@ -74,7 +74,7 @@ scripts/stool.sh status                  # S state + every parameter (Android or
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup                  # five partitions + parameters, ~144 MB
-scripts/stool.sh restore <file.img>      # one partition, e.g. 20261104-045201.pg2fs.img
+scripts/stool.sh restore <partition> <file.img>   # e.g. restore pg2fs 20261104-045201.pg2fs.img
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
@@ -846,7 +846,7 @@ written and read back by then.
 
 ```
 == mfg ==
-  mfg  262144 bytes  20261104-045201.mfg.img  (named)
+  mfg  262144 bytes  20261104-045201.mfg.img
 writing 262144 bytes to mfg
 64+0 records in
 64+0 records out
@@ -854,27 +854,21 @@ writing 262144 bytes to mfg
   md5 e8301cf5c9c5873972846d54c7cd7040  ok
 ```
 
-One file per run. A restorable image is exactly one whole partition, so its
-length is that partition's length, and the table of lengths comes from the
-device: `/sys/class/block/*/uevent`, the same probe that picks the
-`targets.conf` section. The filename is not read at all - `whatever.img`
-restores what `20261104-045201.pg2fs.img` restores. After the write, md5 of the
-image is compared with md5 read back from the partition.
-
-Every partition of that length is a candidate, not just the seven this tool
-writes. On the M8 five of the seven share their length with something else:
-`mfg` with five other partitions, `misc` with four, `hboot` with `tool_diag`,
-`sp1` with `wcnss`, `board_info` with `control`. For those the length cannot
-decide, so the partition has to be named:
+One partition, one file, and the partition is always named:
 
 ```sh
-scripts/stool.sh restore 20261104-045201.misc.img misc
+scripts/stool.sh restore mfg 20261104-045201.mfg.img
 ```
 
-`pg1fs`, `pg2fs` and the rest of the phone's partitions have a length of their
-own, so the second word is optional there. Naming a partition the file does not
-fit, or one that is not on this phone's eMMC, stops the run before anything is
-written.
+Any partition on the phone works, not only the seven this tool writes. The only
+test is length: an image is one whole partition, so it has to be exactly that
+partition's length, and the numbers come from the device
+(`/sys/class/block/*/uevent`, the same probe that picks the `targets.conf`
+section). The filename is not read at all, so `whatever.img` does the same
+thing. A length that does not fit, a name the phone does not have, or a
+partition that is not on its eMMC all stop the run before anything is written.
+After the write, md5 of the image is compared with md5 read back from the
+partition.
 
 Nothing else is touched: restoring `pg1fs` does not touch `hboot`, and vice
 versa. `hboot` and `sp1` are restored the same way, which is why `noredtext` and
