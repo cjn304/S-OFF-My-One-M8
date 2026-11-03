@@ -2,14 +2,13 @@
 
 **English** | [中文](README.zh-CN.md)
 
-Since Firewater and Sunshine stopped being available, there has been no working
-HTC S-OFF tool.
+Since Sunshine became unavailable, there has been no working HTC S-OFF tool.
 
-This is not a memory-corruption exploit. hboot protects the firmware partitions
-with the eMMC's power-on write protection, which by design only clears on a real
-power cycle. Every userspace route to cycle that rail is blocked, so
-the cycle is done from kernel context with a small module that calls the PMIC
-regulator ops directly, followed by writing the one byte hboot reads.
+Hboot protects the firmware partitions with the eMMC's power-on write
+protection, which by design only clears on a real power cycle. Every 
+userspace route to cycle that rail is blocked, so the cycle is done from 
+kernel context with a small module that calls the PMIC regulator ops directly,
+followed by writing the flag byte.
 
 [Tested](#field-evidence) on the HTC One M8, hboot 3.19.0.0000
 (other devices: see [Porting](#8-porting)).
@@ -18,11 +17,11 @@ regulator ops directly, followed by writing the one byte hboot reads.
 
 ## Requirements
 
-* [Unlock bootloader](http://www.htcdev.com/bootloader/). Then root, e.g. with 
-  Magisk or flash a firmware that ships root. The kernel has to be able to load
-  modules: e.g. LineageOS 17.1 for M8 is disabled. Using some exploits to get
-  a temporary root without unlocking works too, once S-OFF the BL is yours.
-* The kernel source your firmware was close to.  HTC publishes the official
+* [Unlock bootloader](http://www.htcdev.com/bootloader/). Then root  
+  or flash a firmware that ships root. The kernel has to be able to load
+  modules: e.g. LineageOS 17.1 for M8 is disabled. Temporary root like 
+  Sunshine without unlocking BL works too, once S-OFF the BL is yours.
+* The kernel source your firmware was close to. HTC publishes the official
   ones on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
   (see [Windows](#windows)).
