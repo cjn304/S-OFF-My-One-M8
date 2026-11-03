@@ -40,8 +40,8 @@ adb shell 'mount -t debugfs none /sys/kernel/debug'
 scripts/stool.sh backup
 scripts/stool.sh soff
 
-# 4. 还原备份
-scripts/stool.sh restore <timestamp>
+# 4. 按文件名写回一个分区镜像
+scripts/stool.sh restore 20261104-045201.mfg.img
 ```
 
 ---
@@ -55,7 +55,7 @@ scripts/stool.sh status                  # S 状态 + 全部参数（Android 或
 scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup                  # 五个整分区 + 参数，约 144 MB
-scripts/stool.sh restore <timestamp>     # 如 restore 20261102-222222
+scripts/stool.sh restore <file.img>      # 一次一个分区，如 20261104-045201.mfg.img
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
@@ -64,15 +64,13 @@ scripts/stool.sh set secure <0|3>        # 0 = S-OFF，3 = S-ON
 scripts/stool.sh lock                    # BL magic -> 锁定
 scripts/stool.sh unlock                  # BL magic -> 解锁
 scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
-scripts/stool.sh noredtext --restore <hboot.img>
 scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 targets.conf
 scripts/stool.sh splash photo.png --size=1440x2560     # 其它分辨率的屏
-scripts/stool.sh splash --restore <sp1.img>
 ```
 
 每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
-每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore` 再把那些 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的镜像，手机就回到 S-ON。不打招呼就 dump 的只有 `noredtext` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
+每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <文件名>` 再把其中一个 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `noredtext` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
 
@@ -103,7 +101,7 @@ MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Ed
 
 运行前要知道两件事：
 
-- hboot 带 HTC 签名，改字节就会破坏签名，全靠 S-OFF 让 SBL 跳过校验。S-ON 时绝对不能碰，并且一定要保留 dump 出来的 `<timestamp>.hboot.img`：`noredtext --restore` 就是把它原样写回去。
+- hboot 带 HTC 签名，改字节就会破坏签名，全靠 S-OFF 让 SBL 跳过校验。S-ON 时绝对不能碰，并且一定要保留 dump 出来的 `<timestamp>.hboot.img`：`restore <时间戳>.hboot.img` 就是把它原样写回去。
 - 6.12.1540.4 这块 hboot 里，这六个字符串**没有任何静态引用**。绝对地址、文件偏移、低 20 位匹配、ARM 与 Thumb 的 `movw`/`movt`、代码段 literal pool，全部扫过，一个都没有。说明横幅是运行期装配的，所以改字符串本身是唯一安全的最小改动，不存在"参数可改的绘制函数"可找。
 
 ### 第一屏
@@ -579,21 +577,18 @@ adb shell 'dmesg | grep -i "card status"'
 ### `restore`
 
 ```
-== plan ==
-  board_info       16384 bytes  20261104-031826.board_info.img
-  mfg             262144 bytes  20261104-031826.mfg.img
-  misc           1048576 bytes  20261104-031826.misc.img
-  pg1fs        124746752 bytes  20261104-031826.pg1fs.img
-  pg2fs         24837120 bytes  20261104-031826.pg2fs.img
-
-== write ==
-writing 124746752 bytes to pg1fs
-  pg1fs  md5 295030502f88c51880c33a86d9a26cf4  ok
-...
-== state after ==
+== mfg ==
+  mfg  262144 bytes  20261104-045201.mfg.img
+writing 262144 bytes to mfg
+64+0 records in
+64+0 records out
+262144 bytes transferred in 0.009 secs
+  md5 e8301cf5c9c5873972846d54c7cd7040  ok
 ```
 
-`plan` 列出那个时间戳下找到的全部镜像；大小和分区对不上的会在这一步停下。每个分区写完立刻回读算 md5，对不上就不再往下走。没有对应镜像的分区会出现在告警里、原样不动；不属于本工具管理的镜像（旧备份里的 `radio.img`）同样跳过。
+一次一个文件。分区名从文件名读出来，格式是 `<任意>.<分区>.img`，所以 `20261104-045201.mfg.img`、`backup/20261104-045201.mfg.img`、`/tmp/old.mfg.img` 都能用；镜像大小必须正好等于那个分区，否则在写入前就停下。写完回读分区算 md5，与镜像比对。
+
+别的一概不动：还原 `pg1fs` 不碰 `hboot`，反之亦然。`hboot` 和 `sp1` 也走同一条命令，所以 `noredtext` 和 `splash` 各自那个 `--restore` 已经去掉。
 
 ### 不要做
 

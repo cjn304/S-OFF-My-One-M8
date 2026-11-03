@@ -6,21 +6,20 @@
 #   stool.sh status                 show S state and every parameter
 #   stool.sh soff                   full S-OFF (power cycle + write flag)
 #   stool.sh son                    back to S-ON
-#   stool.sh backup                 snapshot all parameters to backup/<time>.txt
-#   stool.sh restore <timestamp>    write backup/<ts>.*.img back
+#   stool.sh backup                 parameters + one image per partition
+#   stool.sh restore <file.img>     write one saved partition image back
 #   stool.sh lock                  write the BL magic = locked   (S-OFF only)
 #   stool.sh unlock                write the BL magic = unlocked (S-OFF only)
 #   stool.sh set <param> [value]    change one parameter (backs up first)
 #   stool.sh noredtext              blank the six "This build is for ..." lines in hboot
 #   stool.sh splash <image.png> [--size=WxH] [--fit=...]   first boot screen
-#   stool.sh splash --restore <f>   write a saved sp1 image back
 #
 #   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
 #           tamper <0-255> | secure <0|3>
 #
-# Every command reads the current S state first.  `set` (and soff/son) take a
-# full parameter snapshot into backup/<YYYYmmdd-HHMMSS>.txt before touching
-# anything; the file is both human readable and restorable.
+# Every command reads the current S state first.  Nothing is backed up
+# automatically: `backup` writes one image per partition plus a readable txt, and
+# `restore` writes a single image back by name.
 #
 # Where each parameter lives is not fixed here.  targets.conf holds one section
 # per partition layout and the script picks one by comparing the sizes the
@@ -840,89 +839,81 @@ cmd_son() {
 
 # ---------------------------------------------------------------- restore
 
-cmd_restore() { # <timestamp> - write backup/<ts>.*.img back to the card
-	ts=${1:-}
-	if [ -z "$ts" ]; then
-		say "usage: stool.sh restore <timestamp>    e.g. restore 20261102-222222"
+cmd_restore() { # <file.img> - write one saved partition image back
+	img=${1:-}
+	if [ -z "$img" ]; then
+		say "usage: stool.sh restore <file.img>    e.g. restore 20261104-045201.mfg.img"
 		say ""
-		stamps=$(ls -1 "$BACKUP_DIR"/*.img 2>/dev/null |
-			sed 's#.*/##; s#\.[^.]*\.img$##' | sort -u)
-		if [ -n "$stamps" ]; then
+		files=$(ls -1 "$BACKUP_DIR"/*.img 2>/dev/null)
+		if [ -n "$files" ]; then
 			say "in $BACKUP_DIR:"
-			printf '%s\n' "$stamps" | sed 's/^/  /'
+			printf '%s\n' "$files" | sed 's#.*/##; s/^/  /'
 		else
-			say "no .img files in $BACKUP_DIR - run 'stool.sh backup' first"
+			say "no .img in $BACKUP_DIR - run 'stool.sh backup' first"
 		fi
 		exit 2
 	fi
-	base=${ts##*/}
-	case "$ts" in
-	*.txt)
-		die "restore writes whole images now - pass the timestamp: stool.sh restore ${base%.txt}" ;;
-	*/*) prefix=$ts ;;
-	*) prefix=$BACKUP_DIR/$ts ;;
+	# a bare filename is looked up in backup/; anything with a slash is a path
+	case "$img" in
+	*/*) ;;
+	*) img=$BACKUP_DIR/$img ;;
 	esac
-	[ -n "$(ls -1 "$prefix".*.img 2>/dev/null)" ] || die "no .img files match $prefix"
+	[ -f "$img" ] || die "no such file: $img"
 
+	name=${img##*/}
+	case "$name" in
+	*.img) ;;
+	*) die "not a partition image: $name (expected <anything>.<partition>.img)" ;;
+	esac
+
+	# the partition names come from targets.conf, so the table has to be loaded
+	# before the filename can be checked against them
 	require_android
+	# <stamp>.<partition>.img - the suffix, not the stamp, says what it is
+	part=${name%.img}
+	part=${part##*.}
+	case "$part" in
+	"$PART_SECURE" | "$PART_CID" | "$PART_MID" | "$PART_TAMPER" | "$PART_VER" | \
+	"$PART_HBOOT" | "$PART_SPLASH") ;;
+	*)
+		die "'$part' is not a partition this tool writes.  The name decides:
+  <anything>.$PART_SECURE.img   <anything>.$PART_CID.img   <anything>.$PART_MID.img
+  <anything>.$PART_TAMPER.img   <anything>.$PART_VER.img
+  <anything>.$PART_HBOOT.img   <anything>.$PART_SPLASH.img"
+		;;
+	esac
 	[ "$(secure_state)" = off ] ||
-		die "restoring whole partitions needs S-OFF - they are write protected while S-ON"
+		die "restoring a whole partition needs S-OFF - they are write protected while S-ON"
 
-	say "== plan =="
-	plan=
-	for img in "$prefix".*.img; do
-		[ -f "$img" ] || continue
-		name=${img##*/}
-		part=${name#*.}
-		part=${part%.img}
-		case "$part" in
-		"$PART_SECURE" | "$PART_CID" | "$PART_MID" | "$PART_TAMPER" | "$PART_VER") ;;
-		*)
-			warn "skip $name - $part is not a partition this tool writes"
-			continue
-			;;
-		esac
-		want=$(devsh "blockdev --getsize64 $DEV/$part 2>/dev/null" | tr -d '\r')
-		got=$(wc -c < "$img" | tr -d ' ')
-		[ -z "$want" ] || [ "$got" = "$want" ] ||
-			die "$name is $got bytes but $part is $want - refusing a mismatched image"
-		printf '  %-11s %10s bytes  %s\n' "$part" "$got" "$name"
-		plan="$plan $part:$img"
-	done
-	[ -n "$plan" ] || die "nothing to restore from $prefix - no image matches a partition this tool writes"
+	want=$(devsh "blockdev --getsize64 $DEV/$part 2>/dev/null" | tr -d '\r')
+	got=$(wc -c < "$img" | tr -d ' ')
+	[ -z "$want" ] || [ "$got" = "$want" ] ||
+		die "$name is $got bytes but $part is $want - refusing a mismatched image"
 
-	for part in $(target_parts); do
-		case " $plan " in
-		*" $part:"*) ;;
-		*) warn "no image for $part - left untouched" ;;
-		esac
-	done
+	say "== $part =="
+	printf '  %s  %s bytes  %s\n' "$part" "$got" "$name"
+	flash_part "$part" "$img"
 
-	say ""
-	say "== write =="
-	for entry in $plan; do
-		part=${entry%%:*}
-		img=${entry#*:}
-		flash_part "$part" "$img"
-		# the image is the truth here: read the partition back and compare
-		a=$("$PY" -c 'import hashlib,sys;print(hashlib.md5(open(sys.argv[1],"rb").read()).hexdigest())' "$(winpath "$img")")
-		b=$(devsh "md5sum $DEV/$part 2>/dev/null" | tr -d '\r' | awk '{print $1}')
-		[ "$a" = "$b" ] || die "$part read-back mismatch: wrote $a, read $b"
-		say "  $part  md5 $a  ok"
-	done
+	# the image is the truth here: read the partition back and compare
+	a=$("$PY" -c 'import hashlib,sys;print(hashlib.md5(open(sys.argv[1],"rb").read()).hexdigest())' "$(winpath "$img")")
+	b=$(devsh "md5sum $DEV/$part 2>/dev/null" | tr -d '\r' | awk '{print $1}')
+	[ "$a" = "$b" ] || die "$part read-back mismatch: wrote $a, read $b"
+	say "  md5 $a  ok"
 
-	say ""
-	say "== state after =="
-	print_state
-	say ""
-	say "done"
+	case "$part" in
+	"$PART_HBOOT" | "$PART_SPLASH")
+		say ""
+		say "reboot to see it"
+		;;
+	esac
 }
+
 
 # ---------------------------------------------------------------- hboot / splash
 
 winpath() { cygpath -w "$1" 2>/dev/null || printf '%s' "$1"; }
 
-flash_part() { # part src-file  (write a whole image, used by the --restore paths)
+flash_part() { # part src-file  (write a whole image; used by restore)
 	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing $PART_SECURE"
 	say "writing $(wc -c < "$2" | tr -d ' ') bytes to $1"
 	"$ADB" push "$2" //data/local/tmp/stool_flash.img >/dev/null 2>&1 </dev/null || die "adb push failed"
@@ -932,19 +923,10 @@ flash_part() { # part src-file  (write a whole image, used by the --restore path
 }
 
 cmd_noredtext() {
-	if [ "${1:-}" = --restore ]; then
-		src=${2:-}
-		[ -n "$src" ] && [ -f "$src" ] || die "usage: stool.sh noredtext --restore <hboot.img>"
-		require_android
-		[ "$(secure_state)" = off ] || die "writing hboot needs S-OFF"
-		[ -n "$HB_BYTES" ] && [ "$HB_BYTES" -gt 0 ] ||
-			die "targets.conf does not give a size for $PART_HBOOT"
-		[ "$(wc -c < "$src" | tr -d ' ')" = "$HB_BYTES" ] ||
-			die "not a $HB_BYTES-byte $PART_HBOOT image: $src"
-		flash_part "$PART_HBOOT" "$src"
-		say "ok - reboot to see it"
-		return 0
-	fi
+	# it used to take --restore; without this guard that word would fall through
+	# to the normal path and patch hboot
+	[ $# -eq 0 ] ||
+		die "noredtext takes no arguments.  To put a saved hboot back: stool.sh restore <stamp>.hboot.img"
 
 	require_android
 	say "== state before =="
@@ -998,22 +980,14 @@ cmd_noredtext() {
 
 	say ""
 	say "six bytes blanked.  Reboot and look at the first screen."
-	say "undo   : stool.sh noredtext --restore $hb"
+	say "undo   : stool.sh restore $hb"
 }
 
 cmd_splash() {
-	if [ "${1:-}" = --restore ]; then
-		src=${2:-}
-		[ -n "$src" ] && [ -f "$src" ] || die "usage: stool.sh splash --restore <sp1.img>"
-		require_android
-		[ "$(secure_state)" = off ] || die "writing $PART_SPLASH needs S-OFF"
-		flash_part "$PART_SPLASH" "$src"
-		say "ok - reboot to see it"
-		return 0
-	fi
-
 	img=${1:-}
-	[ -n "$img" ] || die "usage: stool.sh splash <image.png> [--size=WxH] [--fit=cover|stretch]   or   stool.sh splash --restore <sp1.img>"
+	[ -n "$img" ] || die "usage: stool.sh splash <image.png> [--size=WxH] [--fit=cover|stretch]"
+	[ "$img" != --restore ] ||
+		die "splash --restore is gone.  To put a saved sp1 back: stool.sh restore <stamp>.sp1.img"
 	[ -f "$img" ] || die "no such file: $img"
 	require_android
 	shift
@@ -1081,7 +1055,7 @@ cmd_splash() {
 
 	say ""
 	say "first screen replaced.  Reboot to see it."
-	say "undo   : stool.sh splash --restore $sp"
+	say "undo   : stool.sh restore $sp"
 }
 
 # ---------------------------------------------------------------- main
@@ -1095,7 +1069,7 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh soff
   stool.sh son
   stool.sh backup
-  stool.sh restore <snapshot.txt>
+  stool.sh restore <file.img>       write one saved partition image back
   stool.sh set cid <8 chars>
   stool.sh set mid <9 chars>
   stool.sh set version <x.y.z.w>
@@ -1104,13 +1078,11 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh lock                    write the BL magic = locked   (S-OFF only)
   stool.sh unlock                  write the BL magic = unlocked (S-OFF only)
   stool.sh noredtext               blank the six "This build is for ..." lines
-  stool.sh noredtext --restore <hboot.img>
   stool.sh splash <image.png> [--size=WxH] [--fit=cover|stretch]
-                                   replace the first boot screen (default 1080x1920)
-  stool.sh splash --restore <sp1.img>
+                                   replace the first boot screen
 
-Every command starts by reading the current S state.  Anything that writes
-takes a full parameter snapshot into backup/<YYYYmmdd-HHMMSS>.txt first.
+Every command starts by reading the current S state.  Nothing is backed up
+automatically: run 'stool.sh backup' first if you want a way back.
 
 Environment: ADB, FB, PY, BACKUP_DIR.
 EOF

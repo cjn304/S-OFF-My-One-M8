@@ -57,8 +57,8 @@ adb shell 'mount -t debugfs none /sys/kernel/debug'
 scripts/stool.sh backup
 scripts/stool.sh soff
 
-# 4. restore a backup
-scripts/stool.sh restore <timestamp>
+# 4. write one partition image back, by name
+scripts/stool.sh restore 20261104-045201.mfg.img
 ```
 
 ---
@@ -74,7 +74,7 @@ scripts/stool.sh status                  # S state + every parameter (Android or
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup                  # five partitions + parameters, ~144 MB
-scripts/stool.sh restore <timestamp>     # e.g. restore 20261102-222222
+scripts/stool.sh restore <file.img>      # one partition, e.g. 20261104-045201.mfg.img
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
@@ -83,10 +83,8 @@ scripts/stool.sh set secure <0|3>        # 0 = S-OFF, 3 = S-ON
 scripts/stool.sh lock                    # BL magic -> locked
 scripts/stool.sh unlock                  # BL magic -> unlocked
 scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
-scripts/stool.sh noredtext --restore <hboot.img>
 scripts/stool.sh splash photo.png        # first boot screen, size from targets.conf
 scripts/stool.sh splash photo.png --size=1440x2560     # other panels
-scripts/stool.sh splash --restore <sp1.img>
 ```
 
 Where each parameter lives, and which partitions get dumped, comes from
@@ -163,7 +161,7 @@ Two things to know before running it:
 
 - hboot carries the HTC signature.  Changing bytes breaks it; S-OFF is what
   makes the SBL skip the check.  Never run this while S-ON, and keep the dumped
-  `<timestamp>.hboot.img` - `noredtext --restore` writes it straight back.
+  `<timestamp>.hboot.img` - `restore <timestamp>.hboot.img` writes it back.
 - On the 6.12.1540.4 hboot these six strings have **no static cross reference**
   in the image.  Every form was scanned: absolute address, raw file offset,
   low-20-bit match, ARM and Thumb `movw`/`movt`, and the literal pool of the
@@ -847,25 +845,24 @@ written and read back by then.
 ### `restore`
 
 ```
-== plan ==
-  board_info       16384 bytes  20261104-031826.board_info.img
-  mfg             262144 bytes  20261104-031826.mfg.img
-  misc           1048576 bytes  20261104-031826.misc.img
-  pg1fs        124746752 bytes  20261104-031826.pg1fs.img
-  pg2fs         24837120 bytes  20261104-031826.pg2fs.img
-
-== write ==
-writing 124746752 bytes to pg1fs
-  pg1fs  md5 295030502f88c51880c33a86d9a26cf4  ok
-...
-== state after ==
+== mfg ==
+  mfg  262144 bytes  20261104-045201.mfg.img
+writing 262144 bytes to mfg
+64+0 records in
+64+0 records out
+262144 bytes transferred in 0.009 secs
+  md5 e8301cf5c9c5873972846d54c7cd7040  ok
 ```
 
-The plan lists every image it found for that timestamp; one whose size differs
-from the partition stops the run there. Each partition is written and then read
-back for md5, so a mismatch stops before the next one. Partitions with no image
-are named in a warning and left alone, and images for partitions this tool does
-not manage (`radio.img` from an older backup) are skipped the same way.
+One file per run. The partition comes from the name, which is
+`<anything>.<partition>.img`: `20261104-045201.mfg.img`,
+`backup/20261104-045201.mfg.img` and `/tmp/old.mfg.img` all work. The image must
+be exactly the size of that partition, or the run stops before writing. After
+the write, md5 of the image is compared with md5 read back from the partition.
+
+Nothing else is touched: restoring `pg1fs` does not touch `hboot`, and vice
+versa. `hboot` and `sp1` are restored the same way, which is why `noredtext` and
+`splash` no longer carry their own `--restore` flags.
 
 ### Do not
 
