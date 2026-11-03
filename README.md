@@ -5,8 +5,8 @@
 Since Sunshine became unavailable, there has been no working HTC S-OFF tool.
 
 Hboot protects the firmware partitions with the eMMC's power-on write
-protection, which by design only clears on a real power cycle. Every 
-userspace route to cycle that rail is blocked, so the cycle is done from 
+protection, which by design only clears on a real power cycle. Every
+userspace route to cycle that rail is blocked, so the cycle is done from
 kernel context with a small module that calls the PMIC regulator ops directly,
 followed by writing the flag byte.
 
@@ -17,9 +17,9 @@ followed by writing the flag byte.
 
 ## Requirements
 
-* [Unlock bootloader](http://www.htcdev.com/bootloader/). Then root  
+* [Unlock bootloader](http://www.htcdev.com/bootloader/). Then root
   or flash a firmware that ships root. The kernel has to be able to load
-  modules: e.g. LineageOS 17.1 for M8 is disabled. Temporary root like 
+  modules: e.g. LineageOS 17.1 for M8 is disabled. Temporary root like
   Sunshine without unlocking BL works too, once S-OFF the BL is yours.
 * The kernel source your firmware was close to. HTC publishes the official
   ones on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
