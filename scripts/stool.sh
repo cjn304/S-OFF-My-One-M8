@@ -424,6 +424,12 @@ p_cid()     { hex2str   "$(hex_at "$PART_CID"    "$OFF_CID"    "$LEN_CID")"; }
 p_mid()     { hex2utf16 "$(hex_at "$PART_MID"    "$OFF_MID"    "$LEN_MID")"; }
 p_version() { hex2str   "$(hex_at "$PART_VER"    "$OFF_VER"    "$LEN_VER")"; }
 p_tamper()  { le32      "$(hex_at "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"; }
+p_status()  { # what hboot prints after "Software status:", from that byte
+	case "$(p_tamper)" in
+	0) printf official ;;
+	4) printf modified ;;
+	*) printf '%s' "$(p_tamper)" ;;
+	esac; }
 p_secure()  { le32      "$(hex_at "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"; }
 p_bl()      { h=$(hex_at "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")
 	case "$h" in 48544355) printf "HTCU";;
@@ -529,18 +535,18 @@ snapshot_write() { # target file
 		stamp=${stamp%.txt}
 		printf '# whole images: %s.*.img, restorable with: stool.sh restore %s\n' \
 			"$stamp" "$stamp"
+		printf 'secure=%s/%s\n'  "$(secure_state)" \
+			"$(at_line "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"
+		printf 'bl=%s/%s\n'      "$(bl_state)" \
+			"$(at_line "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")"
+		printf 'status=%s/%s\n'  "$(p_status)" \
+			"$(at_line "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"
 		printf 'cid=%s/%s\n'     "$(p_cid)" \
 			"$(at_line "$PART_CID" "$OFF_CID" "$LEN_CID")"
 		printf 'mid=%s/%s\n'     "$(p_mid)" \
 			"$(at_line "$PART_MID" "$OFF_MID" "$LEN_MID")"
 		printf 'version=%s/%s\n' "$(p_version)" \
 			"$(at_line "$PART_VER" "$OFF_VER" "$LEN_VER")"
-		printf 'tamper=%s/%s\n'  "$(p_tamper)" \
-			"$(at_line "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"
-		printf 'secure state=%s/%s\n' "$(secure_state)" \
-			"$(at_line "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"
-		printf 'bl=%s/%s\n'      "$(bl_state)" \
-			"$(at_line "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")"
 	} > "$f"
 }
 
