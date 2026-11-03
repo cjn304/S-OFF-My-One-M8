@@ -35,9 +35,9 @@ The commands below assume `adb shell` is root: a userdebug or eng ROM, where
 `adb root` works, or a rooted stock ROM, where every `adb shell ...` becomes
 `adb shell 'su -c "..."'`. The quoting matters - the redirection has to sit
 inside the su command, or the non-root shell performs it first and fails with
-`Permission denied`. `stool.sh status`, `soff` and `son` find root on their own;
-`gen_addr.sh` needs none: once `kptr_restrict` is 0, `/proc/kallsyms` is
-world-readable.
+`Permission denied`. Every `stool.sh` command finds root on its own (Magisk
+`su`, adb root, or a userdebug build); `gen_addr.sh` needs none: once
+`kptr_restrict` is 0, `/proc/kallsyms` is world-readable.
 [Expected output and troubleshooting](#expected-output-and-troubleshooting).
 
 ```sh
@@ -84,7 +84,7 @@ scripts/stool.sh lock                    # BL magic -> locked
 scripts/stool.sh unlock                  # BL magic -> unlocked
 scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
 scripts/stool.sh noredtext --restore <hboot.img>
-scripts/stool.sh splash photo.png        # first boot screen, 1080x1920 by default
+scripts/stool.sh splash photo.png        # first boot screen, size from targets.conf
 scripts/stool.sh splash photo.png --size=1440x2560     # other panels
 scripts/stool.sh splash --restore <sp1.img>
 ```
@@ -95,11 +95,13 @@ device reports in `/sys/class/block/*/uevent`. A phone whose layout has no
 section is refused before anything is written - see
 [section 6](#6-parameter-offsets) to add one.
 
-Every command reads the S state first. Nothing is snapshotted automatically:
+Every command reads the S state first. Nothing is backed up automatically:
 `backup` writes `backup/<timestamp>.{txt,img}` - five whole partitions plus a
 txt with a readable summary - and `restore <timestamp>` writes those images
 back, `0x8400` among them. The flag inside the image wins, so restoring a set
-taken while S-ON puts the phone back to S-ON.
+taken while S-ON puts the phone back to S-ON. The only dumps taken without
+asking are the ones `noredtext` and `splash` make of the single partition they
+are about to overwrite; that dump is their undo path, nothing else.
 
 `set tamper` takes any decimal 0..255, but only `0` and `4` mean anything.
 That byte is the only input to hboot's `Software status:` line: `04` prints
@@ -110,7 +112,8 @@ That byte is the only input to hboot's `Software status:` line: `04` prints
 `03` at `0x8400`, then a read-back - no power cycle and no reboot. `00` while
 S-ON is refused unless `mmc_cmd wp` reports no write protection, which is the
 old-hboot case in [Porting](#8-porting); there it is the plain write that sets
-the flag. On an S-OFF phone it re-applies `00` after a `pg1fs.img` restore.
+the flag. On an S-OFF phone it is also what puts `00` back after restoring a
+`pg1fs.img` that was taken while S-ON.
 
 `lock` / `unlock` write the four bytes at `pg1fs` (p2)
 0x8404 directly: `HTCU` = unlocked, `00000000` = locked. That is the same magic
@@ -119,7 +122,7 @@ code is needed. `fastboot oem lock` is not used either — it only produces
 `RELOCKED`, and hboot 3.19 has no `oem unlock` command at all
 (`[ERR] Command error`).
 
-What a snapshot holds:
+What a backup holds:
 
 | file | content | size |
 |---|---|---|
@@ -145,8 +148,7 @@ Unicom). An RUU checks both against the image and refuses to flash when either
 does not match, which is why changing them is the usual prerequisite for
 another region's firmware: `set mid` writes mfg 0x4000, `set cid` writes
 board_info 0x14, and CID `11111111` (SuperCID) makes the phone accept any CID -
-the MID check still applies. What each package expects
-is listed in this
+the MID check still applies. What each package expects is listed in this
 [M8 firmware sheet](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0).
 
 ### Red text at boot
@@ -172,9 +174,10 @@ Two things to know before running it:
 ### First screen
 
 `splash` converts a PNG into what the `sp1` partition actually holds:
-little-endian RGB565, 1080x1920 (4,147,200 bytes) unless `--size=WxH` says
-otherwise; the rest of the partition is padding.  The frame size is checked
-against the partition size before anything is written.
+little-endian RGB565 at the size `targets.conf` gives for the model - 1080x1920
+on the M8, 4,147,200 bytes - unless `--size=WxH` says otherwise; the rest of the
+partition is padding.  The frame size is checked against the partition size
+before anything is written.
 
 The conversion is done by `scripts/png2rgb565.py`, pure standard
 library on purpose (a bare Windows box has no ffmpeg, no PIL, no ImageMagick).
@@ -442,10 +445,10 @@ plain write is enough then, with neither the module nor the power cycle: derive
 the partition, the offset and the record shape as in
 [section 6](#6-parameter-offsets), put them in a `targets.conf` section, and
 `stool.sh set secure 0` is that write - it probes the bitmap first and refuses
-only if protection is really armed. One caveat there:
-the four bytes after `03 00 00 00` read `HTCU` only while the bootloader is
-unlocked, so a dump from a locked phone shows `00000000` and the pair is not a
-reliable anchor. Confirm the candidate with `readsecureflag`.
+only if protection is really armed. One caveat there: the four bytes after
+`03 00 00 00` read `HTCU` only while the bootloader is unlocked, so a dump from
+a locked phone shows `00000000` and the pair is not a reliable anchor. Confirm
+the candidate with `readsecureflag`.
 
 **B. Same generation:** e.g. other M8 variants (dual-SIM, Sprint, Verizon),
 One E8, Butterfly 2, One mini 2 - all off the same HTC 3.4 tree. The mechanism,
@@ -512,10 +515,13 @@ The S-OFF state is one byte in the `pg1fs` partition:
 | offset | meaning | S-ON | S-OFF |
 |---|---|---|---|
 | `0x8400` | secure flag (u32 LE) | `03 00 00 00` | `00 00 00 00` |
-| `0x8404` | bootloader state magic | `HTCU` unlocked / `00000000` locked | unchanged |
 
 `fastboot oem readsecureflag` reads exactly this value, and `getvar all` derives
 `version-misc: PVT SHIP S-ON/S-OFF` and `security: on/off` from it.
+
+The 4 bytes at `0x8404` are a separate field - the bootloader lock state, `HTCU`
+unlocked or `00000000` locked. It does not follow the S state: an S-ON phone can
+be unlocked, and `lock`/`unlock` change nothing else.
 
 Writing it as root fails, and the reason is neither SELinux nor the filesystem:
 at every boot hboot sets the eMMC's **power-on write protection** on the
@@ -652,8 +658,8 @@ The kernel is built with `CONFIG_MODVERSIONS=y` and we do not have its
 
 ## Expected output and troubleshooting
 
-Every command in the order it runs, with the output that says it worked and the
-failure that belongs to it.
+Each step of the quick start in the order it runs: the output that says it
+worked, and the failure that belongs to it.
 
 ### `stool.sh status`
 
@@ -661,7 +667,7 @@ failure that belongs to it.
 == state ==
 target  : m8  [htc_m8, hboot 3.19.*]
 S state : S-ON  (secure_flag 3)
-BL state: unlocked (pg1fs 0x8404 = HTCU (unlocked))
+BL state: unlocked (pg1fs 0x8404 = HTCU)
 
 == parameters ==
 CID       11111111     board_info @ 0x14
@@ -671,7 +677,7 @@ tamper    0            pg2fs @ 0x511804
 secure    3            pg1fs @ 0x8400
 BL lock   unlocked     pg1fs @ 0x8404
 
-modules   0 (0 = allowed)
+modules   0
 selinux   Enforcing
 ```
 
@@ -719,6 +725,22 @@ The three modules import nothing: every kernel function is reached through
 `soff` refuses to start without it - that binary is the only way to tell
 whether the power cycle worked.
 
+### `backup`
+
+```
+  pg1fs        124746752 bytes
+  board_info       16384 bytes
+  mfg             262144 bytes
+  pg2fs         24837120 bytes
+  misc           1048576 bytes
+/path/to/repo/backup/20261104-031826.txt
+```
+
+One line per partition on stderr, the txt path on stdout. The whole set is
+about 144 MB and takes roughly a minute over USB. A partition that cannot be
+read gives `warning: could not dump <part>` and the run continues; a short image
+gives `<part>: expected N bytes, got M`.
+
 ### `soff`
 
 `== state before ==` repeats the status lines above. The stages follow in the
@@ -764,7 +786,7 @@ on the `stop` + `sync` above.
 `== power cycle ==` - `SEQ_DONE`. `dmesg | grep mmc_reinit_card` shows the
 re-scan itself.
 
-If `/dev/block/mmcblk0p2` does not come back the run stops with
+If the `pg1fs` node does not come back the run stops with
 `eMMC did not come back - hold power ~10s, then retry`. Nothing is permanently
 damaged - the flag is only written in a later stage - so:
 
@@ -821,6 +843,29 @@ The same run in the other direction: `pg1fs 0x8400 = 3`, `secure_flag: 3`, and
 `done - S-ON (write protection comes back on the next boot)`. This bootloader
 check only warns - `expected 3, got ...` - because the flag has already been
 written and read back by then.
+
+### `restore`
+
+```
+== plan ==
+  board_info       16384 bytes  20261104-031826.board_info.img
+  mfg             262144 bytes  20261104-031826.mfg.img
+  misc           1048576 bytes  20261104-031826.misc.img
+  pg1fs        124746752 bytes  20261104-031826.pg1fs.img
+  pg2fs         24837120 bytes  20261104-031826.pg2fs.img
+
+== write ==
+writing 124746752 bytes to pg1fs
+  pg1fs  md5 295030502f88c51880c33a86d9a26cf4  ok
+...
+== state after ==
+```
+
+The plan lists every image it found for that timestamp; one whose size differs
+from the partition stops the run there. Each partition is written and then read
+back for md5, so a mismatch stops before the next one. Partitions with no image
+are named in a warning and left alone, and images for partitions this tool does
+not manage (`radio.img` from an older backup) are skipped the same way.
 
 ### Do not
 

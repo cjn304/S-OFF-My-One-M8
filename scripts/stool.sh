@@ -426,8 +426,8 @@ p_version() { hex2str   "$(hex_at "$PART_VER"    "$OFF_VER"    "$LEN_VER")"; }
 p_tamper()  { le32      "$(hex_at "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"; }
 p_secure()  { le32      "$(hex_at "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"; }
 p_bl()      { h=$(hex_at "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")
-	case "$h" in 48544355) printf "HTCU (unlocked)";;
-	             00000000) printf "00000000 (locked)";;
+	case "$h" in 48544355) printf "HTCU";;
+	             00000000) printf "00000000";;
 	             *) printf "%s" "$h";; esac; }
 
 raw_line() { # part offset len -> the replayable line `restore` consumes
@@ -612,7 +612,7 @@ cmd_status() {
 	printf '%-9s %-12s %s @ 0x%x\n' secure   "$(p_secure)"  "$PART_SECURE" "$((OFF_SECURE))"
 	printf '%-9s %-12s %s @ 0x%x\n' "BL lock" "$(bl_state)" "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
 	say ""
-	printf '%-9s %s\n' modules  "$(devsh "cat /proc/sys/kernel/modules_disabled 2>/dev/null" | tr -d '\r') (0 = allowed)"
+	printf '%-9s %s\n' modules  "$(devsh "cat /proc/sys/kernel/modules_disabled 2>/dev/null" | tr -d '\r')"
 	printf '%-9s %s\n' selinux  "$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')"
 }
 
@@ -771,7 +771,9 @@ cmd_soff() {
 	sleep 3
 
 	# adb shell always exits 0 on this Android version, so ask for output.
-	[ "$(devsh 'test -b /dev/block/mmcblk0p2 && echo present')" = present ] ||
+	# Ask for the secure partition by name: its p-number is not portable, and on
+	# another model it is not p2.
+	[ "$(devsh "test -b $DEV/$PART_SECURE && echo present")" = present ] ||
 		die "eMMC did not come back - hold power ~10s, then retry"
 
 	say ""

@@ -21,7 +21,7 @@ hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规�
 
 ## 快速开始
 
-下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反：重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。`stool.sh status`、`soff` 和 `son` 会自己探测 root；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。[期望输出与故障处理](#期望输出与故障处理)。
+下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反：重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。每个 `stool.sh` 命令都会自己探测 root（Magisk 的 `su`、adb root 或 userdebug 固件）；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。[期望输出与故障处理](#期望输出与故障处理)。
 
 ```sh
 # 0. 检查 root、S 状态、modules_disabled、SELinux
@@ -55,7 +55,7 @@ scripts/stool.sh status                  # S 状态 + 全部参数（Android 或
 scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup                  # 五个整分区 + 参数，约 144 MB
-scripts/stool.sh restore <ts>            # 如 restore 20261104-031826
+scripts/stool.sh restore <timestamp>     # 如 restore 20261104-031826
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
@@ -65,18 +65,18 @@ scripts/stool.sh lock                    # BL magic -> 锁定
 scripts/stool.sh unlock                  # BL magic -> 解锁
 scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
 scripts/stool.sh noredtext --restore <hboot.img>
-scripts/stool.sh splash photo.png        # 换开机第一屏，默认 1080x1920
+scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 targets.conf
 scripts/stool.sh splash photo.png --size=1440x2560     # 其它分辨率的屏
 scripts/stool.sh splash --restore <sp1.img>
 ```
 
 每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
-每个命令都会先读 S 状态。没有任何操作会自动备份：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <时间戳>` 再把那些 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的镜像，手机就回到 S-ON。
+每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <timestamp>` 再把那些 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的镜像，手机就回到 S-ON。不打招呼就 dump 的只有 `noredtext` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
 
-`set secure` 就是 `soff` 最后一步的那次写入，单独跑：写 `0x8400`，再回读，不断电也不重启。S-ON 时写 `0` 会先探测 `mmc_cmd wp`：只有真的还有写保护才拒绝；位图全零（[移植](#8-移植) A 档那种旧 hboot）就照写。已 S-OFF 的机器上，它用来在还原 `pg1fs.img` 之后把 `00` 补回去。
+`set secure` 就是 `soff` 最后一步的那次写入，单独跑：写 `0x8400`，再回读，不断电也不重启。S-ON 时写 `0` 会先探测 `mmc_cmd wp`：只有真的还有写保护才拒绝；位图全零（[移植](#8-移植) A 档那种旧 hboot）就照写。已 S-OFF 的机器上，还原了一份 S-ON 时期拍的 `pg1fs.img` 之后，也用它把 `00` 写回去。
 
 `lock` / `unlock` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不需要在官网申请的解锁码了；也不走 `fastboot oem lock`：那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
 
@@ -108,7 +108,7 @@ MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Ed
 
 ### 第一屏
 
-`splash` 把 PNG 转成 `sp1` 分区真正的格式：小端 RGB565，默认 1080x1920（4,147,200 字节），`--size=WxH` 可以改成其它尺寸；分区其余部分是填充。写之前会先拿帧大小和分区大小比一遍，装不下就直接停。
+`splash` 把 PNG 转成 `sp1` 分区真正的格式：小端 RGB565，尺寸取 `targets.conf` 里该机型那一项（M8 上是 1080x1920，4,147,200 字节），`--size=WxH` 可以改成其它尺寸；分区其余部分是填充。写之前会先拿帧大小和分区大小比一遍，装不下就直接停。
 
 转换由 `scripts/png2rgb565.py` 完成，刻意只用标准库：精简的 Windows 环境里没有 ffmpeg、没有 PIL、没有 ImageMagick。支持非隔行 8 位 PNG 的灰度、灰度+alpha、RGB、RGBA 和调色板，缩放用双线性；其它格式会明确报错而不是生成一张错图（JPG 也一样，先另存成 PNG）。
 
@@ -344,9 +344,10 @@ S-OFF 状态就是 `pg1fs` 里的一个字节：
 | 偏移 | 含义 | S-ON | S-OFF |
 |---|---|---|---|
 | `0x8400` | secure flag（u32 LE） | `03 00 00 00` | `00 00 00 00` |
-| `0x8404` | BL 状态 magic | `HTCU` 解锁 / `00000000` 锁定 | 不变 |
 
 `fastboot oem readsecureflag` 读的就是这个值，`getvar all` 里的 `version-misc: PVT SHIP S-ON/S-OFF` 和 `security: on/off` 也都是从它推出来的。
+
+`0x8404` 那 4 个字节是另一个字段：bootloader 的锁状态，`HTCU` 解锁、`00000000` 锁定。它不跟 S 状态走，S-ON 的机器可以是解锁的；`lock` / `unlock` 也只动这 4 个字节。
 
 以 root 身份写这个字节会失败，原因既不是 SELinux 也不是文件系统：hboot 每次开机都给固件分区加上 eMMC 的 **power-on 写保护**。`CMD31`（SEND_WRITE_PROT_TYPE）按每 2 bit 一组报告类型：
 
@@ -440,7 +441,7 @@ dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 
 ## 期望输出与故障处理
 
-按执行顺序列出每条命令：什么输出说明它成了，以及对应会卡在哪。
+快速开始的每一步，按执行顺序：什么输出说明它成了，以及对应会卡在哪。
 
 ### `stool.sh status`
 
@@ -448,7 +449,7 @@ dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 == state ==
 target  : m8  [htc_m8, hboot 3.19.*]
 S state : S-ON  (secure_flag 3)
-BL state: unlocked (pg1fs 0x8404 = HTCU (unlocked))
+BL state: unlocked (pg1fs 0x8404 = HTCU)
 
 == parameters ==
 CID       11111111     board_info @ 0x14
@@ -458,7 +459,7 @@ tamper    0            pg2fs @ 0x511804
 secure    3            pg1fs @ 0x8400
 BL lock   unlocked     pg1fs @ 0x8404
 
-modules   0 (0 = allowed)
+modules   0
 selinux   Enforcing
 ```
 
@@ -491,6 +492,19 @@ pwrsq_on: (no undefined symbols)
 ```
 
 三个模块一个符号都不导入：所有内核函数都走 `addr.h`。`build.sh` 会在 `addr.h` 缺失、或仍是 `0x00000000UL` 占位值时停下。`make -C tools` 产出 `tools/mmc_cmd`，没有它 `soff` 会拒绝启动：判断断电是否生效只有这一个依据。
+
+### `backup`
+
+```
+  pg1fs        124746752 bytes
+  board_info       16384 bytes
+  mfg             262144 bytes
+  pg2fs         24837120 bytes
+  misc           1048576 bytes
+/path/to/repo/backup/20261104-031826.txt
+```
+
+每个分区一行打到 stderr，最后一行是 txt 的路径（stdout）。整套约 144 MB，走 USB 大概一分钟。某个分区读不出来会打 `warning: could not dump <分区>` 然后继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
 
 ### `soff`
 
@@ -525,7 +539,7 @@ adb shell 'su -c "mount -o remount,ro /data"'
 
 `== power cycle ==`：`SEQ_DONE`。重扫本身的日志在 `dmesg | grep mmc_reinit_card` 里。
 
-`/dev/block/mmcblk0p2` 没回来时，`soff` 停在 `eMMC did not come back - hold power ~10s, then retry`。断电失败不会造成永久损坏（flag 要到后面的阶段才写），所以：
+`pg1fs` 这个节点没回来时，`soff` 停在 `eMMC did not come back - hold power ~10s, then retry`。断电失败不会造成永久损坏（flag 要到后面的阶段才写），所以：
 
 1. 等 10 秒：`mmc_detect_change()` 是丢到 workqueue 上跑的。
 2. `adb shell 'dmesg | tail -40'`，找 `mmc_reinit_card`、`AUTO CMD err`、`Controller never released inhibit bit(s)`。
@@ -561,6 +575,25 @@ adb shell 'dmesg | grep -i "card status"'
 ### `son`
 
 同一条流程的反向：`pg1fs 0x8400 = 3`、`secure_flag: 3`、`done - S-ON (write protection comes back on the next boot)`。这一步的 bootloader 检查只告警（`expected 3, got ...`），因为那时 flag 已经写进去并回读过了。
+
+### `restore`
+
+```
+== plan ==
+  board_info       16384 bytes  20261104-031826.board_info.img
+  mfg             262144 bytes  20261104-031826.mfg.img
+  misc           1048576 bytes  20261104-031826.misc.img
+  pg1fs        124746752 bytes  20261104-031826.pg1fs.img
+  pg2fs         24837120 bytes  20261104-031826.pg2fs.img
+
+== write ==
+writing 124746752 bytes to pg1fs
+  pg1fs  md5 295030502f88c51880c33a86d9a26cf4  ok
+...
+== state after ==
+```
+
+`plan` 列出那个时间戳下找到的全部镜像；大小和分区对不上的会在这一步停下。每个分区写完立刻回读算 md5，对不上就不再往下走。没有对应镜像的分区会出现在告警里、原样不动；不属于本工具管理的镜像（旧备份里的 `radio.img`）同样跳过。
 
 ### 不要做
 
@@ -683,7 +716,7 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 
 ## 许可证
 
-Copyright (C) 2026 the S-OFF-My-One-M8 contributors。两套许可证，按文件来源分：
+Copyright (C) 2026 the S-OFF-My-One-M8 contributors. 两套许可证，按文件来源分：
 
 | 路径 | 许可证 | 原因 |
 |---|---|---|
