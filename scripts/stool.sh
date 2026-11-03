@@ -19,7 +19,7 @@
 #
 # Every command reads the current S state first.  Nothing is backed up
 # automatically: `backup` writes one image per partition plus a readable txt, and
-# `restore` writes a single image back by name.
+# `restore` writes a single image back, picking the partition from its size.
 #
 # Where each parameter lives is not fixed here.  targets.conf holds one section
 # per partition layout and the script picks one by comparing the sizes the
@@ -839,6 +839,19 @@ cmd_son() {
 
 # ---------------------------------------------------------------- restore
 
+writable_parts() { # the partitions restore can write, in targets.conf order
+	printf '%s\n' "$PART_SECURE" "$PART_CID" "$PART_MID" "$PART_TAMPER" \
+		"$PART_VER" "$PART_HBOOT" "$PART_SPLASH"
+}
+
+part_bytes() { # name -> size in bytes; fails when the partition is absent
+	pb_sectors=$(part_sectors "$1")
+	case "$pb_sectors" in
+	"" | - | *[!0-9]*) return 1 ;;
+	esac
+	printf '%s' "$(( pb_sectors * 512 ))"
+}
+
 cmd_restore() { # <file.img> - write one saved partition image back
 	img=${1:-}
 	if [ -z "$img" ]; then
@@ -861,37 +874,72 @@ cmd_restore() { # <file.img> - write one saved partition image back
 	[ -f "$img" ] || die "no such file: $img"
 
 	name=${img##*/}
-	case "$name" in
-	*.img) ;;
-	*) die "not a partition image: $name (expected <anything>.<partition>.img)" ;;
-	esac
+	fsize=$(wc -c < "$img" | tr -d ' ')
 
-	# the partition names come from targets.conf, so the table has to be loaded
-	# before the filename can be checked against them
 	require_android
-	# <stamp>.<partition>.img - the suffix, not the stamp, says what it is
-	part=${name%.img}
-	part=${part##*.}
-	case "$part" in
-	"$PART_SECURE" | "$PART_CID" | "$PART_MID" | "$PART_TAMPER" | "$PART_VER" | \
-	"$PART_HBOOT" | "$PART_SPLASH") ;;
-	*)
-		die "'$part' is not a partition this tool writes.  The name decides:
-  <anything>.$PART_SECURE.img   <anything>.$PART_CID.img   <anything>.$PART_MID.img
-  <anything>.$PART_TAMPER.img   <anything>.$PART_VER.img
-  <anything>.$PART_HBOOT.img   <anything>.$PART_SPLASH.img"
-		;;
-	esac
+
+	# An image this command can write is exactly one whole partition, so its
+	# length is that partition's length.  Identify it by that: the name is a
+	# label, and a renamed or truncated copy cannot land on the wrong partition.
+	parts=$(writable_parts)
+	cands=
+	for p in $parts; do
+		b=$(part_bytes "$p") || continue
+		[ "$b" = "$fsize" ] && cands="$cands $p"
+	done
+
+	# the filename still gets a vote, for layouts where two partitions are the
+	# same length and for catching a file that was renamed to the wrong one
+	claim=
+	leaf=${name%.img}
+	[ "$leaf" = "$name" ] || leaf=${leaf##*.}
+	for p in $parts; do
+		[ "$leaf" = "$p" ] && claim=$p
+	done
+	# a name that is a real partition here but not one this tool writes: refuse it
+	# even when the size happens to match, because the content is the other one's
+	if [ -z "$claim" ]; then
+		b=$(part_bytes "$leaf")
+		[ -n "$b" ] &&
+			die "$leaf is a real partition ($b bytes) but not one this tool writes"
+	fi
+
+	part=
+	if [ -n "$claim" ]; then
+		case " $cands " in
+		*" $claim "*) part=$claim ;;
+		*)
+			b=$(part_bytes "$claim") ||
+				die "$name says $claim, which is not on this device"
+			die "$name says $claim, but that partition is $b bytes and this file is $fsize"
+			;;
+		esac
+	fi
+	if [ -z "$part" ]; then
+		set -- $cands
+		case $# in
+		1) part=$1 ;;
+		0)
+			printf 'error: no partition this tool writes is %s bytes\n' "$fsize" >&2
+			printf '  %-11s %10s\n' partition bytes >&2
+			for p in $parts; do
+				b=$(part_bytes "$p") || b=absent
+				printf '  %-11s %10s\n' "$p" "$b" >&2
+			done
+			exit 1
+			;;
+		*)
+			die "$fsize bytes matches $# partitions this tool writes:$cands - name the one you mean, e.g. <anything>.<partition>.img"
+			;;
+		esac
+	fi
+
 	[ "$(secure_state)" = off ] ||
 		die "restoring a whole partition needs S-OFF - they are write protected while S-ON"
 
-	want=$(devsh "blockdev --getsize64 $DEV/$part 2>/dev/null" | tr -d '\r')
-	got=$(wc -c < "$img" | tr -d ' ')
-	[ -z "$want" ] || [ "$got" = "$want" ] ||
-		die "$name is $got bytes but $part is $want - refusing a mismatched image"
-
 	say "== $part =="
-	printf '  %s  %s bytes  %s\n' "$part" "$got" "$name"
+	if [ -n "$claim" ]; then how="name and size"; else how="size"; fi
+	printf '  %s  %s bytes  %s  (by %s)\n' "$part" "$fsize" "$name" "$how"
 	flash_part "$part" "$img"
 
 	# the image is the truth here: read the partition back and compare

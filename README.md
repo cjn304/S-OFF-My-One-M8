@@ -57,7 +57,7 @@ adb shell 'mount -t debugfs none /sys/kernel/debug'
 scripts/stool.sh backup
 scripts/stool.sh soff
 
-# 4. write one partition image back, by name
+# 4. write a saved partition image back
 scripts/stool.sh restore 20261104-045201.mfg.img
 ```
 
@@ -846,7 +846,7 @@ written and read back by then.
 
 ```
 == mfg ==
-  mfg  262144 bytes  20261104-045201.mfg.img
+  mfg  262144 bytes  20261104-045201.mfg.img  (by name and size)
 writing 262144 bytes to mfg
 64+0 records in
 64+0 records out
@@ -854,11 +854,17 @@ writing 262144 bytes to mfg
   md5 e8301cf5c9c5873972846d54c7cd7040  ok
 ```
 
-One file per run. The partition comes from the name, which is
-`<anything>.<partition>.img`: `20261104-045201.mfg.img`,
-`backup/20261104-045201.mfg.img` and `/tmp/old.mfg.img` all work. The image must
-be exactly the size of that partition, or the run stops before writing. After
-the write, md5 of the image is compared with md5 read back from the partition.
+One file per run. A restorable image is exactly one whole partition, so its
+length is that partition's length: 262144 bytes can only be `mfg`, 124746752
+only `pg1fs`. That is what decides, not the filename - `whatever.img`, renamed
+and moved out of `backup/`, still restores `mfg`. After the write, md5 of the
+image is compared with md5 read back from the partition.
+
+The name is a check, never the decision. If it names a partition this tool
+writes and the length disagrees, the run stops: `x.pg1fs.img` holding 262144
+bytes. If it names a partition that exists here but is not one of the seven, it
+stops too - `x.radio.img` included. Only on a layout where two partitions are
+the same length does the name pick between them.
 
 Nothing else is touched: restoring `pg1fs` does not touch `hboot`, and vice
 versa. `hboot` and `sp1` are restored the same way, which is why `noredtext` and

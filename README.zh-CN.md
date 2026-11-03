@@ -40,7 +40,7 @@ adb shell 'mount -t debugfs none /sys/kernel/debug'
 scripts/stool.sh backup
 scripts/stool.sh soff
 
-# 4. 按文件名写回一个分区镜像
+# 4. 写回一个分区镜像
 scripts/stool.sh restore 20261104-045201.mfg.img
 ```
 
@@ -578,7 +578,7 @@ adb shell 'dmesg | grep -i "card status"'
 
 ```
 == mfg ==
-  mfg  262144 bytes  20261104-045201.mfg.img
+  mfg  262144 bytes  20261104-045201.mfg.img  (按名字和大小)
 writing 262144 bytes to mfg
 64+0 records in
 64+0 records out
@@ -586,7 +586,9 @@ writing 262144 bytes to mfg
   md5 e8301cf5c9c5873972846d54c7cd7040  ok
 ```
 
-一次一个文件。分区名从文件名读出来，格式是 `<任意>.<分区>.img`，所以 `20261104-045201.mfg.img`、`backup/20261104-045201.mfg.img`、`/tmp/old.mfg.img` 都能用；镜像大小必须正好等于那个分区，否则在写入前就停下。写完回读分区算 md5，与镜像比对。
+一次一个文件。能还原的镜像正好是一个完整分区，所以它的长度就是那个分区的长度：262144 字节只可能是 `mfg`，124746752 只可能是 `pg1fs`。决定写到哪里的是这个，不是文件名。`20261104-045201.mfg.img`、`backup/20261104-045201.mfg.img`、`/tmp/old.mfg.img`，甚至改名成 `whatever.img` 的副本，还原的都是 `mfg`。写完回读分区算 md5，与镜像比对。
+
+文件名只用来核对，不参与决定。名字是本工具会写的那七个分区之一、长度又对不上，直接停下：比如一个 262144 字节的文件叫 `x.pg1fs.img`。名字是这台机器上真实存在、但本工具不写的分区，同样停下，`x.radio.img` 也算。只有当布局里有两个分区长度相同时，名字才用来区分这两者。
 
 别的一概不动：还原 `pg1fs` 不碰 `hboot`，反之亦然。`hboot` 和 `sp1` 也走同一条命令，所以 `noredtext` 和 `splash` 各自那个 `--restore` 已经去掉。
 
