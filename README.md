@@ -74,6 +74,7 @@ scripts/stool.sh status                  # S state + every parameter (Android or
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup                  # five partitions + parameters, ~144 MB
+scripts/stool.sh backup misc             # one partition, one image
 scripts/stool.sh restore <partition> <file.img>   # e.g. restore pg2fs 20261104-045201.pg2fs.img
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
@@ -738,6 +739,18 @@ One line per partition on stderr, the txt path on stdout. The whole set is
 about 144 MB and takes roughly a minute over USB. A partition that cannot be
 read gives `warning: could not dump <part>` and the run continues; a short image
 gives `<part>: expected N bytes, got M`.
+
+Name a partition and you get that one image instead, with no txt:
+
+```sh
+scripts/stool.sh backup misc
+  misc           1048576 bytes
+/path/to/repo/backup/20261104-072924.misc.img
+```
+
+Anything on the phone can be dumped this way, not just the five. It needs no
+S-OFF - reading a partition never does - and it is what `noredtext` and
+`splash` call before they overwrite the partition they are about to change.
 
 ### `soff`
 

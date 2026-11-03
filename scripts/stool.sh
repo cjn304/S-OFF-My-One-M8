@@ -6,7 +6,7 @@
 #   stool.sh status                 show S state and every parameter
 #   stool.sh soff                   full S-OFF (power cycle + write flag)
 #   stool.sh son                    back to S-ON
-#   stool.sh backup                 parameters + one image per partition
+#   stool.sh backup [partition]     all of it, or one partition as one image
 #   stool.sh restore <partition> <file.img>
 #                                   write one saved image back
 #   stool.sh lock                  write the BL magic = locked   (S-OFF only)
@@ -562,10 +562,33 @@ target_parts() { # partitions a backup covers, deduped (pg1fs carries two fields
 		awk 'NF && !seen[$0]++'
 }
 
-cmd_backup() {
+dump_one() { # part dest-file -> one line on stderr, fails when the dump did not land
+	want=$(devsh "blockdev --getsize64 $DEV/$1 2>/dev/null" | tr -d '\r')
+	dump_part "$1" "$2" || return 1
+	got=$(wc -c < "$2" | tr -d ' ')
+	printf '  %-11s %10s bytes\n' "$1" "$got" >&2
+	if [ -n "${want:-}" ] && [ "$want" != "$got" ]; then
+		warn "$1: expected $want bytes, got $got"
+	fi
+}
+
+cmd_backup() { # [partition] - every partition plus the txt, or just the one
+	[ $# -le 1 ] || die "usage: stool.sh backup [partition]"
 	require_android ro
 	mkdir -p "$BACKUP_DIR"
 	ts=$(date +%Y%m%d-%H%M%S)
+
+	# one partition: a single image, no txt - this is also what noredtext and
+	# splash call before they overwrite theirs
+	if [ -n "${1:-}" ]; then
+		b=$(part_bytes "$1")
+		[ -n "$b" ] || die "no partition named $1 on this device"
+		img=$BACKUP_DIR/$ts.$1.img
+		dump_one "$1" "$img" || die "could not dump $1"
+		printf '%s\n' "$img"
+		return 0
+	fi
+
 	f=$BACKUP_DIR/$ts.txt
 	snapshot_write "$f"
 	[ -s "$f" ] || die "backup failed"
@@ -576,17 +599,10 @@ cmd_backup() {
 	# its own.  Radio is never written here, so it is not dumped.  The names come
 	# from targets.conf; pg1fs appears twice there (flag and BL magic), so dedupe.
 	for part in $(target_parts); do
-		img=$BACKUP_DIR/$ts.$part.img
-		want=$(devsh "blockdev --getsize64 $DEV/$part 2>/dev/null" | tr -d '\r')
-		if ! dump_part "$part" "$img"; then
+		dump_one "$part" "$BACKUP_DIR/$ts.$part.img" || {
 			warn "could not dump $part"
 			continue
-		fi
-		got=$(wc -c < "$img" | tr -d ' ')
-		printf '  %-11s %10s bytes\n' "$part" "$got" >&2
-		if [ -n "${want:-}" ] && [ "$want" != "$got" ]; then
-			warn "$part: expected $want bytes, got $got"
-		fi
+		}
 	done
 
 	printf '%s\n' "$f"
@@ -944,12 +960,9 @@ cmd_noredtext() {
 		die "writing hboot needs S-OFF - the partition is write protected while S-ON"
 
 	say "== dump =="
-	mkdir -p "$BACKUP_DIR"
-	ts=$(date +%Y%m%d-%H%M%S)
-	hb=$BACKUP_DIR/$ts.$PART_HBOOT.img
-	dump_part "$PART_HBOOT" "$hb" || die "could not dump the $PART_HBOOT partition"
+	hb=$(cmd_backup "$PART_HBOOT")
 	sz=$(wc -c < "$hb" | tr -d ' ')
-	say "hboot  : $hb ($sz bytes)"
+	say "saved  : $hb"
 	[ "$sz" = "$HB_BYTES" ] || die "$PART_HBOOT dump is $sz bytes, expected $HB_BYTES - aborting"
 
 	say ""
@@ -1033,11 +1046,8 @@ cmd_splash() {
 
 	say ""
 	say "== dump =="
-	mkdir -p "$BACKUP_DIR"
-	ts=$(date +%Y%m%d-%H%M%S)
-	sp=$BACKUP_DIR/$ts.$PART_SPLASH.img
-	dump_part "$PART_SPLASH" "$sp" || die "could not dump the $PART_SPLASH partition"
-	say "$PART_SPLASH : $sp ($(wc -c < "$sp" | tr -d ' ') bytes)"
+	sp=$(cmd_backup "$PART_SPLASH")
+	say "saved  : $sp"
 
 	say ""
 	say "== write =="
@@ -1076,7 +1086,7 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh status
   stool.sh soff
   stool.sh son
-  stool.sh backup
+  stool.sh backup [partition]
   stool.sh restore <partition> <file.img>
                                    write one saved image back
   stool.sh set cid <8 chars>
@@ -1104,7 +1114,7 @@ case "$cmd" in
 status)  cmd_status ;;
 soff)    cmd_soff ;;
 son)     cmd_son ;;
-backup)  cmd_backup ;;
+backup)  cmd_backup "$@" ;;
 restore) cmd_restore "$@" ;;
 set)     cmd_set "$@" ;;
 lock)    [ $# -eq 0 ] || die "usage: stool.sh lock"

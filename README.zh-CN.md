@@ -55,6 +55,7 @@ scripts/stool.sh status                  # S 状态 + 全部参数（Android 或
 scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup                  # 五个整分区 + 参数，约 144 MB
+scripts/stool.sh backup misc             # 单个分区，一个镜像
 scripts/stool.sh restore <partition> <file.img>   # 如 restore pg2fs 20261104-045201.pg2fs.img
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
@@ -503,6 +504,16 @@ pwrsq_on: (no undefined symbols)
 ```
 
 每个分区一行打到 stderr，最后一行是 txt 的路径（stdout）。整套约 144 MB，走 USB 大概一分钟。某个分区读不出来会打 `warning: could not dump <分区>` 然后继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
+
+写出分区名就只备份那一个，不写 txt：
+
+```sh
+scripts/stool.sh backup misc
+  misc           1048576 bytes
+/path/to/repo/backup/20261104-072924.misc.img
+```
+
+这台手机上的任何分区都能这样 dump，不限于那五个。它不需要 S-OFF（读分区从来不需要），`noredtext` 和 `splash` 在覆盖自己要改的那个分区之前，调用的就是它。
 
 ### `soff`
 
