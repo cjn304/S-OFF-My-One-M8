@@ -55,7 +55,7 @@ scripts/stool.sh status                  # S 状态 + 全部参数（Android 或
 scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup                  # 五个整分区 + 参数，约 144 MB
-scripts/stool.sh restore <时间戳>        # 把 backup/<时间戳>.*.img 写回
+scripts/stool.sh restore <时间戳>        # 如 restore 20261104-031826
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
@@ -72,7 +72,7 @@ scripts/stool.sh splash --restore <sp1.img>
 
 每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
-每个命令都会先读 S 状态。没有任何操作会自动备份：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <时间戳>` 再把那些 img 写回去。留作退路的备份，是你特意做的那一份。
+每个命令都会先读 S 状态。没有任何操作会自动备份：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <时间戳>` 再把那些 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的镜像，手机就回到 S-ON。留作退路的备份，是你特意做的那一份。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
 
@@ -91,7 +91,7 @@ scripts/stool.sh splash --restore <sp1.img>
 | `<ts>.pg2fs.img` | 整个 p6，tamper flag 在这里 | 24 MB |
 | `<ts>.misc.img` | 整个 p24，version-main 在这里 | 1 MB |
 
-`restore <时间戳>` 负责把五个 img 写回去，txt 只是给人看的记录。`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留：CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 144 MB，走 USB 大概一分钟。
+txt 只是给人看的记录。`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留：CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 144 MB，走 USB 大概一分钟。
 
 ### CID、MID 和刷机的关系
 
@@ -564,7 +564,7 @@ adb shell 'dmesg | grep -i "card status"'
 
 ### 不要做
 
-* **不要 `fastboot flash` 固件分区。** S-ON 状态下 hboot 对每一个都验签并拒绝，这正是本工具要绕的行为，也是保护你不会刷进坏镜像的东西。
+* **不要 `fastboot flash` 固件分区。** S-ON 时 hboot 会逐个核对它们的 HTC 签名，签不上就拒绝写入，这道检查同时也挡住了坏镜像和别的机型的镜像。S-OFF 之后它不再核对，`fastboot flash pg1fs ...` 会把你给的文件整块写进去，写坏了没有下一道关。本工具只改几个核过的偏移，并且先留 dump；整块刷写两样都没有。
 * **`pg1fs` 里除了 `0x8400` 什么都不要写。** `0x400` 的头部描述三条记录（`security`、`simlock`、`simunlock`），`0x424`/`0x824`/`0xc24` 那 4 字节是设备相关的，这里刻意没动。
 * **不要在 `/data` 正在写的时候做断电上电。** panic 还能恢复，写坏一半的 ext4 日志不一定。
 
@@ -665,7 +665,7 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 * 断电之前把 `/data` 挂成只读，或者至少停掉框架。`/data` 是 `errors=panic`，往已断电的 eMMC 写一次就会 panic。
 * eMMC 如果没重新枚举，手机要手动断电才能再启动。数据不会丢，但你需要能够碰到机器。
 * `stool.sh backup` 之所以存在，是因为"应该不会出事"不叫恢复方案。镜像留在电脑上，不要留在手机里。
-* 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。`restore` 也会改它，而且不会问：`pg1fs.img` 里的状态说了算，还原一份 S-ON 时期的镜像，手机就回到 S-ON。真正没法原地撤销的是改过的 `hboot`（`noredtext`），回 S-ON 之前先把 dump 的镜像写回去。
+* 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。真正没法原地撤销的是改过的 `hboot`（`noredtext`），回 S-ON 之前先把 dump 的镜像写回去。
 
 不提供任何形式的担保；作者不对数据丢失或保修失效负责。刷坏了自负。
 

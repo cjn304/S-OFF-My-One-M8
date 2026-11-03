@@ -74,7 +74,7 @@ scripts/stool.sh status                  # S state + every parameter (Android or
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup                  # five partitions + parameters, ~144 MB
-scripts/stool.sh restore <timestamp>     # write backup/<ts>.*.img back
+scripts/stool.sh restore <timestamp>     # e.g. restore 20261104-031826
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
@@ -98,7 +98,9 @@ section is refused before anything is written - see
 Every command reads the S state first. Nothing is snapshotted automatically:
 `backup` writes `backup/<timestamp>.{txt,img}` - five whole partitions plus a
 txt with a readable summary - and `restore <timestamp>` writes those images
-back. The backup you fall back on is one you took on purpose.
+back, `0x8400` among them. The flag inside the image wins, so restoring a set
+taken while S-ON puts the phone back to S-ON. The backup you fall back on is one
+you took on purpose.
 
 `set tamper` takes any decimal 0..255, but only `0` and `4` mean anything.
 That byte is the only input to hboot's `Software status:` line: `04` prints
@@ -129,12 +131,12 @@ What a snapshot holds:
 | `<ts>.pg2fs.img` | whole p6 — the tamper flag lives here | 24 MB |
 | `<ts>.misc.img` | whole p24 — version-main lives here | 1 MB |
 
-`restore <timestamp>` writes the five images back; the txt is the record you
-read. `set cid` writes its 8 bytes at `board_info` 0x14 with `dd`, like the
-rest; hboot reads it at boot, so `getvar cidnum` changes only after a reboot.
-The whole p3 image is still kept - the CID sits next to the IMEI and board data
-this tool never touches. Radio (p20) is never written, so it is not dumped. The
-whole set is ~144 MB and takes about a minute over USB.
+The txt is the record you read. `set cid` writes its 8 bytes at `board_info`
+0x14 with `dd`, like the rest; hboot reads it at boot, so `getvar cidnum`
+changes only after a reboot. The whole p3 image is still kept - the CID sits
+next to the IMEI and board data this tool never touches. Radio (p20) is never
+written, so it is not dumped. The whole set is ~144 MB and takes about a
+minute over USB.
 
 ### CID, MID and flashing
 
@@ -823,9 +825,12 @@ written and read back by then.
 
 ### Do not
 
-* **`fastboot flash` a firmware partition.** On an S-ON device hboot verifies
-  signatures on every one of them and refuses — that is the behaviour this tool
-  works around, and also what protects you from a bad image.
+* **`fastboot flash` a firmware partition.** While S-ON, hboot checks the HTC
+  signature of every one of them and refuses anything unsigned, which is also
+  what stops you from writing a corrupt or wrong-model image. After S-OFF that
+  check no longer runs, so `fastboot flash pg1fs ...` writes whatever you give
+  it, whole. This tool writes a few known bytes at offsets it verified and keeps
+  a dump first; a full flash has neither.
 * **Write anything in `pg1fs` other than `0x8400`.** The header at `0x400`
   describes three records (`security`, `simlock`, `simunlock`); the 4 bytes at
   `0x424`/`0x824`/`0xc24` are device-specific and were left untouched here on
@@ -958,11 +963,9 @@ to an eMMC while Android is running is not a supported operation.
 * `stool.sh backup` exists because "should not happen" is not a recovery plan.
   Keep the images on a PC, not on the phone.
 * Writing `0x8400` is the last step and the only one that flips S-ON/S-OFF:
-  `00` = S-OFF, `03` = S-ON, and it can be written back. `restore` does that
-  too, without asking - the flag inside `pg1fs.img` wins, so an image taken
-  while S-ON brings the phone back S-ON. What cannot be undone in place is a
-  modified `hboot` (`noredtext`) — put the dumped image back before returning
-  to S-ON.
+  `00` = S-OFF, `03` = S-ON, and it can be written back. What cannot be undone
+  in place is a modified `hboot` (`noredtext`) — put the dumped image back
+  before returning to S-ON.
 
 No warranty of any kind; the authors are not responsible for data loss or
 voided warranties. If you brick it, you own both halves.
