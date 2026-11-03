@@ -57,8 +57,8 @@ adb shell 'mount -t debugfs none /sys/kernel/debug'
 scripts/stool.sh backup
 scripts/stool.sh soff
 
-# 4. undo: back to S-ON; the write protection returns on the next boot
-scripts/stool.sh son
+# 4. restore a backup
+scripts/stool.sh restore <timestamp>
 ```
 
 ---
@@ -821,28 +821,6 @@ The same run in the other direction: `pg1fs 0x8400 = 3`, `secure_flag: 3`, and
 check only warns - `expected 3, got ...` - because the flag has already been
 written and read back by then.
 
-### Restoring a backup
-
-```sh
-scripts/stool.sh restore 20261102-222222
-```
-
-Takes the timestamp of a `backup/` run and writes every `<ts>.*.img` back to its
-partition. Run with no argument and it lists the stamps it can see. Before
-touching anything it prints the plan - one line per partition with the image
-size - and refuses a file whose size differs from the partition, so a truncated
-image stops the run instead of half-filling a partition. After each write it
-compares md5 of the image with md5 of the partition and exits on a mismatch.
-
-Two things it leaves to you:
-
-- An image missing from the set is skipped with a warning and the partition is
-  left as it is. A set taken before `pg2fs` joined the list has no tamper flag
-  in it.
-- The state inside `pg1fs.img` wins. Restoring an image taken while S-ON writes
-  `03` at `0x8400`, so the phone comes back S-ON: that is one way to undo S-OFF,
-  and also a way to surprise yourself.
-
 ### Do not
 
 * **`fastboot flash` a firmware partition.** On an S-ON device hboot verifies
@@ -980,9 +958,11 @@ to an eMMC while Android is running is not a supported operation.
 * `stool.sh backup` exists because "should not happen" is not a recovery plan.
   Keep the images on a PC, not on the phone.
 * Writing `0x8400` is the last step and the only one that flips S-ON/S-OFF:
-  `00` = S-OFF, `03` = S-ON, and it can be written back. What cannot be undone
-  in place is a modified `hboot` (`noredtext`) — put the dumped image back
-  before returning to S-ON.
+  `00` = S-OFF, `03` = S-ON, and it can be written back. `restore` does that
+  too, without asking - the flag inside `pg1fs.img` wins, so an image taken
+  while S-ON brings the phone back S-ON. What cannot be undone in place is a
+  modified `hboot` (`noredtext`) — put the dumped image back before returning
+  to S-ON.
 
 No warranty of any kind; the authors are not responsible for data loss or
 voided warranties. If you brick it, you own both halves.

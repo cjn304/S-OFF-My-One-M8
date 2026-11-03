@@ -40,8 +40,8 @@ adb shell 'mount -t debugfs none /sys/kernel/debug'
 scripts/stool.sh backup
 scripts/stool.sh soff
 
-# 4. 撤销：回到 S-ON，下次开机会恢复写保护
-scripts/stool.sh son
+# 4. 还原备份
+scripts/stool.sh restore <时间戳>
 ```
 
 ---
@@ -562,19 +562,6 @@ adb shell 'dmesg | grep -i "card status"'
 
 同一条流程的反向：`pg1fs 0x8400 = 3`、`secure_flag: 3`、`done - S-ON (write protection comes back on the next boot)`。这一步的 bootloader 检查只告警（`expected 3, got ...`），因为那时 flag 已经写进去并回读过了。
 
-### 还原备份
-
-```sh
-scripts/stool.sh restore 20261102-222222
-```
-
-参数就是 `backup/` 里那一次的时间戳，它把每个 `<时间戳>.*.img` 写回对应分区。不带参数运行会列出当前能看到的全部时间戳。动手之前先打一份计划（每行一个分区和镜像大小），镜像大小和分区对不上就拒绝，所以截断的文件会停在写入之前。每个分区写完还会拿镜像的 md5 和分区回读的 md5 比对，不一致就退出。
-
-有两件事它不替你做决定：
-
-- 这一批里缺哪个 img，就只告警、那个分区原样不动。在 `pg2fs` 加入备份列表之前做的备份，里面没有 tamper flag。
-- `pg1fs.img` 里的状态说了算。还原一份 S-ON 时期拍的镜像会把 `03` 写回 `0x8400`，手机就回到 S-ON。这是撤销 S-OFF 的一条路，也是容易忽略的一条。
-
 ### 不要做
 
 * **不要 `fastboot flash` 固件分区。** S-ON 状态下 hboot 对每一个都验签并拒绝，这正是本工具要绕的行为，也是保护你不会刷进坏镜像的东西。
@@ -678,7 +665,7 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 * 断电之前把 `/data` 挂成只读，或者至少停掉框架。`/data` 是 `errors=panic`，往已断电的 eMMC 写一次就会 panic。
 * eMMC 如果没重新枚举，手机要手动断电才能再启动。数据不会丢，但你需要能够碰到机器。
 * `stool.sh backup` 之所以存在，是因为"应该不会出事"不叫恢复方案。镜像留在电脑上，不要留在手机里。
-* 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。真正没法原地撤销的是改过的 `hboot`（`noredtext`），回 S-ON 之前先把 dump 的镜像写回去。
+* 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。`restore` 也会改它，而且不会问：`pg1fs.img` 里的状态说了算，还原一份 S-ON 时期的镜像，手机就回到 S-ON。真正没法原地撤销的是改过的 `hboot`（`noredtext`），回 S-ON 之前先把 dump 的镜像写回去。
 
 不提供任何形式的担保；作者不对数据丢失或保修失效负责。刷坏了自负。
 
