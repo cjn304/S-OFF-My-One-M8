@@ -7,7 +7,8 @@
 #   stool.sh soff                   full S-OFF (power cycle + write flag)
 #   stool.sh son                    back to S-ON
 #   stool.sh backup                 parameters + one image per partition
-#   stool.sh restore <file.img>     write one saved partition image back
+#   stool.sh restore <file.img> [partition]
+#                                   write one saved image back
 #   stool.sh lock                  write the BL magic = locked   (S-OFF only)
 #   stool.sh unlock                write the BL magic = unlocked (S-OFF only)
 #   stool.sh set <param> [value]    change one parameter (backs up first)
@@ -241,7 +242,8 @@ EOF
 target_find() { # 0 when a section's layout matches this device; no side effects
 	[ -n "$TARGET" ] && return 0
 	[ -f "$CONF" ] || die "missing $CONF"
-	layout_probe || return 1
+	# 2, not 1: nothing came back from /sys at all, which is not a layout mismatch
+	layout_probe || return 2
 	dump=$(conf_dump)
 	secs=$(printf '%s\n' "$dump" | cut -d'|' -f1 | awk '!seen[$0]++')
 	for s in $secs; do
@@ -268,7 +270,13 @@ target_find() { # 0 when a section's layout matches this device; no side effects
 }
 
 load_target() {
-	target_find && return 0
+	target_find
+	case $? in
+	0) return 0 ;;
+	2)
+		die "could not read the partition table from the device (no /sys/class/block/*/uevent) - adb hiccup? nothing was written"
+		;;
+	esac
 	die "no section in targets.conf matches this device.
   observed:$OBSERVED_LAYOUT
   add a [name] section holding that layout and the offsets from README section 6.
@@ -532,8 +540,8 @@ snapshot_write() { # target file
 		# the stamp the images are named after: <dir>/<stamp>.txt -> <stamp>
 		stamp=${f##*/}
 		stamp=${stamp%.txt}
-		printf '# whole images: %s.*.img, restorable with: stool.sh restore %s\n' \
-			"$stamp" "$stamp"
+		printf '# whole images: %s.<partition>.img   (stool.sh restore <file> [partition])\n' \
+			"$stamp"
 		printf 'secure=%s/%s\n'  "$(secure_state)" \
 			"$(at_line "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"
 		printf 'BL=%s/%s\n'      "$(bl_state)" \
@@ -839,11 +847,6 @@ cmd_son() {
 
 # ---------------------------------------------------------------- restore
 
-writable_parts() { # the partitions restore can write, in targets.conf order
-	printf '%s\n' "$PART_SECURE" "$PART_CID" "$PART_MID" "$PART_TAMPER" \
-		"$PART_VER" "$PART_HBOOT" "$PART_SPLASH"
-}
-
 part_bytes() { # name -> size in bytes; fails when the partition is absent
 	pb_sectors=$(part_sectors "$1")
 	case "$pb_sectors" in
@@ -852,10 +855,12 @@ part_bytes() { # name -> size in bytes; fails when the partition is absent
 	printf '%s' "$(( pb_sectors * 512 ))"
 }
 
-cmd_restore() { # <file.img> - write one saved partition image back
+cmd_restore() { # <file.img> [partition] - write one saved partition image back
 	img=${1:-}
+	part=${2:-}
 	if [ -z "$img" ]; then
-		say "usage: stool.sh restore <file.img>    e.g. restore 20261104-045201.mfg.img"
+		say "usage: stool.sh restore <file.img> [partition]"
+		say "  e.g. restore 20261104-045201.pg2fs.img"
 		say ""
 		files=$(ls -1 "$BACKUP_DIR"/*.img 2>/dev/null)
 		if [ -n "$files" ]; then
@@ -878,58 +883,30 @@ cmd_restore() { # <file.img> - write one saved partition image back
 
 	require_android
 
-	# An image this command can write is exactly one whole partition, so its
-	# length is that partition's length.  Identify it by that: the name is a
-	# label, and a renamed or truncated copy cannot land on the wrong partition.
-	parts=$(writable_parts)
-	cands=
-	for p in $parts; do
-		b=$(part_bytes "$p") || continue
-		[ "$b" = "$fsize" ] && cands="$cands $p"
-	done
+	# A restorable image is exactly one whole partition, so its length is that
+	# partition's length.  Every partition on the device is a candidate, not only
+	# the ones this tool writes.  The filename is not consulted at all.
+	cands=$(printf '%s\n' "$LAYOUT_MAP" |
+		awk -v b="$fsize" '$2 * 512 == b { printf "%s ", $1 }')
+	cands=${cands% }
 
-	# the filename still gets a vote, for layouts where two partitions are the
-	# same length and for catching a file that was renamed to the wrong one
-	claim=
-	leaf=${name%.img}
-	[ "$leaf" = "$name" ] || leaf=${leaf##*.}
-	for p in $parts; do
-		[ "$leaf" = "$p" ] && claim=$p
-	done
-	# a name that is a real partition here but not one this tool writes: refuse it
-	# even when the size happens to match, because the content is the other one's
-	if [ -z "$claim" ]; then
-		b=$(part_bytes "$leaf")
-		[ -n "$b" ] &&
-			die "$leaf is a real partition ($b bytes) but not one this tool writes"
-	fi
-
-	part=
-	if [ -n "$claim" ]; then
+	if [ -n "$part" ]; then
 		case " $cands " in
-		*" $claim "*) part=$claim ;;
+		*" $part "*) how="named" ;;
 		*)
-			b=$(part_bytes "$claim") ||
-				die "$name says $claim, which is not on this device"
-			die "$name says $claim, but that partition is $b bytes and this file is $fsize"
+			b=$(part_bytes "$part")
+			[ -n "$b" ] || die "no partition named $part on this device"
+			die "$part is $b bytes and this file is $fsize"
 			;;
 		esac
-	fi
-	if [ -z "$part" ]; then
+	else
 		set -- $cands
 		case $# in
-		1) part=$1 ;;
-		0)
-			printf 'error: no partition this tool writes is %s bytes\n' "$fsize" >&2
-			printf '  %-11s %10s\n' partition bytes >&2
-			for p in $parts; do
-				b=$(part_bytes "$p") || b=absent
-				printf '  %-11s %10s\n' "$p" "$b" >&2
-			done
-			exit 1
-			;;
+		1) part=$1; how="by size" ;;
+		0) die "no partition on this device is $fsize bytes" ;;
 		*)
-			die "$fsize bytes matches $# partitions this tool writes:$cands - name the one you mean, e.g. <anything>.<partition>.img"
+			die "$fsize bytes matches $# partitions: $cands
+  say which one: stool.sh restore $name <partition>"
 			;;
 		esac
 	fi
@@ -937,9 +914,13 @@ cmd_restore() { # <file.img> - write one saved partition image back
 	[ "$(secure_state)" = off ] ||
 		die "restoring a whole partition needs S-OFF - they are write protected while S-ON"
 
+	# by-name is how the device nodes are found; a partition that only exists on
+	# an inserted SD card has no entry here
+	[ "$(devsh "test -e $DEV/$part && echo ok" | tr -d '\r')" = ok ] ||
+		die "$part is not a partition of this phone's eMMC"
+
 	say "== $part =="
-	if [ -n "$claim" ]; then how="name and size"; else how="size"; fi
-	printf '  %s  %s bytes  %s  (by %s)\n' "$part" "$fsize" "$name" "$how"
+	printf '  %s  %s bytes  %s  (%s)\n' "$part" "$fsize" "$name" "$how"
 	flash_part "$part" "$img"
 
 	# the image is the truth here: read the partition back and compare
@@ -974,7 +955,7 @@ cmd_noredtext() {
 	# it used to take --restore; without this guard that word would fall through
 	# to the normal path and patch hboot
 	[ $# -eq 0 ] ||
-		die "noredtext takes no arguments.  To put a saved hboot back: stool.sh restore <stamp>.hboot.img"
+		die "noredtext takes no arguments.  To put a saved hboot back: stool.sh restore <stamp>.hboot.img hboot"
 
 	require_android
 	say "== state before =="
@@ -1028,14 +1009,14 @@ cmd_noredtext() {
 
 	say ""
 	say "six bytes blanked.  Reboot and look at the first screen."
-	say "undo   : stool.sh restore $hb"
+	say "undo   : stool.sh restore $hb $PART_HBOOT"
 }
 
 cmd_splash() {
 	img=${1:-}
 	[ -n "$img" ] || die "usage: stool.sh splash <image.png> [--size=WxH] [--fit=cover|stretch]"
 	[ "$img" != --restore ] ||
-		die "splash --restore is gone.  To put a saved sp1 back: stool.sh restore <stamp>.sp1.img"
+		die "splash --restore is gone.  To put a saved sp1 back: stool.sh restore <stamp>.sp1.img sp1"
 	[ -f "$img" ] || die "no such file: $img"
 	require_android
 	shift
@@ -1103,7 +1084,7 @@ cmd_splash() {
 
 	say ""
 	say "first screen replaced.  Reboot to see it."
-	say "undo   : stool.sh restore $sp"
+	say "undo   : stool.sh restore $sp $PART_SPLASH"
 }
 
 # ---------------------------------------------------------------- main
@@ -1117,7 +1098,8 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh soff
   stool.sh son
   stool.sh backup
-  stool.sh restore <file.img>       write one saved partition image back
+  stool.sh restore <file.img> [partition]
+                                   write one saved image back
   stool.sh set cid <8 chars>
   stool.sh set mid <9 chars>
   stool.sh set version <x.y.z.w>

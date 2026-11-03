@@ -41,7 +41,7 @@ scripts/stool.sh backup
 scripts/stool.sh soff
 
 # 4. 写回一个分区镜像
-scripts/stool.sh restore 20261104-045201.mfg.img
+scripts/stool.sh restore 20261104-045201.pg2fs.img
 ```
 
 ---
@@ -55,7 +55,7 @@ scripts/stool.sh status                  # S 状态 + 全部参数（Android 或
 scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup                  # 五个整分区 + 参数，约 144 MB
-scripts/stool.sh restore <file.img>      # 一次一个分区，如 20261104-045201.mfg.img
+scripts/stool.sh restore <file.img>      # 一次一个分区，如 20261104-045201.pg2fs.img
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
@@ -578,7 +578,7 @@ adb shell 'dmesg | grep -i "card status"'
 
 ```
 == mfg ==
-  mfg  262144 bytes  20261104-045201.mfg.img  (按名字和大小)
+  mfg  262144 bytes  20261104-045201.mfg.img  (按名字)
 writing 262144 bytes to mfg
 64+0 records in
 64+0 records out
@@ -586,9 +586,15 @@ writing 262144 bytes to mfg
   md5 e8301cf5c9c5873972846d54c7cd7040  ok
 ```
 
-一次一个文件。能还原的镜像正好是一个完整分区，所以它的长度就是那个分区的长度：262144 字节只可能是 `mfg`，124746752 只可能是 `pg1fs`。决定写到哪里的是这个，不是文件名。`20261104-045201.mfg.img`、`backup/20261104-045201.mfg.img`、`/tmp/old.mfg.img`，甚至改名成 `whatever.img` 的副本，还原的都是 `mfg`。写完回读分区算 md5，与镜像比对。
+一次一个文件。能还原的镜像正好是一个完整分区，所以它的长度就是那个分区的长度，而长度表由设备给出：`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测。文件名完全不读，`whatever.img` 和 `20261104-045201.pg2fs.img` 还原的是同一个东西。写完回读分区算 md5，与镜像比对。
 
-文件名只用来核对，不参与决定。名字是本工具会写的那七个分区之一、长度又对不上，直接停下：比如一个 262144 字节的文件叫 `x.pg1fs.img`。名字是这台机器上真实存在、但本工具不写的分区，同样停下，`x.radio.img` 也算。只有当布局里有两个分区长度相同时，名字才用来区分这两者。
+长度相同的分区都是候选，不限于本工具写的那七个。M8 上那七个里有五个和别的分区同长：`mfg` 和另外五个，`misc` 和四个，`hboot` 对 `tool_diag`，`sp1` 对 `wcnss`，`board_info` 对 `control`。单看长度分不出来，这些必须写出分区名：
+
+```sh
+scripts/stool.sh restore 20261104-045201.misc.img misc
+```
+
+`pg1fs`、`pg2fs` 和这台机器上其余分区长度都是唯一的，第二个词可以省。名字写了但文件长度对不上，或者那不是这台手机 eMMC 上的分区，都会在写入前停下。
 
 别的一概不动：还原 `pg1fs` 不碰 `hboot`，反之亦然。`hboot` 和 `sp1` 也走同一条命令，所以 `noredtext` 和 `splash` 各自那个 `--restore` 已经去掉。
 

@@ -58,7 +58,7 @@ scripts/stool.sh backup
 scripts/stool.sh soff
 
 # 4. write a saved partition image back
-scripts/stool.sh restore 20261104-045201.mfg.img
+scripts/stool.sh restore 20261104-045201.pg2fs.img
 ```
 
 ---
@@ -74,7 +74,7 @@ scripts/stool.sh status                  # S state + every parameter (Android or
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup                  # five partitions + parameters, ~144 MB
-scripts/stool.sh restore <file.img>      # one partition, e.g. 20261104-045201.mfg.img
+scripts/stool.sh restore <file.img>      # one partition, e.g. 20261104-045201.pg2fs.img
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
@@ -846,7 +846,7 @@ written and read back by then.
 
 ```
 == mfg ==
-  mfg  262144 bytes  20261104-045201.mfg.img  (by name and size)
+  mfg  262144 bytes  20261104-045201.mfg.img  (named)
 writing 262144 bytes to mfg
 64+0 records in
 64+0 records out
@@ -855,16 +855,26 @@ writing 262144 bytes to mfg
 ```
 
 One file per run. A restorable image is exactly one whole partition, so its
-length is that partition's length: 262144 bytes can only be `mfg`, 124746752
-only `pg1fs`. That is what decides, not the filename - `whatever.img`, renamed
-and moved out of `backup/`, still restores `mfg`. After the write, md5 of the
+length is that partition's length, and the table of lengths comes from the
+device: `/sys/class/block/*/uevent`, the same probe that picks the
+`targets.conf` section. The filename is not read at all - `whatever.img`
+restores what `20261104-045201.pg2fs.img` restores. After the write, md5 of the
 image is compared with md5 read back from the partition.
 
-The name is a check, never the decision. If it names a partition this tool
-writes and the length disagrees, the run stops: `x.pg1fs.img` holding 262144
-bytes. If it names a partition that exists here but is not one of the seven, it
-stops too - `x.radio.img` included. Only on a layout where two partitions are
-the same length does the name pick between them.
+Every partition of that length is a candidate, not just the seven this tool
+writes. On the M8 five of the seven share their length with something else:
+`mfg` with five other partitions, `misc` with four, `hboot` with `tool_diag`,
+`sp1` with `wcnss`, `board_info` with `control`. For those the length cannot
+decide, so the partition has to be named:
+
+```sh
+scripts/stool.sh restore 20261104-045201.misc.img misc
+```
+
+`pg1fs`, `pg2fs` and the rest of the phone's partitions have a length of their
+own, so the second word is optional there. Naming a partition the file does not
+fit, or one that is not on this phone's eMMC, stops the run before anything is
+written.
 
 Nothing else is touched: restoring `pg1fs` does not touch `hboot`, and vice
 versa. `hboot` and `sp1` are restored the same way, which is why `noredtext` and
