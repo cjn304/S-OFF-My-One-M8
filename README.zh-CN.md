@@ -512,7 +512,7 @@ scripts/stool.sh backup misc
 /path/to/repo/backup/20261104-072924.misc.img
 ```
 
-这台手机上的任何分区都能这样 dump，不限于那五个。它不需要 S-OFF（读分区从来不需要），`noredtext` 和 `splash` 在覆盖自己要改的那个分区之前，调用的就是它。
+这台手机上的任何分区都能这样 dump，不限于那五个。它不需要 S-OFF（读分区从来不需要），也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能备份。`noredtext` 和 `splash` 在覆盖自己要改的那个分区之前，调用的就是它。
 
 ### `soff`
 
@@ -603,6 +603,8 @@ scripts/stool.sh restore mfg 20261104-045201.mfg.img
 ```
 
 这台手机上的任何分区都能写，不限于本工具写的那七个。唯一的检查是长度：镜像就是一个完整分区，所以必须正好等于那个分区的长度，长度表来自设备（`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测）。文件名完全不读，`whatever.img` 效果一样。长度对不上、分区名不存在、或者那不是这台手机 eMMC 上的分区，都在写入前停下。写完回读分区算 md5，与镜像比对。
+
+和备份不同，`restore` 会加载 `targets.conf`：写分区需要 S-OFF，而那张表正是拿到 S-OFF 的前提。布局没有对应的一节时，它会在写入前报 `no section in targets.conf matches this device` 并停下。
 
 别的一概不动：还原 `pg1fs` 不碰 `hboot`，反之亦然。`hboot` 和 `sp1` 也走同一条命令，所以 `noredtext` 和 `splash` 各自那个 `--restore` 已经去掉。
 

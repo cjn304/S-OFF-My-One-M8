@@ -305,7 +305,7 @@ in_recovery() { # 0 if adbd is a recovery ramdisk rather than Android
 	[ -n "$("$ADB" shell 'getprop ro.twrp.version' 2>/dev/null | tr -d '\r')" ]
 }
 
-require_android() { # $1 = "ro" for commands that never write: skips target_check
+require_android() { # $1: "ro" = never writes, "any" = no targets.conf needed
 	case "$(device_mode)" in
 	android) ;;
 	fastboot)
@@ -314,27 +314,44 @@ require_android() { # $1 = "ro" for commands that never write: skips target_chec
 		die "no device found: check the cable and that adb debugging is on" ;;
 	esac
 	detect_root || die "adb shell is neither root nor able to run su - install Magisk or use a userdebug build"
-	load_target
-	detect_dev || die "no by-name directory containing $PART_SECURE (looked in bootdevice, by-name and platform/*)"
-	[ "${1:-}" = ro ] || target_check
+	# "any" is for commands that work off the device's own partition table - a
+	# whole-partition backup needs no offsets, so it runs on a phone targets.conf
+	# has never heard of
+	if [ "${1:-}" = any ]; then
+		layout_probe ||
+			die "could not read the partition table from the device - adb hiccup? nothing was written"
+	else
+		load_target
+	fi
+	detect_dev || die "no by-name directory${PART_SECURE:+ holding $PART_SECURE} on this device"
+	[ "${1:-}" = ro ] || [ "${1:-}" = any ] || target_check
 }
 
 # The by-name directory moved between SoCs and Android releases:
 #   m8    /dev/block/bootdevice/by-name
 #   pme   /dev/block/platform/soc/7464900.sdhci/by-name
 # probe for a directory that actually contains pg1fs instead of assuming.
+dev_has() { # dir -> 0 when it is a usable by-name directory
+	if [ -n "${PART_SECURE:-}" ]; then
+		devsh "test -e $1/$PART_SECURE && echo ok" 2>/dev/null | tr -d '\r' | grep -qx ok
+	else
+		# no targets.conf: nothing in particular to look for, so any directory
+		# works and the caller names the partition it wants
+		devsh "test -d $1 && echo ok" 2>/dev/null | tr -d '\r' | grep -qx ok
+	fi
+}
+
 detect_dev() {
 	[ -n "$DEV" ] && return 0
-	want=${PART_SECURE:-pg1fs}
 	for c in /dev/block/bootdevice/by-name /dev/block/by-name; do
-		if devsh "test -e $c/$want && echo ok" 2>/dev/null | tr -d '\r' | grep -qx ok; then
+		if dev_has "$c"; then
 			DEV=$c
 			return 0
 		fi
 	done
 	for c in $(devsh "ls -d /dev/block/platform/*/by-name /dev/block/platform/*/*/by-name 2>/dev/null" |
 		tr -d '\r'); do
-		if devsh "test -e $c/$want && echo ok" 2>/dev/null | tr -d '\r' | grep -qx ok; then
+		if dev_has "$c"; then
 			DEV=$c
 			return 0
 		fi
@@ -364,7 +381,7 @@ wait_android() {
 # ---------------------------------------------------------------- byte access
 
 hex_at() { # part offset len -> lowercase hex, no separators
-	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing $PART_SECURE"
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory on this device"
 	# dd on the device wants decimal; callers may pass 0x...
 	off=$(( $2 ))
 	devsh "dd if=$DEV/$1 bs=1 skip=$off count=$3 2>/dev/null" |
@@ -395,7 +412,7 @@ u32hex()   { "$PY" -c 'import sys,struct;print(struct.pack("<I",int(sys.argv[1])
 write_hex() { # part offset hexstring
 	part=$1; off=$(( $2 )); hx=$3
 	[ -n "$part" ] || die "write_hex: no partition given"
-	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing $PART_SECURE"
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory on this device"
 	n=$(( ${#hx} / 2 ))
 	"$PY" - "$hx" > "$STOOL_TMP" <<'EOF'
 import sys, binascii
@@ -415,7 +432,7 @@ verify_hex() { # part offset hexstring -> 0 if the card returns the same bytes
 }
 
 dump_part() { # part dest-file  (whole partition, pulled to the PC)
-	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing $PART_SECURE"
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory on this device"
 	# The double slash is for Git Bash: a single leading /data/... gets
 	# rewritten into a Windows path before adb ever sees it.
 	devsh "dd if=$DEV/$1 of=/data/local/tmp/stool_$1.img bs=4096" >/dev/null 2>&1
@@ -574,7 +591,13 @@ dump_one() { # part dest-file -> one line on stderr, fails when the dump did not
 
 cmd_backup() { # [partition] - every partition plus the txt, or just the one
 	[ $# -le 1 ] || die "usage: stool.sh backup [partition]"
-	require_android ro
+	# one partition needs no targets.conf - the name and the size both come from
+	# the device - so it also runs on a phone whose layout has no section yet
+	if [ -n "${1:-}" ]; then
+		require_android any
+	else
+		require_android ro
+	fi
 	mkdir -p "$BACKUP_DIR"
 	ts=$(date +%Y%m%d-%H%M%S)
 
@@ -938,7 +961,7 @@ cmd_restore() { # <partition> <file.img> - write one saved partition image back
 winpath() { cygpath -w "$1" 2>/dev/null || printf '%s' "$1"; }
 
 flash_part() { # part src-file  (write a whole image; used by restore)
-	[ -n "$DEV" ] || detect_dev || die "no by-name directory containing $PART_SECURE"
+	[ -n "$DEV" ] || detect_dev || die "no by-name directory on this device"
 	say "writing $(wc -c < "$2" | tr -d ' ') bytes to $1"
 	"$ADB" push "$2" //data/local/tmp/stool_flash.img >/dev/null 2>&1 </dev/null || die "adb push failed"
 	devsh "dd if=/data/local/tmp/stool_flash.img of=$DEV/$1 bs=4096 2>&1 | tail -2" >&2
