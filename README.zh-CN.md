@@ -85,11 +85,11 @@ scripts/stool.sh splash --restore <sp1.img>
 | 文件 | 内容 | 大小 |
 |---|---|---|
 | `<timestamp>.txt` | 全部参数的值，连同上一次读到的字节 | 约 0.5 KB |
-| `<timestamp>.pg1fs.img` | 整个 p2，secure flag 在这里 | 119 MB |
-| `<timestamp>.board_info.img` | 整个 p3，CID、IMEI、板级数据 | 16 KB |
-| `<timestamp>.mfg.img` | 整个 p5，MID 在这里 | 256 KB |
-| `<timestamp>.pg2fs.img` | 整个 p6，tamper flag 在这里 | 24 MB |
-| `<timestamp>.misc.img` | 整个 p24，version-main 在这里 | 1 MB |
+| `<timestamp>.pg1fs.img` | p2，secure flag、BL magic 在这里 | 119 MB |
+| `<timestamp>.board_info.img` | p3，CID、IMEI、板级数据在这里 | 16 KB |
+| `<timestamp>.mfg.img` | p5，MID 在这里 | 256 KB |
+| `<timestamp>.pg2fs.img` | p6，status flag 在这里 | 24 MB |
+| `<timestamp>.misc.img` | p24，version-main 在这里 | 1 MB |
 
 txt 只是给人看的记录。`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留：CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 144 MB，走 USB 大概一分钟。
 
@@ -233,14 +233,14 @@ done
 
 `su -c` 是按 Magisk 环境写的；`adb shell` 本身就是 root 时去掉它。
 
-| 字段 | 键 | 位置 | M8 上的值 | 怎么定位的 |
+| 字段 | 键 | M8 上的位置 | M8 上的值 | 怎么定位的 |
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14，8 字符 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
 | MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `modelid` 字符串的 UTF-16LE 编码，每字符 2 字节 |
 | version | `version` | `misc` p24 | 0xA0，16 字节 ASCII | `version-main` 字符串 |
-| tamper | `tamper` | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时读作 4，Official 时是 0 |
+| status | `tamper` | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时读作 4，Official 时是 0 |
 | secure | `secure` | `pg1fs` p2 | 0x8400，u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
-| BL 锁 | `blmagic` | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
+| BL | `blmagic` | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
 | 红字 | `hbootpart` | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
 | 第一屏 | `splash` | `sp1` p12 | 0 | 画面从 0 开始：W x H x 2 字节 |
 
