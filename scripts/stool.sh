@@ -537,13 +537,13 @@ snapshot_write() { # target file
 			"$stamp" "$stamp"
 		printf 'secure=%s/%s\n'  "$(secure_state)" \
 			"$(at_line "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"
-		printf 'bl=%s/%s\n'      "$(bl_state)" \
+		printf 'BL=%s/%s\n'      "$(bl_state)" \
 			"$(at_line "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")"
 		printf 'status=%s/%s\n'  "$(p_status)" \
 			"$(at_line "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"
-		printf 'cid=%s/%s\n'     "$(p_cid)" \
+		printf 'CID=%s/%s\n'     "$(p_cid)" \
 			"$(at_line "$PART_CID" "$OFF_CID" "$LEN_CID")"
-		printf 'mid=%s/%s\n'     "$(p_mid)" \
+		printf 'MID=%s/%s\n'     "$(p_mid)" \
 			"$(at_line "$PART_MID" "$OFF_MID" "$LEN_MID")"
 		printf 'version=%s/%s\n' "$(p_version)" \
 			"$(at_line "$PART_VER" "$OFF_VER" "$LEN_VER")"
