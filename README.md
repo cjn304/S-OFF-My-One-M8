@@ -74,7 +74,7 @@ scripts/stool.sh status                  # S state + every parameter (Android or
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup                  # five partitions + parameters, ~144 MB
-scripts/stool.sh restore <timestamp>     # e.g. restore 20261104-031826
+scripts/stool.sh restore <timestamp>     # e.g. restore 20261102-222222
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
