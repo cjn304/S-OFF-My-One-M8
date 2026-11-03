@@ -41,7 +41,7 @@ scripts/stool.sh backup
 scripts/stool.sh soff
 
 # 4. 还原备份
-scripts/stool.sh restore <ts>
+scripts/stool.sh restore <timestamp>
 ```
 
 ---
@@ -72,7 +72,7 @@ scripts/stool.sh splash --restore <sp1.img>
 
 每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
-每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <timestamp>` 再把那些 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的镜像，手机就回到 S-ON。不打招呼就 dump 的只有 `noredtext` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
+每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore` 再把那些 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的镜像，手机就回到 S-ON。不打招呼就 dump 的只有 `noredtext` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
 
@@ -84,12 +84,12 @@ scripts/stool.sh splash --restore <sp1.img>
 
 | 文件 | 内容 | 大小 |
 |---|---|---|
-| `<ts>.txt` | 全部参数的值，连同上一次读到的字节 | 约 0.5 KB |
-| `<ts>.pg1fs.img` | 整个 p2，secure flag 在这里 | 119 MB |
-| `<ts>.board_info.img` | 整个 p3，CID、IMEI、板级数据 | 16 KB |
-| `<ts>.mfg.img` | 整个 p5，MID 在这里 | 256 KB |
-| `<ts>.pg2fs.img` | 整个 p6，tamper flag 在这里 | 24 MB |
-| `<ts>.misc.img` | 整个 p24，version-main 在这里 | 1 MB |
+| `<timestamp>.txt` | 全部参数的值，连同上一次读到的字节 | 约 0.5 KB |
+| `<timestamp>.pg1fs.img` | 整个 p2，secure flag 在这里 | 119 MB |
+| `<timestamp>.board_info.img` | 整个 p3，CID、IMEI、板级数据 | 16 KB |
+| `<timestamp>.mfg.img` | 整个 p5，MID 在这里 | 256 KB |
+| `<timestamp>.pg2fs.img` | 整个 p6，tamper flag 在这里 | 24 MB |
+| `<timestamp>.misc.img` | 整个 p24，version-main 在这里 | 1 MB |
 
 txt 只是给人看的记录。`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留：CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 144 MB，走 USB 大概一分钟。
 
@@ -103,7 +103,7 @@ MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Ed
 
 运行前要知道两件事：
 
-- hboot 带 HTC 签名，改字节就会破坏签名，全靠 S-OFF 让 SBL 跳过校验。S-ON 时绝对不能碰，并且一定要保留 dump 出来的 `<ts>.hboot.img`：`noredtext --restore` 就是把它原样写回去。
+- hboot 带 HTC 签名，改字节就会破坏签名，全靠 S-OFF 让 SBL 跳过校验。S-ON 时绝对不能碰，并且一定要保留 dump 出来的 `<timestamp>.hboot.img`：`noredtext --restore` 就是把它原样写回去。
 - 6.12.1540.4 这块 hboot 里，这六个字符串**没有任何静态引用**。绝对地址、文件偏移、低 20 位匹配、ARM 与 Thumb 的 `movw`/`movt`、代码段 literal pool，全部扫过，一个都没有。说明横幅是运行期装配的，所以改字符串本身是唯一安全的最小改动，不存在"参数可改的绘制函数"可找。
 
 ### 第一屏

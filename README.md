@@ -97,7 +97,7 @@ section is refused before anything is written - see
 
 Every command reads the S state first. Nothing is backed up automatically:
 `backup` writes `backup/<timestamp>.{txt,img}` - five whole partitions plus a
-txt with a readable summary - and `restore <timestamp>` writes those images
+txt with a readable summary - and `restore` writes those images
 back, `0x8400` among them. The flag inside the image wins, so restoring a set
 taken while S-ON puts the phone back to S-ON. The only dumps taken without
 asking are the ones `noredtext` and `splash` make of the single partition they
@@ -126,12 +126,12 @@ What a backup holds:
 
 | file | content | size |
 |---|---|---|
-| `<ts>.txt` | every parameter, with the bytes it was read from | ~0.5 KB |
-| `<ts>.pg1fs.img` | whole p2 — the secure flag lives here | 119 MB |
-| `<ts>.board_info.img` | whole p3 — CID, IMEI, board data | 16 KB |
-| `<ts>.mfg.img` | whole p5 — MID lives here | 256 KB |
-| `<ts>.pg2fs.img` | whole p6 — the tamper flag lives here | 24 MB |
-| `<ts>.misc.img` | whole p24 — version-main lives here | 1 MB |
+| `<timestamp>.txt` | every parameter, with the bytes it was read from | ~0.5 KB |
+| `<timestamp>.pg1fs.img` | p2 — the secure flag, BL magic lives here | 119 MB |
+| `<timestamp>.board_info.img` | p3 — CID, IMEI, board data lives here | 16 KB |
+| `<timestamp>.mfg.img` | p5 — MID lives here | 256 KB |
+| `<timestamp>.pg2fs.img` | p6 — the status flag lives here | 24 MB |
+| `<timestamp>.misc.img` | p24 — version-main lives here | 1 MB |
 
 The txt is the record you read. `set cid` writes its 8 bytes at `board_info`
 0x14 with `dd`, like the rest; hboot reads it at boot, so `getvar cidnum`
@@ -163,7 +163,7 @@ Two things to know before running it:
 
 - hboot carries the HTC signature.  Changing bytes breaks it; S-OFF is what
   makes the SBL skip the check.  Never run this while S-ON, and keep the dumped
-  `<ts>.hboot.img` - `noredtext --restore` writes it straight back.
+  `<timestamp>.hboot.img` - `noredtext --restore` writes it straight back.
 - On the 6.12.1540.4 hboot these six strings have **no static cross reference**
   in the image.  Every form was scanned: absolute address, raw file offset,
   low-20-bit match, ARM and Thumb `movw`/`movt`, and the literal pool of the
