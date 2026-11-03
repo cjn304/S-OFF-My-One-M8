@@ -95,7 +95,7 @@ txt 只是给人看的记录。`set cid` 和其它参数一样，用 `dd` 写 `b
 
 ### CID、MID 和刷机的关系
 
-MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。RUU 会把镜像要求的 MID、CID 和手机上的值比对，任一对不上就拒绝刷入，所以换区刷固件前通常先改这两项：`set mid` 写 mfg 0x4000，`set cid` 写 board_info 0x14，把 CID 改成 `11111111`（SuperCID）可以让手机接受任意 CID，但 MID 的检查依然有效。各固件包对应的 MID/CID 见这份[M8 固件表](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
+MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。RUU 会把镜像要求的 MID、CID 和手机上的值比对，任一对不上就拒绝刷入，所以换区刷固件前通常先改这两项：`set mid` 写 mfg 0x4000，`set cid` 写 board_info 0x14，把 CID 改成 `11111111`（SuperCID）可以让手机接受任意 CID，但 MID 的检查依然有效。各固件包的对应见这份[表格](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
 
 ### 开机红字
 
