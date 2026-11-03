@@ -144,8 +144,8 @@ does not match, which is why changing them is the usual prerequisite for
 another region's firmware: `set mid` writes mfg 0x4000, `set cid` writes
 board_info 0x14, and CID `11111111` (SuperCID) makes the phone accept any CID -
 the MID check still applies. What each package expects
-is listed in
-[this M8 firmware sheet](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0).
+is listed in this
+[M8 firmware sheet](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0).
 
 ### Red text at boot
 
