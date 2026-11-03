@@ -25,7 +25,7 @@ followed by writing the flag byte.
   ones on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
   (see [Windows](#windows)).
-* Backups (see [Warnings](#warnings)) and [Building](#building).
+* Data backup (see [Warnings](#warnings)) and [Building](#building).
 
 ---
 
