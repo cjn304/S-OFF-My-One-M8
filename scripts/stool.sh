@@ -306,7 +306,12 @@ in_recovery() { # 0 if adbd is a recovery ramdisk rather than Android
 	[ -n "$("$ADB" shell 'getprop ro.twrp.version' 2>/dev/null | tr -d '\r')" ]
 }
 
-require_android() { # $1: "ro" = never writes, "any" = no targets.conf needed, "s-on" = may run while S-ON
+# require_android [mode] - the four modes, from the point of view of writing:
+#   (unset)  writes, so S-OFF is required
+#   ro       never writes; no target_check either
+#   any      works off the on-device table, so targets.conf is not needed
+#   s-on     may run while S-ON: soff, son and `set secure 0`
+require_android() {
 	case "$(device_mode)" in
 	android) ;;
 	fastboot)
