@@ -557,13 +557,15 @@ adb shell 'su -c "mount -o remount,ro /data"'
 
 #### 断电上电
 
-`== power cycle ==`：`SEQ_DONE`。重扫本身的日志在 `dmesg | grep mmc_reinit_card` 里。
+`== power cycle ==`：先 `OFF_DONE`，电源轨保持关断 8 秒（`PWRSQ_OFF_SEC` 可改），再 `ON_DONE`。重扫本身的日志在 `dmesg | grep mmc_reinit_card` 里。
 
-`pg1fs` 这个节点没回来时，`soff` 停在 `eMMC did not come back - hold power ~10s, then retry`。断电失败不会造成永久损坏（flag 要到后面的阶段才写），所以：
+32 GB 的机器上实测：只断 1.5 秒不够，重新上电后位图仍是 31 组；8 秒才真正清掉。断得越久，host 恢复越慢，`pg1fs` 节点可能在 1 到 2 分钟后才出现，期间 `dmesg` 里是 `mmc0: err: runtime_error: -110` 和 `/data` 的 `JBD2: Detected IO errors`。脚本会轮询约 2.5 分钟。
 
-1. 等 10 秒：`mmc_detect_change()` 是丢到 workqueue 上跑的。
-2. `adb shell 'dmesg | tail -40'`，找 `mmc_reinit_card`、`AUTO CMD err`、`Controller never released inhibit bit(s)`。
-3. 再 `adb shell 'insmod /dev/pwrsq_on.ko'` 一次，stage 2 是幂等的。
+`pg1fs` 这个节点没回来时，`soff` 停在 `eMMC did not come back within ~2 min`。断电失败不会造成永久损坏（flag 要到后面的阶段才写），所以：
+
+1. 等 1 到 2 分钟：`mmc_detect_change()` 是丢到 workqueue 上跑的，`runtime_error` 之后 host 要等 PM 超时才重试。
+2. `adb shell 'dmesg | tail -40'`，找 `runtime_error: -110`、`JBD2: Detected IO errors`。
+3. 节点出现后 `adb reboot`：framework 还停着，重启一次比手动 `start` 干净。
 4. 如果 adb 也没了，长按电源约 10 秒。手机正常启动，flag 没变，可以重来。
 
 #### 写保护

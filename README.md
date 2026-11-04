@@ -821,17 +821,26 @@ on the `stop` + `sync` above.
 
 #### Power cycle
 
-`== power cycle ==` - `SEQ_DONE`. `dmesg | grep mmc_reinit_card` shows the
-re-scan itself.
+`== power cycle ==` - `OFF_DONE`, the rail stays down for 8 s
+(`PWRSQ_OFF_SEC` changes it), then `ON_DONE`. `dmesg | grep mmc_reinit_card`
+shows the re-scan itself.
 
-If the `pg1fs` node does not come back the run stops with
-`eMMC did not come back - hold power ~10s, then retry`. Nothing is permanently
-damaged - the flag is only written in a later stage - so:
+Measured on the 32 GB phone: 1.5 s was not enough, the bitmap still listed 31
+groups after the rail came back; 8 s cleared it. The longer the rail stays down,
+the slower the host recovers - `pg1fs` can take one to two minutes to appear,
+with `mmc0: err: runtime_error: -110` and `JBD2: Detected IO errors` on `/data`
+in between. The script polls for about 2.5 minutes.
 
-1. Wait 10 s: `mmc_detect_change()` runs on a workqueue.
-2. `adb shell 'dmesg | tail -40'`. Look for `mmc_reinit_card`, `AUTO CMD err`,
-   `Controller never released inhibit bit(s)`.
-3. `adb shell 'insmod /dev/pwrsq_on.ko'` again; stage 2 is idempotent.
+If the node never comes back the run stops with
+`eMMC did not come back within ~2 min`. Nothing is permanently damaged - the
+flag is only written in a later stage - so:
+
+1. Wait one to two minutes: `mmc_detect_change()` runs on a workqueue, and after
+   `runtime_error` the host waits for a PM timeout before retrying.
+2. `adb shell 'dmesg | tail -40'`. Look for `runtime_error: -110` and
+   `JBD2: Detected IO errors`.
+3. Once the node is back, `adb reboot`: framework is still stopped, and a reboot
+   is cleaner than `start` by hand.
 4. If adb is gone too, hold power ~10 s. The phone boots normally with the flag
    unchanged, and you can start over.
 

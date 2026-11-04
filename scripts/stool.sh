@@ -812,7 +812,7 @@ push_module() { # diag|off|on
 
 wp_probe() { # 0 when the eMMC reports no write protection at all
 	bin=$ROOT/tools/mmc_cmd
-	[ -x "$bin" ] ||
+	[ -f "$bin" ] ||
 		die "missing $bin - build first (make -C tools CROSS=arm-none-linux-gnueabihf-)"
 	push_dev "$bin" mmc_cmd
 	out=$(devsh '/dev/mmc_cmd wp' 2>&1 | tr -d '\r')
@@ -839,7 +839,9 @@ cmd_soff() {
 		warn "SELinux is not permissive - loading the module may be denied"
 	# Failed here rather than after the power cycle: without mmc_cmd there is no
 	# way to tell whether the cut cleared the write protection.
-	[ -x "$ROOT/tools/mmc_cmd" ] ||
+	# It is an ARM binary: the host never runs it, adb pushes it and push_dev
+	# chmods it on the phone, so "exists" is the whole test.
+	[ -f "$ROOT/tools/mmc_cmd" ] ||
 		die "missing tools/mmc_cmd - build first (make -C tools CROSS=arm-none-linux-gnueabihf-)"
 
 	say ""
@@ -860,14 +862,30 @@ cmd_soff() {
 	say "== power cycle =="
 	push_module off
 	push_module on
-	"$ADB" shell 'insmod /dev/pwrsq_off.ko; insmod /dev/pwrsq_on.ko; echo SEQ_DONE' | tr -d '\r'
-	sleep 3
+	# Two insmods, not one: the rail has to stay down long enough for the card
+	# to drop its latched power-on protection, and how long that takes is a
+	# property of the eMMC.  PWRSQ_OFF_SEC overrides the default.
+	"$ADB" shell 'insmod /dev/pwrsq_off.ko; echo OFF_DONE' | tr -d '\r'
+	sleep "${PWRSQ_OFF_SEC:-8}"
+	"$ADB" shell 'insmod /dev/pwrsq_on.ko; echo ON_DONE' | tr -d '\r'
 
-	# adb shell always exits 0 on this Android version, so ask for output.
+	# The rescan runs on a workqueue, and a rail that stayed down for several
+	# seconds comes back slowly: the host first reports runtime_error -110 and
+	# the block nodes appear a minute or two later.  Poll for ~2.5 minutes
+	# instead of trusting one fixed delay.  adb shell always exits 0 on this
+	# Android version, so ask for output.
 	# Ask for the secure partition by name: its p-number is not portable, and on
 	# another model it is not p2.
+	n=0
+	while [ "$n" -lt "${PWRSQ_WAIT_TRIES:-120}" ]; do
+		[ "$(devsh "test -b $DEV/$PART_SECURE && echo present")" = present ] && break
+		sleep 1
+		n=$((n + 1))
+	done
 	[ "$(devsh "test -b $DEV/$PART_SECURE && echo present")" = present ] ||
-		die "eMMC did not come back - hold power ~10s, then retry"
+		die "eMMC did not come back within ~2 min - it is still recovering.
+  Wait until $PART_SECURE appears, then 'adb reboot': framework is stopped
+  and nothing has been written to the secure flag."
 
 	say ""
 	say "== write protection =="
