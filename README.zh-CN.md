@@ -524,7 +524,7 @@ scripts/stool.sh backup misc
 /path/to/repo/backup/20261104-072924.misc.img
 ```
 
-这台手机上的任何分区都能这样 dump，不限于那五个。它不需要 S-OFF（读分区从来不需要），也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能备份。`noredtext` 和 `splash` 在覆盖自己要改的那个分区之前，调用的就是它。
+这台手机上的固件分区都能这样 dump，不限于那五个。`system`、`cache`、`userdata` 除外：它们是 Android 的文件系统，不是本工具管的固件，`backup system` 会直接拒绝。它不需要 S-OFF（读分区从来不需要），也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能备份。`noredtext` 和 `splash` 在覆盖自己要改的那个分区之前，调用的就是它。
 
 ### `soff`
 
@@ -614,7 +614,7 @@ writing 262144 bytes to mfg
 scripts/stool.sh restore mfg 20261104-045201.mfg.img
 ```
 
-这台手机上的任何分区都能写，不限于本工具写的那七个。唯一的检查是长度：镜像就是一个完整分区，所以必须正好等于那个分区的长度，长度表来自设备（`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测）。文件名完全不读，`whatever.img` 效果一样。长度对不上、分区名不存在、或者那不是这台手机 eMMC 上的分区，都在写入前停下。写完回读分区算 md5，与镜像比对。
+这台手机上的固件分区都能写，不限于本工具写的那七个。`system`、`cache`、`userdata` 同样除外，`restore system ...` 会在读文件之前就拒绝。剩下的唯一检查是长度：镜像就是一个完整分区，所以必须正好等于那个分区的长度，长度表来自设备（`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测）。文件名完全不读，`whatever.img` 效果一样。长度对不上、分区名不存在、或者那不是这台手机 eMMC 上的分区，都在写入前停下。写完回读分区算 md5，与镜像比对。
 
 和备份一样，`restore` 也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能还原。
 

@@ -593,6 +593,14 @@ snapshot_write() { # target file
 	} > "$f"
 }
 
+refuse_fs_part() { # name - Android's filesystems are not firmware to dump or write
+	case "$1" in
+	system | cache | userdata)
+		die "$1 is an Android filesystem partition - this tool only backs up and restores firmware partitions"
+		;;
+	esac
+}
+
 target_parts() { # partitions a backup covers, deduped (pg1fs carries two fields)
 	printf '%s\n' "$PART_SECURE" "$PART_CID" "$PART_MID" "$PART_TAMPER" "$PART_VER" |
 		awk 'NF && !seen[$0]++'
@@ -613,6 +621,7 @@ cmd_backup() { # [partition] - every partition plus the txt, or just the one
 	# one partition needs no targets.conf - the name and the size both come from
 	# the device - so it also runs on a phone whose layout has no section yet
 	if [ -n "${1:-}" ]; then
+		refuse_fs_part "$1"
 		require_android any
 	else
 		require_android ro
@@ -946,6 +955,7 @@ cmd_restore() { # <partition> <file.img> - write one saved partition image back
 	*/*) ;;
 	*) img=$BACKUP_DIR/$img ;;
 	esac
+	refuse_fs_part "$part"
 	[ -f "$img" ] || die "no such file: $img"
 
 	name=${img##*/}

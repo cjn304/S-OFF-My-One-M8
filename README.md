@@ -771,11 +771,13 @@ scripts/stool.sh backup misc
 /path/to/repo/backup/20261104-072924.misc.img
 ```
 
-Anything on the phone can be dumped this way, not just the five. It needs no
-S-OFF - reading a partition never does - and no `targets.conf` section either:
-the name and the size both come from the device, so it works on a phone this
-tool has no offsets for. `noredtext` and `splash` call it before they overwrite
-the partition they are about to change.
+Any firmware partition can be dumped this way, not just the five. `system`,
+`cache` and `userdata` are refused up front: those are Android's filesystems,
+not firmware this tool touches. It needs no S-OFF - reading a partition never
+does - and no `targets.conf` section either: the name and the size both come
+from the device, so it works on a phone this tool has no offsets for.
+`noredtext` and `splash` call it before they overwrite the partition they are
+about to change.
 
 ### `soff`
 
@@ -898,15 +900,16 @@ One partition, one file, and the partition is always named:
 scripts/stool.sh restore mfg 20261104-045201.mfg.img
 ```
 
-Any partition on the phone works, not only the seven this tool writes. The only
-test is length: an image is one whole partition, so it has to be exactly that
-partition's length, and the numbers come from the device
-(`/sys/class/block/*/uevent`, the same probe that picks the `targets.conf`
-section). The filename is not read at all, so `whatever.img` does the same
-thing. A length that does not fit, a name the phone does not have, or a
-partition that is not on its eMMC all stop the run before anything is written.
-After the write, md5 of the image is compared with md5 read back from the
-partition.
+Any firmware partition on the phone works, not only the seven this tool writes.
+`system`, `cache` and `userdata` are refused up front: those are Android's
+filesystems, not firmware this tool touches. What is left is length: an image is
+one whole partition, so it has to be exactly that partition's length, and the
+numbers come from the device (`/sys/class/block/*/uevent`, the same probe that
+picks the `targets.conf` section). The filename is not read at all, so
+`whatever.img` does the same thing. A length that does not fit, a name the phone
+does not have, or a partition that is not on its eMMC all stop the run before
+anything is written. After the write, md5 of the image is compared with md5 read
+back from the partition.
 
 Like a backup, `restore` needs no `targets.conf` section: the name and the
 length both come from the device, so it runs on a phone this tool has no offsets
