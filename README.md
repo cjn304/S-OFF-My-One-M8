@@ -66,8 +66,8 @@ scripts/stool.sh restore pg2fs 20261104-045201.pg2fs.img
 ## stool.sh
 
 `scripts/stool.sh` is the entry point for every command below. All of them
-need S-OFF except `status`, `backup`, `soff` itself, and `set secure 0` on a
-phone whose hboot never armed the protection.
+need S-OFF except `status`, `backup`, `restore`, `soff` itself, and
+`set secure 0` on a phone whose hboot never armed the protection.
 
 ```sh
 scripts/stool.sh status                  # S state + every parameter (Android or fastboot)
@@ -905,9 +905,15 @@ partition that is not on its eMMC all stop the run before anything is written.
 After the write, md5 of the image is compared with md5 read back from the
 partition.
 
-Unlike a backup, `restore` does load `targets.conf`: writing needs S-OFF, and
-that table is what got the phone there. A layout with no section is refused with
-`no section in targets.conf matches this device`, before anything is written.
+Like a backup, `restore` needs no `targets.conf` section: the name and the
+length both come from the device, so it runs on a phone this tool has no offsets
+for.
+
+What decides whether it worked is the read-back, not the write. On an S-ON phone
+the bootloader write-protects some partitions at the card level; a write to one
+of those is refused, `dd` still reports success, and the md5 comparison is what
+catches it. `dmesg` shows `card status 0x400d00` for the refusal. S-OFF stops
+arming that protection, but the command itself no longer insists on it.
 
 Nothing else is touched: restoring `pg1fs` does not touch `hboot`, and vice
 versa. `hboot` and `sp1` are restored the same way, which is why `noredtext` and

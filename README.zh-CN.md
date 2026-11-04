@@ -48,7 +48,7 @@ scripts/stool.sh restore pg2fs 20261104-045201.pg2fs.img
 
 ## stool.sh
 
-`scripts/stool.sh` 是下面全部命令的入口。除 `status`、`backup`、`soff` 本身，以及写保护本来就没设的机器上的 `set secure 0`，其余都要先 S-OFF。
+`scripts/stool.sh` 是下面全部命令的入口。除 `status`、`backup`、`restore`、`soff` 本身，以及写保护本来就没设的机器上的 `set secure 0`，其余都要先 S-OFF。
 
 ```sh
 scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
@@ -616,7 +616,9 @@ scripts/stool.sh restore mfg 20261104-045201.mfg.img
 
 这台手机上的任何分区都能写，不限于本工具写的那七个。唯一的检查是长度：镜像就是一个完整分区，所以必须正好等于那个分区的长度，长度表来自设备（`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测）。文件名完全不读，`whatever.img` 效果一样。长度对不上、分区名不存在、或者那不是这台手机 eMMC 上的分区，都在写入前停下。写完回读分区算 md5，与镜像比对。
 
-和备份不同，`restore` 会加载 `targets.conf`：写分区需要 S-OFF，而那张表正是拿到 S-OFF 的前提。布局没有对应的一节时，它会在写入前报 `no section in targets.conf matches this device` 并停下。
+和备份一样，`restore` 也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能还原。
+
+判断是否成功靠的是回读，不是写入。S-ON 的机器上，bootloader 在卡这一级保护了部分分区；写这些分区会被拒绝，而 `dd` 照样报成功，抓住它的是 md5 比对。`dmesg` 里对应的记录是 `card status 0x400d00`。S-OFF 让这层保护不再被挂上，但命令本身已经不再强制要求它。
 
 别的一概不动：还原 `pg1fs` 不碰 `hboot`，反之亦然。`hboot` 和 `sp1` 也走同一条命令，所以 `noredtext` 和 `splash` 各自那个 `--restore` 已经去掉。
 

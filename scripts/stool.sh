@@ -929,7 +929,9 @@ cmd_restore() { # <partition> <file.img> - write one saved partition image back
 	name=${img##*/}
 	fsize=$(wc -c < "$img" | tr -d ' ')
 
-	require_android
+	# no targets.conf: the name and the size come from the device, and a write the
+	# card refuses shows up in the read-back below
+	require_android any
 
 	# The partition is named, never inferred: an image is one whole partition, so
 	# its length has to be that partition's length, and nothing else is checked.
@@ -937,9 +939,6 @@ cmd_restore() { # <partition> <file.img> - write one saved partition image back
 	[ -n "$b" ] || die "no partition named $part on this device"
 	[ "$b" = "$fsize" ] ||
 		die "$part is $b bytes and $name is $fsize - refusing a mismatched image"
-
-	[ "$(secure_state)" = off ] ||
-		die "restoring a whole partition needs S-OFF - they are write protected while S-ON"
 
 	# by-name is how the device node is found; a partition that only exists on an
 	# inserted SD card has no entry here
@@ -953,11 +952,15 @@ cmd_restore() { # <partition> <file.img> - write one saved partition image back
 	# the image is the truth here: read the partition back and compare
 	a=$("$PY" -c 'import hashlib,sys;print(hashlib.md5(open(sys.argv[1],"rb").read()).hexdigest())' "$(winpath "$img")")
 	b=$(devsh "md5sum $DEV/$part 2>/dev/null" | tr -d '\r' | awk '{print $1}')
-	[ "$a" = "$b" ] || die "$part read-back mismatch: wrote $a, read $b"
+	[ "$a" = "$b" ] ||
+		die "$part read-back mismatch: wrote $a, read $b
+  dd reports success either way.  If dmesg shows 'card status 0x400d00' the card
+  refused the write, which is what an S-ON phone does to the partitions its
+  bootloader protects; S-OFF stops arming that."
 	say "  md5 $a  ok"
 
 	case "$part" in
-	"$PART_HBOOT" | "$PART_SPLASH")
+	"${PART_HBOOT:-hboot}" | "${PART_SPLASH:-sp1}")
 		say ""
 		say "reboot to see it"
 		;;
