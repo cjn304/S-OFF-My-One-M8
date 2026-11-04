@@ -553,12 +553,13 @@ decides how big a group is. `mmc_cmd extcsd` reads the fields that settle it:
   32 groups    256 MiB of 14910 MiB (1.7%)
 ```
 
-8 MiB per group and CMD31 reports 32 of them, so this card can describe **only
-the first 256 MiB** - anything past that is outside the bitmap whatever hboot
-does. It also reports `WP_GRP_ENABLE = 0`, which JEDEC reads as "no write
-protect groups at all"; that does not square with the protection being real, so
-treat the window as the bitmap's reach rather than a proven boundary until it is
-measured on an S-ON phone.
+8 MiB per group and CMD31 reports 32 of them, so this card can describe at most
+the first 256 MiB. Measured on an S-ON M8, that bitmap is **not** what the card
+obeys: it says 31 of the 32 groups are protected, yet a byte written at 120 MiB
+lands and one written at 315 MiB comes back `card status 0x400d00` and never
+reaches the card. `WP_GRP_ENABLE = 0` says the same thing from the other side:
+the group mechanism is off, hboot protects ranges, and `mmc_cmd wp` is only good
+as an all-or-nothing check.
 
 So the problem reduces to: cut VCC to the eMMC and bring it back, without
 rebooting the SoC.
