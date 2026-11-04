@@ -93,7 +93,29 @@ txt 只是给人看的记录。`set cid` 和其它参数一样，用 `dd` 写 `b
 
 ### CID、MID 和刷机的关系
 
-MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。RUU 会把镜像要求的 MID、CID 和手机上的值比对，任一对不上就拒绝刷入，所以换区刷固件前通常先改这两项：`set mid` 写 mfg 0x4000，`set cid` 写 board_info 0x14，把 CID 改成 `11111111`（SuperCID）可以让手机接受任意 CID，但 MID 的检查依然有效。各固件包的对应见这份[表格](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
+MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。这两项都写在固件包的 `android-info.txt` 里，hboot 在 RUU 模式下解析 zip 时逐项比对。`set mid` 写 mfg 0x4000，`set cid` 写 board_info 0x14；CID 改成 `11111111`（SuperCID）在多数 hboot 上能放行任意 CID，但不是所有构建都认，而且固件层版本本身可能先把 RUU 挡在门外，见[从 4.18 刷 6.12 的 RUU](#从-418-刷-612-的-ruu)。各固件包的对应见这份[表格](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
+
+#### 从 4.18 刷 6.12 的 RUU
+
+港版 4.18.708.12（hboot `3aa067db`）直接跑 6.12.1540.4 的 RUU，界面在点 Start 后立刻报 Error 155，日志里真正的错误是：
+
+```text
+(bootloader) zip info parsing...
+FAILED (status read failed (Too many links))
+```
+
+这不是 MID 或 CID 不匹配。RUU 日志（`C:\RUU_log\RUU_*.log`）显示它只读了 `boot-mode`、`battery-status`、`version-main`，随后进入 RUU 模式发送 zip，失败点在 hboot 解析 zip 的位置。把 CID 从 `11111111` 改成包里的 `BS_US001` 后，同一个位置仍然失败。
+
+原因是 RUU exe 里的 `rom.zip` 是 HTC 的 large-zip 容器，htc_fastboot 发送前会打印 `found large-zip header`。4.18 这块 hboot 只认普通 zip，读到分块结构后直接重置 USB 端点，主机端看到的就是 `Too many links`。
+
+解法是先刷同版本的普通固件包（`0P6BIMG`，或 `DevEdition_6.12.1540.4_...zip`，约 53 MB，含 hboot、radio、sbl1、tz），把 hboot 换到 `76df2b54`。实测旧 hboot 能完整刷入这个包，刷完 `commitno` 变成 `76df2b54`、`version-main` 变成 `6.12.1540.4`、radio 变成 `1.29.214500021.24_2G`，同一个 `rom.zip` 随后一次通过。刷完 RUU 再把 CID 改回 `11111111`。
+
+两个看起来像失败、其实不是的地方：
+
+- `fastboot flash hboot hboot_signedbyaa.img` 会被 hboot 拒绝，报 `FAILED (remote: not allowed)`，FASTBOOT 和 RUU 模式下都一样。hboot 分区只接受 zip 流程，不接受裸写镜像。
+- 刷完固件包后旧 `/system` 通常起不来：boot 和 radio 已经是 6.12 的，system 还是 4.18 的。这是预期结果，接着跑 RUU 把 system 补上即可。
+
+刷固件包会写 sbl1 和 tz，中断会砖。刷之前确认电量，刷的过程中不要动线。`backup hboot` 只在 hboot 还能进 bootloader 时有用，完全黑屏时它救不了。
 
 ### 开机红字
 

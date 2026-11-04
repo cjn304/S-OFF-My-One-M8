@@ -145,12 +145,56 @@ minute over USB.
 
 MID names the model variant - `0P6B62000` is the China Unicom M8, `0P6B12000`
 the Dev Edition - and CID names the carrier or region (`HTCCN703` for China
-Unicom). An RUU checks both against the image and refuses to flash when either
-does not match, which is why changing them is the usual prerequisite for
-another region's firmware: `set mid` writes mfg 0x4000, `set cid` writes
-board_info 0x14, and CID `11111111` (SuperCID) makes the phone accept any CID -
-the MID check still applies. What each package expects is listed in this
+Unicom). Both live in a package's `android-info.txt`, and hboot compares them
+while parsing the zip in RUU mode. `set mid` writes mfg 0x4000, `set cid`
+writes board_info 0x14. CID `11111111` (SuperCID) is accepted by most hboot
+builds, but not all of them, and the firmware version can stop an RUU before
+either check matters; see
+[Flashing a 6.12 RUU from 4.18](#flashing-a-612-ruu-from-418). What each package
+expects is listed in this
 [sheet](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0).
+
+#### Flashing a 6.12 RUU from 4.18
+
+A Hong Kong 4.18.708.12 phone (hboot `3aa067db`) running the 6.12.1540.4 RUU
+stops the moment Start is pressed, with Error 155. The RUU log
+(`C:\RUU_log\RUU_*.log`) shows what actually happened:
+
+```text
+(bootloader) zip info parsing...
+FAILED (status read failed (Too many links))
+```
+
+This is not a MID or CID mismatch. The log shows the tool read `boot-mode`,
+`battery-status` and `version-main`, rebooted into RUU mode, sent the zip, and
+died where hboot parses it. Changing CID from `11111111` to `BS_US001`, one of
+the values the package lists, failed at the same point.
+
+The `rom.zip` inside the RUU exe is an HTC large-zip container; htc_fastboot
+prints `found large-zip header` before sending. The 4.18 hboot only understands
+plain zips, resets the USB endpoint when it meets the chunked structure, and the
+host sees `Too many links`.
+
+The way through is to flash a plain firmware zip of the same version first
+(`0P6BIMG`, or `DevEdition_6.12.1540.4_...zip`, about 53 MB, holding hboot,
+radio, sbl1 and tz). The old hboot accepts it; afterwards `commitno` reads
+`76df2b54`, `version-main` reads `6.12.1540.4` and the radio reads
+`1.29.214500021.24_2G`. The same `rom.zip` then completes in one pass. Put CID
+back to `11111111` after the RUU finishes.
+
+Two things that look like failures but are not:
+
+- `fastboot flash hboot hboot_signedbyaa.img` is refused with
+  `FAILED (remote: not allowed)`, in FASTBOOT and RUU mode alike. The hboot
+  partition only accepts the zip path, never a raw image.
+- After the firmware zip the old `/system` usually will not boot: boot and radio
+  are 6.12 while system is still 4.18. That is expected; run the RUU to put
+  system in place.
+
+The firmware zip writes sbl1 and tz, so an interrupted flash bricks the phone.
+Check the battery and leave the cable alone. `backup hboot` only helps while
+hboot still reaches the bootloader; it cannot recover a phone that shows
+nothing at all.
 
 ### Red text at boot
 
