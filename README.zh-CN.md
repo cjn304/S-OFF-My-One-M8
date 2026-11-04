@@ -283,7 +283,7 @@ nm -u kmod/pwrsq_on.ko                           # 什么都不输出
 make -C tools CROSS=arm-none-linux-gnueabihf-
 ```
 
-`soff` 会把它推到 `/dev`（tmpfs）并以 root 运行。没有它，`soff` 会在动手机之前停下：写保护检查是唯一能证明断电生效的依据。
+`soff` 会把它放进 `/dev`（tmpfs）并以 root 运行：`adb push` 写不了 `/dev`，所以先落到 `/data/local/tmp`，再由 root 在 eMMC 还在的时候拷过去。没有它，`soff` 会在动手机之前停下：写保护检查是唯一能证明断电生效的依据。
 
 ### 8. 移植
 
@@ -361,6 +361,18 @@ CMD31 -> aaaaaaaa2aaaaaaa
 ```
 
 power-on 保护只能靠掉电清除。`CMD29`（CLEAR_WRITE_PROT）对它无效，`dd` 写 `pg1fs` 会拿到 `card status 0x400d00`，第 22 位，`WP_ERASE_SKIP`。
+
+保护不是按分区挂的，而是按**写保护组**，一组多大由卡自己定。`mmc_cmd extcsd` 把决定这件事的几个 EXT_CSD 字段读出来：
+
+```
+  [221] HC_WP_GRP_SIZE     = 16
+  [224] HC_ERASE_GRP_SIZE  = 1
+  erase group  0.5 MiB
+  wp group     8.0 MiB
+  32 groups    256 MiB of 14910 MiB (1.7%)
+```
+
+每组 8 MiB，而 CMD31 只报 32 组，所以这张卡**最多只能描述前 256 MiB**，再往后的分区不管 hboot 怎么设都不在位图里。它同时报 `WP_GRP_ENABLE = 0`，按 JEDEC 是「这张卡没有写保护组」，与实际观察到保护相矛盾，所以这个窗口只能当作位图能描述的范围，不是已经测实的边界。
 
 于是问题收敛成一句话：**把 eMMC 的 VCC 断掉再上电，且不能让 SoC 重启。**
 
@@ -565,7 +577,7 @@ bitmap: 00 00 00 00 00 00 00 00
 只要还有任何一组被列出来，`soff` 就停在 `eMMC write protection is still active - power cycle did not take effect`，这个状态下什么都不要写。如果写确实执行了、读回的字节却没变，说明写根本没到 eMMC：
 
 ```sh
-adb shell '/dev/mmc_cmd wp'                    # 有非零组 => 保护还在
+adb shell 'su -c "/dev/mmc_cmd wp"'            # 有非零组 => 保护还在
 adb shell 'dmesg | grep -i "card status"'
 ```
 

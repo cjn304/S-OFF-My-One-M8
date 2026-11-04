@@ -406,7 +406,9 @@ either, it is a static ARM binary:
 make -C tools CROSS=arm-none-linux-gnueabihf-
 ```
 
-`soff` pushes it to `/dev` (tmpfs) and runs it as root. Without it `soff` stops
+`soff` puts it in `/dev` (tmpfs) and runs it as root - `adb push` cannot write
+there, so it lands in `/data/local/tmp` first and root copies it across while
+the eMMC is still up. Without it `soff` stops
 before touching the phone: the write-protection check is the only thing that
 proves the power cycle worked.
 
@@ -539,6 +541,24 @@ CMD31 -> aaaaaaaa2aaaaaaa
 Power-on protection is only cleared by a power cycle. `CMD29`
 (CLEAR_WRITE_PROT) has no effect on it, and `dd` to `pg1fs` comes back with
 `card status 0x400d00` — bit 22, `WP_ERASE_SKIP`.
+
+Protection is not per partition but per **write protect group**, and the card
+decides how big a group is. `mmc_cmd extcsd` reads the fields that settle it:
+
+```
+  [221] HC_WP_GRP_SIZE     = 16
+  [224] HC_ERASE_GRP_SIZE  = 1
+  erase group  0.5 MiB
+  wp group     8.0 MiB
+  32 groups    256 MiB of 14910 MiB (1.7%)
+```
+
+8 MiB per group and CMD31 reports 32 of them, so this card can describe **only
+the first 256 MiB** - anything past that is outside the bitmap whatever hboot
+does. It also reports `WP_GRP_ENABLE = 0`, which JEDEC reads as "no write
+protect groups at all"; that does not square with the protection being real, so
+treat the window as the bitmap's reach rather than a proven boundary until it is
+measured on an S-ON phone.
 
 So the problem reduces to: cut VCC to the eMMC and bring it back, without
 rebooting the SoC.
@@ -823,7 +843,7 @@ nothing may be written in that state. If a write does go through but the byte
 reads back unchanged, the write never reached the eMMC:
 
 ```sh
-adb shell '/dev/mmc_cmd wp'                    # any non-zero group => still protected
+adb shell 'su -c "/dev/mmc_cmd wp"'            # any non-zero group => still protected
 adb shell 'dmesg | grep -i "card status"'
 ```
 

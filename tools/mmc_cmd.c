@@ -3,6 +3,8 @@
  * mmc_cmd - tiny MMC_IOC_CMD wrapper used to inspect eMMC write protection.
  *
  *   mmc_cmd wp [device]                 # CMD31: write-protect type bitmap
+ *   mmc_cmd extcsd [device]             # CMD8: the write-protect fields and
+ *                                       # how far the 32-group bitmap reaches
  *   mmc_cmd raw <op> <arg> <flags> <blksz> <blocks> <write> [device]
  *
  * "wp" is the interesting one: hboot arms power-on write protection on the
@@ -25,6 +27,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <linux/fs.h>
 
 /* current layout (msm 3.4+, 72 bytes) */
 struct mmc_ioc_cmd {
@@ -142,6 +145,56 @@ static void print_wp(const unsigned char *b, int n)
 		printf("  -> no write protection at all\n");
 }
 
+/* EXT_CSD byte offsets, from include/linux/mmc/mmc.h (JEDEC JESD84-B51) */
+#define X_WP_GRP_ENABLE        31
+#define X_BOOT_WP             173
+#define X_ERASE_GROUP_DEF     175
+#define X_REV                 192
+#define X_HC_WP_GRP_SIZE      221
+#define X_HC_ERASE_GRP_SIZE   224
+
+static void print_extcsd(const char *dev)
+{
+	unsigned en = databuf[X_WP_GRP_ENABLE];
+	unsigned boot_wp = databuf[X_BOOT_WP];
+	unsigned def = databuf[X_ERASE_GROUP_DEF];
+	unsigned hcwp = databuf[X_HC_WP_GRP_SIZE];
+	unsigned hcer = databuf[X_HC_ERASE_GRP_SIZE];
+	double erase_kb = 512, grp_kb, win_mb;
+	unsigned long long card = 0;
+	int fd;
+
+	printf("ext_csd:\n");
+	printf("  [%3d] REV                = %u\n", X_REV, databuf[X_REV]);
+	printf("  [%3d] BOOT_WP            = 0x%02x\n", X_BOOT_WP, boot_wp);
+	printf("  [%3d] ERASE_GROUP_DEF    = %u\n", X_ERASE_GROUP_DEF, def);
+	printf("  [%3d] WP_GRP_ENABLE      = %u\n", X_WP_GRP_ENABLE, en);
+	printf("  [%3d] HC_WP_GRP_SIZE     = %u\n", X_HC_WP_GRP_SIZE, hcwp);
+	printf("  [%3d] HC_ERASE_GRP_SIZE  = %u\n", X_HC_ERASE_GRP_SIZE, hcer);
+
+	if (def && hcer)
+		erase_kb = hcer * 512.0;
+	/* one write protect group = HC_WP_GRP_SIZE x erase group */
+	grp_kb = (hcwp ? hcwp : 1) * erase_kb;
+	win_mb = grp_kb * 32 / 1024;
+
+	fd = open(dev, O_RDONLY);
+	if (fd >= 0) {
+		if (ioctl(fd, BLKGETSIZE64, &card) == 0)
+			card /= 1024 * 1024;
+		close(fd);
+	}
+
+	printf("  erase group  %.1f MiB\n", erase_kb / 1024);
+	printf("  wp group     %.1f MiB\n", grp_kb / 1024);
+	printf("  32 groups    %.0f MiB", win_mb);
+	if (card)
+		printf(" of %llu MiB (%.1f%%)", card, 100.0 * win_mb / card);
+	printf("\n");
+	if (!en)
+		printf("  note: WP_GRP_ENABLE = 0, the card itself reports no groups\n");
+}
+
 int main(int argc, char **argv)
 {
 	const char *dev = "/dev/block/mmcblk0";
@@ -154,6 +207,31 @@ int main(int argc, char **argv)
 			return 1;
 		printf("RSP=%08x %08x %08x %08x\n", rsp[0], rsp[1], rsp[2], rsp[3]);
 		print_wp(databuf, 8);
+		return 0;
+	}
+
+	if (argc >= 2 && !strcmp(argv[1], "extcsd")) {
+		int dump = 0, i;
+
+		if (argc >= 3 && !strcmp(argv[2], "dump")) {
+			dump = 1;
+			if (argc >= 4)
+				dev = argv[3];
+		} else if (argc >= 3) {
+			dev = argv[2];
+		}
+		if (do_cmd(dev, 8, 0, FLAGS_R1_ADTC, 512, 1, 0, rsp) < 0)
+			return 1;
+		print_extcsd(dev);
+		if (dump)
+			for (i = 0; i < 512; i += 16) {
+				int j;
+
+				printf("  %3d:", i);
+				for (j = 0; j < 16; j++)
+					printf(" %02x", databuf[i + j]);
+				printf("\n");
+			}
 		return 0;
 	}
 
@@ -173,7 +251,8 @@ int main(int argc, char **argv)
 	fprintf(stderr,
 		"usage:\n"
 		"  %s wp [device]\n"
+		"  %s extcsd [dump] [device]\n"
 		"  %s raw <op> <arg> <flags> <blksz> <blocks> <write> [device]\n",
-		argv[0], argv[0]);
+		argv[0], argv[0], argv[0]);
 	return 2;
 }

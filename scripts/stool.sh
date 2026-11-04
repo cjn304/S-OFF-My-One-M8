@@ -763,19 +763,28 @@ cmd_bl() { # locked | unlocked
 
 # ---------------------------------------------------------------- soff / son
 
+push_dev() { # src name - place a file in /dev, which survives the power cycle
+	# adb push cannot write /dev (devtmpfs, adbd runs as shell), so it goes to
+	# /data/local/tmp first and root copies it across while the eMMC is still up
+	"$ADB" push "$1" "//data/local/tmp/$2" >/dev/null 2>&1 </dev/null ||
+		die "adb push failed: $1"
+	[ "$(devsh "cp /data/local/tmp/$2 /dev/$2 && chmod 755 /dev/$2 && rm -f /data/local/tmp/$2 && echo ok" |
+		tr -d '\r')" = ok ] ||
+		die "could not put $2 in /dev - adb shell must be able to run commands as root"
+}
+
 push_module() { # diag|off|on
 	src=$ROOT/kmod/pwrsq_$1.ko
 	[ -f "$src" ] || die "missing $src - build first (scripts/build.sh)"
-	"$ADB" push "$src" "//dev/pwrsq_$1.ko" >/dev/null || die "adb push failed"
+	push_dev "$src" "pwrsq_$1.ko"
 }
 
 wp_probe() { # 0 when the eMMC reports no write protection at all
 	bin=$ROOT/tools/mmc_cmd
 	[ -x "$bin" ] ||
 		die "missing $bin - build first (make -C tools CROSS=arm-none-linux-gnueabihf-)"
-	"$ADB" push "$bin" //dev/mmc_cmd >/dev/null 2>&1
-	"$ADB" shell 'chmod 755 /dev/mmc_cmd'
-	out=$("$ADB" shell '/dev/mmc_cmd wp' 2>&1 | tr -d '\r')
+	push_dev "$bin" mmc_cmd
+	out=$(devsh '/dev/mmc_cmd wp' 2>&1 | tr -d '\r')
 	printf '%s\n' "$out" | sed 's/^/  /' >&2
 	printf '%s\n' "$out" | grep -q 'no write protection'
 }
