@@ -65,9 +65,12 @@ scripts/stool.sh restore pg2fs 20261104-045201.pg2fs.img
 
 ## stool.sh
 
-`scripts/stool.sh` is the entry point for every command below. All of them
-need S-OFF except `status`, `backup`, `restore`, `soff` itself, and
-`set secure 0` on a phone whose hboot never armed the protection.
+`scripts/stool.sh` is the entry point for every command below. Commands that
+write (`set`, `lock`, `unlock`, `noredtext`, `splash`) check for S-OFF before
+they dump or write anything, and stop with nothing written. `status` and
+`backup` only read, `restore` takes the partition from its argument, and
+`soff`, `son` and `set secure 0` are how the S state itself is changed, so none
+of those need S-OFF up front.
 
 ```sh
 scripts/stool.sh status                  # S state + every parameter (Android or fastboot)

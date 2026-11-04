@@ -9,18 +9,19 @@
 #   stool.sh backup [partition]     all of it, or one partition as one image
 #   stool.sh restore <partition> <file.img>
 #                                   write one saved image back
-#   stool.sh lock                  write the BL magic = locked   (S-OFF only)
-#   stool.sh unlock                write the BL magic = unlocked (S-OFF only)
-#   stool.sh set <param> [value]    change one parameter (backs up first)
+#   stool.sh lock                  write the BL magic = locked
+#   stool.sh unlock                write the BL magic = unlocked
+#   stool.sh set <param> [value]    change one parameter
 #   stool.sh noredtext              blank the six "This build is for ..." lines in hboot
 #   stool.sh splash <image.png> [--size=WxH] [--fit=...]   first boot screen
 #
 #   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
 #           tamper <0-255> | secure <0|3>
 #
-# Every command reads the current S state first.  Nothing is backed up
-# automatically: `backup` writes one image per partition plus a readable txt, and
-# `restore` writes a single image back, picking the partition from its size.
+# Every command reads the current S state first, and every command that writes
+# is refused while S-ON.  Nothing is backed up automatically: `backup` writes
+# one image per partition plus a readable txt, and `restore` writes one named
+# image back.
 #
 # Where each parameter lives is not fixed here.  targets.conf holds one section
 # per partition layout and the script picks one by comparing the sizes the
@@ -39,8 +40,8 @@
 #   noredtext hboot      (p26)  six NUL terminated lines, located at run time
 #   splash    sp1        (p12)  little-endian RGB565, 1080x1920 unless --size=WxH
 #
-# Both need S-OFF and a full backup; noredtext rewrites hboot, which is the only
-# way to brick this device.  It always dumps the whole hboot partition first.
+# Both need S-OFF; noredtext rewrites hboot, which is the only way to brick
+# this device.  It always dumps the whole hboot partition first.
 #
 # Licensed GPL-2.0.
 set -u
@@ -305,7 +306,7 @@ in_recovery() { # 0 if adbd is a recovery ramdisk rather than Android
 	[ -n "$("$ADB" shell 'getprop ro.twrp.version' 2>/dev/null | tr -d '\r')" ]
 }
 
-require_android() { # $1: "ro" = never writes, "any" = no targets.conf needed
+require_android() { # $1: "ro" = never writes, "any" = no targets.conf needed, "s-on" = may run while S-ON
 	case "$(device_mode)" in
 	android) ;;
 	fastboot)
@@ -324,7 +325,20 @@ require_android() { # $1: "ro" = never writes, "any" = no targets.conf needed
 		load_target
 	fi
 	detect_dev || die "no by-name directory${PART_SECURE:+ holding $PART_SECURE} on this device"
-	[ "${1:-}" = ro ] || [ "${1:-}" = any ] || target_check
+	# Commands that write are gated here, before any dump or write, so an S-ON
+	# phone is refused up front instead of after a backup or a refused dd.
+	# soff, son and `set secure 0` opt out: they are how S-ON gets turned off.
+	case "${1:-}" in
+	ro | any) return 0 ;;
+	s-on) target_check ;;
+	*)
+		target_check
+		[ "$(secure_state)" = off ] ||
+			die "this device is S-ON - the eMMC write protection is still armed.
+  Run 'stool.sh soff' first, or 'stool.sh set secure 0' on an old hboot that
+  never armed it.  Nothing was written."
+		;;
+	esac
 }
 
 # The by-name directory moved between SoCs and Android releases:
@@ -676,9 +690,14 @@ cmd_set() {
 	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|version|tamper|secure> [value]"
 
 	case "$param" in
-	cid|mid|version|tamper|secure)
+	cid|mid|version|tamper)
 		check_param "$param" "$val"
 		require_android
+		;;
+	secure)
+		check_param "$param" "$val"
+		# 0 is the old-hboot escape hatch: allowed while S-ON, wp_probe decides
+		if [ "$val" = 0 ]; then require_android s-on; else require_android; fi
 		;;
 	*)
 		die "unknown parameter: $param"
@@ -740,14 +759,12 @@ cmd_set() {
 
 cmd_bl() { # locked | unlocked
 	want=$1
+	# 0x8404 sits in the same eMMC write-protected range as the S flag, so the
+	# S-OFF gate inside require_android covers it.
 	require_android
 	say "== state before =="
 	print_state
 	say ""
-
-	# 0x8404 sits in the same eMMC write-protected range as the S flag.
-	[ "$(secure_state)" = off ] ||
-		die "writing the BL magic needs the eMMC write protection cleared - run 'stool.sh soff'"
 
 	if [ "$want" = locked ]; then
 		hx=00000000
@@ -794,7 +811,7 @@ check_write_protection() {
 }
 
 cmd_soff() {
-	require_android
+	require_android s-on
 	if in_recovery; then
 		die "running in recovery - kmod only loads into the Android kernel; boot Android and retry"
 	fi
@@ -869,7 +886,7 @@ cmd_soff() {
 }
 
 cmd_son() {
-	require_android
+	require_android s-on
 	say "== state before =="
 	print_state
 	[ "$(secure_state)" = on ] && { say ""; say "already S-ON, nothing to do"; return 0; }
@@ -991,8 +1008,6 @@ cmd_noredtext() {
 	say "== state before =="
 	print_state
 	say ""
-	[ "$(secure_state)" = off ] ||
-		die "writing hboot needs S-OFF - the partition is write protected while S-ON"
 
 	say "== dump =="
 	hb=$(cmd_backup "$PART_HBOOT")
@@ -1129,14 +1144,15 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh set version <x.y.z.w>
   stool.sh set tamper <0-255>
   stool.sh set secure <0|3>
-  stool.sh lock                    write the BL magic = locked   (S-OFF only)
-  stool.sh unlock                  write the BL magic = unlocked (S-OFF only)
+  stool.sh lock                    write the BL magic = locked
+  stool.sh unlock                  write the BL magic = unlocked
   stool.sh noredtext               blank the six "This build is for ..." lines
   stool.sh splash <image.png> [--size=WxH] [--fit=cover|stretch]
                                    replace the first boot screen
 
-Every command starts by reading the current S state.  Nothing is backed up
-automatically: run 'stool.sh backup' first if you want a way back.
+Every command starts by reading the current S state, and anything that writes
+is refused while S-ON.  Nothing is backed up automatically: run
+'stool.sh backup' first if you want a way back.
 
 Environment: ADB, FB, PY, BACKUP_DIR.
 EOF
