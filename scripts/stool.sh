@@ -565,13 +565,29 @@ print_state() {
 
 # ---------------------------------------------------------------- snapshot
 
-snapshot_write() { # target file
+device_serial() { # serial number, used to keep two phones' backups apart
+	_s=$(devsh "getprop ro.serialno 2>/dev/null" | tr -d '\r')
+	[ -n "$_s" ] || _s=$(devsh "getprop ro.boot.serialno 2>/dev/null" | tr -d '\r')
+	printf '%s' "$_s" | tr -cd 'A-Za-z0-9'
+}
+
+device_tag() { # filename-safe identity, never empty
+	_t=$(device_serial)
+	printf '%s' "${_t:-noserial}"
+}
+
+snapshot_write() { # target file [tag]
 	f=$1
+	tag=${2:-$(device_tag)}
 	{
 		printf '# S-OFF-My-One-M8 parameter snapshot\n'
 		printf '# time=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+		printf '# serial=%s\n' "$tag"
+		printf '# model=%s (%s)\n' "$("$ADB" shell getprop ro.product.model 2>/dev/null | tr -d '\r')" \
+			"$("$ADB" shell getprop ro.product.device 2>/dev/null | tr -d '\r')"
+		printf '# hboot=%s\n' "$("$ADB" shell getprop ro.boot.bootloader 2>/dev/null | tr -d '\r')"
 		printf '# kernel=%s\n' "$("$ADB" shell uname -r 2>/dev/null | tr -d '\r')"
-		printf '# device=%s\n' "$("$ADB" shell getprop ro.product.device 2>/dev/null | tr -d '\r')"
+		printf '# emmc=%s sectors\n' "$(devsh "cat /sys/class/block/mmcblk0/size 2>/dev/null" | tr -d '\r')"
 		printf '# target=%s\n' "$TARGET"
 		# the stamp the images are named after: <dir>/<stamp>.txt -> <stamp>
 		stamp=${f##*/}
@@ -582,7 +598,7 @@ snapshot_write() { # target file
 			"$(at_line "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"
 		printf 'BL=%s/%s\n'      "$(bl_state)" \
 			"$(at_line "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")"
-		printf 'status=%s/%s\n'  "$(p_status)" \
+		printf 'tamper=%s/%s\n'  "$(p_tamper)" \
 			"$(at_line "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"
 		printf 'CID=%s/%s\n'     "$(p_cid)" \
 			"$(at_line "$PART_CID" "$OFF_CID" "$LEN_CID")"
@@ -627,6 +643,9 @@ cmd_backup() { # [partition] - every partition plus the txt, or just the one
 		require_android ro
 	fi
 	mkdir -p "$BACKUP_DIR"
+	tag=$(device_tag)
+	[ "$tag" != noserial ] ||
+		warn "serial number not readable - the filename cannot tell phones apart"
 	ts=$(date +%Y%m%d-%H%M%S)
 
 	# one partition: a single image, no txt - this is also what nowarn and
@@ -634,14 +653,14 @@ cmd_backup() { # [partition] - every partition plus the txt, or just the one
 	if [ -n "${1:-}" ]; then
 		b=$(part_bytes "$1")
 		[ -n "$b" ] || die "no partition named $1 on this device"
-		img=$BACKUP_DIR/$ts.$1.img
+		img=$BACKUP_DIR/$tag-$ts.$1.img
 		dump_one "$1" "$img" || die "could not dump $1"
 		printf '%s\n' "$img"
 		return 0
 	fi
 
-	f=$BACKUP_DIR/$ts.txt
-	snapshot_write "$f"
+	f=$BACKUP_DIR/$tag-$ts.txt
+	snapshot_write "$f" "$tag"
 	[ -s "$f" ] || die "backup failed"
 
 	# The txt only holds the bytes this tool writes - six small ranges.  Keep
@@ -650,7 +669,7 @@ cmd_backup() { # [partition] - every partition plus the txt, or just the one
 	# its own.  Radio is never written here, so it is not dumped.  The names come
 	# from targets.conf; pg1fs appears twice there (flag and BL magic), so dedupe.
 	for part in $(target_parts); do
-		dump_one "$part" "$BACKUP_DIR/$ts.$part.img" || {
+		dump_one "$part" "$BACKUP_DIR/$tag-$ts.$part.img" || {
 			warn "could not dump $part"
 			continue
 		}
@@ -969,7 +988,7 @@ cmd_restore() { # <partition> <file.img> - write one saved partition image back
 	img=${2:-}
 	if [ -z "$part" ] || [ -z "$img" ]; then
 		say "usage: stool.sh restore <partition> <file.img>"
-		say "  e.g. restore pg2fs 20261104-045201.pg2fs.img"
+		say "  e.g. restore pg2fs HT495WM00193-20261104-045201.pg2fs.img"
 		say ""
 		files=$(ls -1 "$BACKUP_DIR"/*.img 2>/dev/null)
 		if [ -n "$files" ]; then
@@ -1006,6 +1025,31 @@ cmd_restore() { # <partition> <file.img> - write one saved partition image back
 	# inserted SD card has no entry here
 	[ "$(devsh "test -e $DEV/$part && echo ok" | tr -d '\r')" = ok ] ||
 		die "$part is not a partition of this phone's eMMC"
+
+	tag=$(device_tag)
+	base=${name%.img}
+	pfx=${base%%-*}
+	case "$pfx" in
+	'' | *[!A-Za-z0-9]*) img_tag= ;;
+	[A-Za-z][A-Za-z]*) img_tag=$pfx ;;
+	*) img_tag= ;;
+	esac
+	[ -z "$img_tag" ] || [ "$img_tag" = "$tag" ] ||
+		die "$name was taken from $img_tag; this phone is $tag - refusing to write another phone's image"
+
+	model=$("$ADB" shell getprop ro.product.model 2>/dev/null | tr -d '\r')
+	devname=$("$ADB" shell getprop ro.product.device 2>/dev/null | tr -d '\r')
+	say "== device =="
+	say "  serial  $tag"
+	say "  model   $model ($devname)"
+	[ -n "${PART_MID:-}" ] && say "  MID     $(p_mid)"
+	if [ -n "${PART_SECURE:-}" ]; then
+		st=$(secure_state)
+		[ "$st" = off ] && st=S-OFF || st=S-ON
+		say "  S state $st (secure_flag $(p_secure))"
+	fi
+	[ -n "$img_tag" ] || say "  note    filename has no serial - cannot verify which phone it came from"
+	say ""
 
 	say "== $part =="
 	printf '  %s  %s bytes  %s\n' "$part" "$fsize" "$name"
