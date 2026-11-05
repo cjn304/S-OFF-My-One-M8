@@ -87,7 +87,7 @@ scripts/stool.sh lock                    # BL magic -> locked
 scripts/stool.sh unlock                  # BL magic -> unlocked
 scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
 scripts/stool.sh splash photo.png        # first boot screen, size from targets.conf
-scripts/stool.sh splash photo.png --size=1440x2560     # other panels
+scripts/stool.sh splash photo.png --size=1440x2560     # overrides the default; sp1 must fit it
 ```
 
 Where each parameter lives, and which partitions get dumped, comes from
@@ -222,7 +222,9 @@ Two things to know before running it:
 little-endian RGB565 at the size `targets.conf` gives for the model - 1080x1920
 on the M8, 4,147,200 bytes - unless `--size=WxH` says otherwise; the rest of the
 partition is padding.  The frame size is checked against the partition size
-before anything is written.
+before anything is written: the M8's `sp1` is 5,242,880 bytes, 1080x1920 fits at
+4,147,200, and 1440x2560 at 7,372,800 is refused, so that size only suits models
+with a larger partition.
 
 The conversion is done by `scripts/png2rgb565.py`, pure standard
 library on purpose (a bare Windows box has no ffmpeg, no PIL, no ImageMagick).
