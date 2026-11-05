@@ -41,7 +41,7 @@ scripts/stool.sh backup
 scripts/stool.sh soff
 
 # 4. 写回一个分区镜像
-scripts/stool.sh restore pg2fs 20261104-045201.pg2fs.img
+scripts/stool.sh restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 ```
 
 ---
@@ -55,7 +55,7 @@ scripts/stool.sh status                  # S 状态 + 全部参数（Android 或
 scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup [partition]      # 五个整分区 + 参数，或只备一个
-scripts/stool.sh restore <partition> <file.img>   # 如 restore pg2fs 20261104-045201.pg2fs.img
+scripts/stool.sh restore <partition> <file.img>   # 如 restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
@@ -69,7 +69,7 @@ scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 tar
 
 每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
-每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
+每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<序列号>-<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
 
@@ -81,12 +81,14 @@ M8 的 `backup` 写出这些文件：
 
 | 文件 | 内容 | 大小 |
 |---|---|---|
-| `<timestamp>.txt` | 全部参数的值，连同上一次读到的字节 | 约 0.5 KB |
-| `<timestamp>.pg1fs.img` | p2，secure flag、BL magic 在这里 | 119 MB |
-| `<timestamp>.board_info.img` | p3，CID、IMEI、板级数据在这里 | 16 KB |
-| `<timestamp>.mfg.img` | p5，MID 在这里 | 256 KB |
-| `<timestamp>.pg2fs.img` | p6，status flag 在这里 | 24 MB |
-| `<timestamp>.misc.img` | p24，version-main 在这里 | 1 MB |
+| `<serial>-<timestamp>.txt` | 全部参数的值，连同上一次读到的字节 | 约 0.5 KB |
+| `<serial>-<timestamp>.pg1fs.img` | p2，secure flag、BL magic 在这里 | 119 MB |
+| `<serial>-<timestamp>.board_info.img` | p3，CID、IMEI、板级数据在这里 | 16 KB |
+| `<serial>-<timestamp>.mfg.img` | p5，MID 在这里 | 256 KB |
+| `<serial>-<timestamp>.pg2fs.img` | p6，status flag 在这里 | 24 MB |
+| `<serial>-<timestamp>.misc.img` | p24，version-main 在这里 | 1 MB |
+
+文件名以序列号（`ro.serialno`）开头，后接时间戳，两台 M8 的备份放在同一个 `backup/` 里也不会混。`restore` 写之前先打印当前机器的序列号、型号、MID 和 S 状态；文件名里的序列号和当前机器不一致时直接拒绝，一个字节都不写。
 
 txt 只是给人看的记录。`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留：CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 144 MB，走 USB 大概一分钟。
 
@@ -125,7 +127,7 @@ FAILED (status read failed (Too many links))
 
 运行前要知道两件事：
 
-- hboot 带 HTC 签名，改一个字节签名就废了。S-OFF 时 SBL 跳过校验，所以还能启动；一旦 `son` 把 secure flag 写回 3，下次启动 SBL 重新验签，失败就停在那里——hboot 不会执行，fastboot、RUU 都进不去，只剩 EDL。改之前必须留下 `nowarn` 打出的 `<timestamp>.hboot.img`，并且在 `son` 之前用 `restore hboot <时间戳>.hboot.img` 写回去。`son` 会先检查六行是否还在，发现被清空就直接拒绝。
+- hboot 带 HTC 签名，改一个字节签名就废了。S-OFF 时 SBL 跳过校验，所以还能启动；一旦 `son` 把 secure flag 写回 3，下次启动 SBL 重新验签，失败就停在那里——hboot 不会执行，fastboot、RUU 都进不去，只剩 EDL。改之前必须留下 `nowarn` 打出的 `<serial>-<timestamp>.hboot.img`，并且在 `son` 之前用 `restore hboot <序列号>-<时间戳>.hboot.img` 写回去。`son` 会先检查六行是否还在，发现被清空就直接拒绝。
 - 这六行有引用，只是不用 32 位绝对地址：代码先 `ldr rX, [pc, #imm]` 取一个小偏移，再 `add rX, pc` 加上当前 PC，得到字符串地址。所以按 `0x0F58xxxx` 这种绝对地址搜不到，但绘制函数确实存在：6.12.1540.4 上是 `0x18B64`，4.18 的 `3aa067db` 上是 `0x18258`。改字符串仍然是最小改动，因为六行只有这一处绘制，清空内容不影响控制流。
 
 ### 第一屏
@@ -554,7 +556,7 @@ pwrsq_on: (no undefined symbols)
   mfg             262144 bytes
   pg2fs         24837120 bytes
   misc           1048576 bytes
-/path/to/repo/backup/20261104-031826.txt
+/path/to/repo/backup/HT495WM00193-20261104-031826.txt
 ```
 
 每个分区一行打到 stderr，最后一行是 txt 的路径（stdout）。整套约 144 MB，走 USB 大概一分钟。某个分区读不出来会打 `warning: could not dump <分区>` 然后继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
@@ -564,7 +566,7 @@ pwrsq_on: (no undefined symbols)
 ```sh
 scripts/stool.sh backup misc
   misc           1048576 bytes
-/path/to/repo/backup/20261104-072924.misc.img
+/path/to/repo/backup/HT495WM00193-20261104-072924.misc.img
 ```
 
 这台手机上的固件分区都能这样 dump，不限于那五个。`system`、`cache`、`userdata` 除外：它们是 Android 的文件系统，不是本工具管的固件，`backup system` 会直接拒绝。它不需要 S-OFF（读分区从来不需要），也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能备份。`nowarn` 和 `splash` 在覆盖自己要改的那个分区之前，调用的就是它。
@@ -644,8 +646,14 @@ adb shell 'dmesg | grep -i "card status"'
 ### `restore`
 
 ```
+== device ==
+  serial  HT495WM00193
+  model   HTC_One_M8 (htc_m8)
+  MID     0P6B12000
+  S state S-OFF (secure_flag 0)
+
 == mfg ==
-  mfg  262144 bytes  20261104-045201.mfg.img
+  mfg  262144 bytes  HT495WM00193-20261104-045201.mfg.img
 writing 262144 bytes to mfg
 64+0 records in
 64+0 records out
@@ -656,10 +664,10 @@ writing 262144 bytes to mfg
 一个分区、一个文件，分区名总是要写：
 
 ```sh
-scripts/stool.sh restore mfg 20261104-045201.mfg.img
+scripts/stool.sh restore mfg HT495WM00193-20261104-045201.mfg.img
 ```
 
-这台手机上的固件分区都能写，不限于本工具写的那七个。`system`、`cache`、`userdata` 同样除外，`restore system ...` 会在读文件之前就拒绝。剩下的唯一检查是长度：镜像就是一个完整分区，所以必须正好等于那个分区的长度，长度表来自设备（`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测）。文件名完全不读，`whatever.img` 效果一样。长度对不上、分区名不存在、或者那不是这台手机 eMMC 上的分区，都在写入前停下。写完回读分区算 md5，与镜像比对。
+这台手机上的固件分区都能写，不限于本工具写的那七个。`system`、`cache`、`userdata` 同样除外，`restore system ...` 会在读文件之前就拒绝。写之前先打印当前机器的序列号、型号、MID 和 S 状态；文件名以序列号开头时，序列号必须和当前机器一致，否则拒绝，一个字节都不写（旧备份没有序列号前缀，只提示一行，不阻塞）。剩下的检查是长度：镜像就是一个完整分区，所以必须正好等于那个分区的长度，长度表来自设备（`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测）。长度对不上、分区名不存在、或者那不是这台手机 eMMC 上的分区，都在写入前停下。写完回读分区算 md5，与镜像比对。
 
 和备份一样，`restore` 也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能还原。
 

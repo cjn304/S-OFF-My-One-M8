@@ -58,7 +58,7 @@ scripts/stool.sh backup
 scripts/stool.sh soff
 
 # 4. write a saved partition image back
-scripts/stool.sh restore pg2fs 20261104-045201.pg2fs.img
+scripts/stool.sh restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 ```
 
 ---
@@ -77,7 +77,7 @@ scripts/stool.sh status                  # S state + every parameter (Android or
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup [partition]      # all five + parameters, or just one
-scripts/stool.sh restore <partition> <file.img>   # e.g. restore pg2fs 20261104-045201.pg2fs.img
+scripts/stool.sh restore <partition> <file.img>   # e.g. restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
@@ -96,7 +96,7 @@ section is refused before anything is written - see
 [section 6](#6-parameter-offsets) to add one.
 
 Every command reads the S state first. Nothing is backed up automatically:
-`backup` writes `backup/<timestamp>.{txt,img}` - five whole partitions plus a
+`backup` writes `backup/<serial>-<timestamp>.{txt,img}` - five whole partitions plus a
 txt with a readable summary - and `restore` writes those images
 back, `0x8400` among them. The flag inside the image wins, so restoring a set
 taken while S-ON puts the phone back to S-ON. The only dumps taken without
@@ -126,12 +126,17 @@ What a M8's backup holds:
 
 | file | content | size |
 |---|---|---|
-| `<timestamp>.txt` | every parameter, with the bytes it was read from | ~0.5 KB |
-| `<timestamp>.pg1fs.img` | p2 — the secure flag, BL magic lives here | 119 MB |
-| `<timestamp>.board_info.img` | p3 — CID, IMEI, board data lives here | 16 KB |
-| `<timestamp>.mfg.img` | p5 — MID lives here | 256 KB |
-| `<timestamp>.pg2fs.img` | p6 — the status flag lives here | 24 MB |
-| `<timestamp>.misc.img` | p24 — version-main lives here | 1 MB |
+| `<serial>-<timestamp>.txt` | every parameter, with the bytes it was read from | ~0.5 KB |
+| `<serial>-<timestamp>.pg1fs.img` | p2 — the secure flag, BL magic lives here | 119 MB |
+| `<serial>-<timestamp>.board_info.img` | p3 — CID, IMEI, board data lives here | 16 KB |
+| `<serial>-<timestamp>.mfg.img` | p5 — MID lives here | 256 KB |
+| `<serial>-<timestamp>.pg2fs.img` | p6 — the status flag lives here | 24 MB |
+| `<serial>-<timestamp>.misc.img` | p24 — version-main lives here | 1 MB |
+
+Names start with the serial (`ro.serialno`) and end with the timestamp, so two
+M8s can share one `backup/` directory without getting mixed up. `restore`
+prints the current serial, model, MID and S state first, and refuses an image
+whose name carries another phone's serial.
 
 The txt is the record you read. `set cid` writes its 8 bytes at `board_info`
 0x14 with `dd`, like the rest; hboot reads it at boot, so `getvar cidnum`
@@ -216,7 +221,7 @@ Two things to know before running it:
   SBL skips the check and the phone still boots.  The moment `son` writes the
   secure flag back to 3, the SBL verifies hboot again, fails, and stops: hboot
   never runs, so neither fastboot nor RUU comes up - only EDL is left.  Keep the
-  `<timestamp>.hboot.img` that `nowarn` prints and write it back with
+  `<serial>-<timestamp>.hboot.img` that `nowarn` prints and write it back with
   `restore hboot <stamp>.hboot.img` before running `son`. `son` checks the six
   strings first and refuses if they were blanked.
 - These six strings are **not** unreferenced.  The draw function loads their
@@ -843,7 +848,7 @@ whether the power cycle worked.
   mfg             262144 bytes
   pg2fs         24837120 bytes
   misc           1048576 bytes
-/path/to/repo/backup/20261104-031826.txt
+/path/to/repo/backup/HT495WM00193-20261104-031826.txt
 ```
 
 One line per partition on stderr, the txt path on stdout. The whole set is
@@ -856,7 +861,7 @@ Name a partition and you get that one image instead, with no txt:
 ```sh
 scripts/stool.sh backup misc
   misc           1048576 bytes
-/path/to/repo/backup/20261104-072924.misc.img
+/path/to/repo/backup/HT495WM00193-20261104-072924.misc.img
 ```
 
 Any firmware partition can be dumped this way, not just the five. `system`,
@@ -990,8 +995,14 @@ written and read back by then.
 ### `restore`
 
 ```
+== device ==
+  serial  HT495WM00193
+  model   HTC_One_M8 (htc_m8)
+  MID     0P6B12000
+  S state S-OFF (secure_flag 0)
+
 == mfg ==
-  mfg  262144 bytes  20261104-045201.mfg.img
+  mfg  262144 bytes  HT495WM00193-20261104-045201.mfg.img
 writing 262144 bytes to mfg
 64+0 records in
 64+0 records out
@@ -1002,19 +1013,22 @@ writing 262144 bytes to mfg
 One partition, one file, and the partition is always named:
 
 ```sh
-scripts/stool.sh restore mfg 20261104-045201.mfg.img
+scripts/stool.sh restore mfg HT495WM00193-20261104-045201.mfg.img
 ```
 
 Any firmware partition on the phone works, not only the seven this tool writes.
 `system`, `cache` and `userdata` are refused up front: those are Android's
-filesystems, not firmware this tool touches. What is left is length: an image is
-one whole partition, so it has to be exactly that partition's length, and the
-numbers come from the device (`/sys/class/block/*/uevent`, the same probe that
-picks the `targets.conf` section). The filename is not read at all, so
-`whatever.img` does the same thing. A length that does not fit, a name the phone
-does not have, or a partition that is not on its eMMC all stop the run before
-anything is written. After the write, md5 of the image is compared with md5 read
-back from the partition.
+filesystems, not firmware this tool touches. Before writing, it prints the
+current phone's serial, model, MID and S state; when the filename starts with a
+serial, that serial has to match the phone, otherwise the run stops without
+writing a byte (old backups without the prefix only get a note). What is left is
+length: an image is one whole partition, so it has to be exactly that
+partition's length, and the numbers come from the device
+(`/sys/class/block/*/uevent`, the same probe that picks the `targets.conf`
+section). A length that does not fit, a name the phone does not have, or a
+partition that is not on its eMMC all stop the run before anything is written.
+After the write, md5 of the image is compared with md5 read back from the
+partition.
 
 Like a backup, `restore` needs no `targets.conf` section: the name and the
 length both come from the device, so it runs on a phone this tool has no offsets
