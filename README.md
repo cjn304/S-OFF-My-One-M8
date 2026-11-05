@@ -217,9 +217,8 @@ Two things to know before running it:
   secure flag back to 3, the SBL verifies hboot again, fails, and stops: hboot
   never runs, so neither fastboot nor RUU comes up - only EDL is left.  Keep the
   `<timestamp>.hboot.img` that `nowarn` prints and write it back with
-  `restore hboot <stamp>.hboot.img` before running `son`.  While S-ON the write
-  protection is still armed, so the write would not even land; `son` now checks
-  the six strings first and refuses if they were blanked.
+  `restore hboot <stamp>.hboot.img` before running `son`. `son` checks the six
+  strings first and refuses if they were blanked.
 - These six strings are **not** unreferenced.  The draw function loads their
   addresses with a 16-bit `ldr rX, [pc, #imm]` plus `add rX, pc`: a small
   offset, then the current PC added.  That is why searching for a 32-bit
