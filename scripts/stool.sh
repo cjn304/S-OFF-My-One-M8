@@ -1187,6 +1187,8 @@ Every command starts by reading the current S state, and anything that writes
 is refused while S-ON.  Nothing is backed up automatically: run
 'stool.sh backup' first if you want a way back.
 
+Every command accepts -h / --help: it prints this text and touches nothing.
+
 Environment: ADB, FB, PY, BACKUP_DIR.
 EOF
 }
@@ -1195,9 +1197,25 @@ EOF
 cmd=$1; shift
 
 case "$cmd" in
-status)  cmd_status ;;
-soff)    cmd_soff ;;
-son)     cmd_son ;;
+-h|--help|help) usage; exit 0 ;;
+esac
+
+# Every command answers -h/--help with the same usage and touches nothing.
+# Without this, `soff --help` would run the power cycle: cmd_soff ignores
+# arguments, so the flag would never be seen.
+for a in "$@"; do
+	case "$a" in
+	-h|--help) usage; exit 0 ;;
+	esac
+done
+
+case "$cmd" in
+status)  [ $# -eq 0 ] || die "usage: stool.sh status"
+         cmd_status ;;
+soff)    [ $# -eq 0 ] || die "usage: stool.sh soff"
+         cmd_soff ;;
+son)     [ $# -eq 0 ] || die "usage: stool.sh son"
+         cmd_son ;;
 backup)  cmd_backup "$@" ;;
 restore) cmd_restore "$@" ;;
 set)     cmd_set "$@" ;;
