@@ -658,10 +658,9 @@ adb shell 'dmesg | grep -i "card status"'
 ```
 == mfg ==
   mfg  262144 bytes  HT495WM00193-20261104-045201.mfg.img
-writing 262144 bytes to mfg
-64+0 records in
-64+0 records out
-262144 bytes transferred in 0.009 secs
+  writing 262144 bytes to mfg
+  64+0 records out
+  262144 bytes transferred in 0.009 secs
   md5 e8301cf5c9c5873972846d54c7cd7040  ok
 ```
 

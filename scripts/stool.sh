@@ -1095,9 +1095,11 @@ winpath() { cygpath -w "$1" 2>/dev/null || printf '%s' "$1"; }
 
 flash_part() { # part src-file  (write a whole image; used by restore)
 	[ -n "$DEV" ] || detect_dev || die "no by-name directory on this device"
-	say "writing $(wc -c < "$2" | tr -d ' ') bytes to $1"
+	say "  writing $(wc -c < "$2" | tr -d ' ') bytes to $1"
 	"$ADB" push "$2" //data/local/tmp/stool_flash.img >/dev/null 2>&1 </dev/null || die "adb push failed"
-	devsh "dd if=/data/local/tmp/stool_flash.img of=$DEV/$1 bs=4096 2>&1 | tail -2" >&2
+	# sed runs here, not on the device: devsh forbids single quotes inside $1
+	devsh "dd if=/data/local/tmp/stool_flash.img of=$DEV/$1 bs=4096 2>&1 | tail -n 2" 2>&1 |
+		sed 's/^/  /' >&2
 	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
 	devsh "rm -f /data/local/tmp/stool_flash.img" >/dev/null 2>&1
 }
