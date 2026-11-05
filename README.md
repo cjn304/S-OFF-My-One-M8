@@ -209,14 +209,14 @@ value only decides whether the bootloader screen says `*** UNLOCKED ***`,
 
 On the 6.12.1540.4 hboot the six lines share one draw function at file offset
 `0x18B64`, reached by exactly one `bl` instruction, `0x147EA`.  That instruction
-sits inside the per-partition check, and the check is entered twice: `0xF5084A6`
-sets mode `0x0F` and calls `0xF51490C` (reads `boot`), `0xF530E3E` sets mode `3`
-and calls `0xF51490C` (reads `recovery`).  Either check failing executes the same
-`bl 0x18B64`.  The instruction right before it is the image signature check at
-`0x147D4`: a zero return boots straight on, a non-zero return enters the
-function, paints the six lines, flushes the screen and then carries on booting.
-The 4.18 `3aa067db` build has the same shape - function `0x18258`, call site
-`0x142AE`, check at `0x14298`.
+sits inside the per-partition check, and the check entry `0xF51490C` has six
+callers: two set mode `9` or `0x0F` and read `boot`, four set mode `3` and read
+`recovery`.  Either failure executes the same `bl 0x18B64`; two of the recovery
+entries are fastboot command handlers that answer `OKAY` first.  The instruction
+right before it is the image signature check at `0x147D4`: a zero return boots
+straight on, a non-zero return enters the function, paints the six lines,
+flushes the screen and then carries on booting.  The 4.18 `3aa067db` build has
+the same shape - function `0x18258`, call site `0x142AE`, check at `0x14298`.
 
 What follows from that:
 
