@@ -58,7 +58,7 @@ STOOL_TMP=$ROOT/.stool.tmp
 # then, which is deliberate - a command that reached a read with no target would
 # dd from an empty partition name and fail loudly instead of writing at the M8
 # offsets on a phone that is not an M8.
-TARGET= TARGET_DEVICE= TARGET_HBOOT= LAYOUT_MAP= OBSERVED_LAYOUT=
+TARGET= LAYOUT_MAP= OBSERVED_LAYOUT=
 PART_CID= PART_MID= PART_VER= PART_TAMPER= PART_SECURE= PART_BLMAGIC=
 PART_HBOOT= PART_SPLASH=
 OFF_CID= OFF_MID= OFF_VER= OFF_TAMPER= OFF_SECURE= OFF_BLMAGIC= OFF_SPLASH=
@@ -200,8 +200,6 @@ part_sectors() { # name -> sectors, "-" when the partition is absent
 target_apply() { # dump section - fills the PART_/OFF_ variables
 	DUMP=$1
 	TARGET=$2
-	TARGET_DEVICE=$(conf_get "$DUMP" "$TARGET" device)
-	TARGET_HBOOT=$(conf_get "$DUMP" "$TARGET" hboot)
 	field_req cid
 	IFS=: read -r PART_CID OFF_CID LEN_CID _ <<EOF
 $FV
@@ -548,7 +546,7 @@ print_state() {
 			say "target: $TARGET (layout ok) but no by-name directory holds $PART_SECURE"
 			return 0
 		fi
-		say "target: $TARGET  [$TARGET_DEVICE, hboot $TARGET_HBOOT]"
+		say "target: $TARGET"
 		case "$(secure_state)" in
 		off) say "Secure state: OFF" ;;
 		*)   say "Secure state: ON" ;;
@@ -1065,20 +1063,8 @@ cmd_restore() { # <partition> <file.img> - write one saved partition image back
 	esac
 	[ -z "$img_tag" ] || [ "$img_tag" = "$tag" ] ||
 		die "$name was taken from $img_tag; this phone is $tag - refusing to write another phone's image"
-
-	model=$("$ADB" shell getprop ro.product.model 2>/dev/null | tr -d '\r')
-	devname=$("$ADB" shell getprop ro.product.device 2>/dev/null | tr -d '\r')
-	say "== device =="
-	say "  serial  $tag"
-	say "  model   $model ($devname)"
-	[ -n "${PART_MID:-}" ] && say "  MID     $(p_mid)"
-	if [ -n "${PART_SECURE:-}" ]; then
-		st=$(secure_state)
-		[ "$st" = off ] && st=S-OFF || st=S-ON
-		say "  S state $st (secure_flag $(p_secure))"
-	fi
-	[ -n "$img_tag" ] || say "  note    filename has no serial - cannot verify which phone it came from"
-	say ""
+	[ -n "$img_tag" ] ||
+		say "note: filename has no serial - cannot verify which phone it came from"
 
 	say "== $part =="
 	printf '  %s  %s bytes  %s\n' "$part" "$fsize" "$name"

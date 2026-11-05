@@ -136,8 +136,7 @@ What a M8's backup holds:
 
 Names start with the serial (`ro.serialno`) and end with the timestamp, so two
 M8s can share one `backup/` directory without getting mixed up. `restore`
-prints the current serial, model, MID and S state first, and refuses an image
-whose name carries another phone's serial.
+refuses an image whose name carries another phone's serial.
 
 The txt holds exactly what `status` prints: the `== state ==` block, which
 carries `modules` and `selinux` too, then the `== parameters ==` block. Both come from the same
@@ -788,7 +787,7 @@ worked, and the failure that belongs to it.
 
 ```
 == state ==
-target: m8_ul  [htc_m8, hboot 3.19.*]
+target: m8_ul
 Secure state: ON
 BL state: unlocked
 hboot: 3.19.0.0000
@@ -811,9 +810,8 @@ S-ON, which is exactly the state `soff` wants.
 `fastboot getvar product` prints, `m8_ul` on this phone - and it is the first
 thing to look at: `unknown - no targets.conf section matches` means the table has no
 entry for this layout, and the `observed:` line under it is what to paste into a
-new section ([section 6](#6-parameter-offsets)). The `hboot 3.19.*` inside the
-brackets is the wildcard `targets.conf` matched on; the `hboot:` line below it
-is the build the phone actually reports. `soff` wants
+new section ([section 6](#6-parameter-offsets)). The `hboot:` line below it is
+the bootloader build the phone actually reports. `soff` wants
 `Secure state: ON`; on an already S-OFF phone it prints `already S-OFF` and
 returns. `Secure state: unknown (no root ...)` means `su` does not work yet, and
 nothing below will either. `Software status` is the same line the bootloader
@@ -1018,12 +1016,6 @@ written and read back by then.
 ### `restore`
 
 ```
-== device ==
-  serial  HT495WM00193
-  model   HTC One_M8 (htc_m8)
-  MID     0P6B12000
-  S state S-OFF (secure_flag 0)
-
 == mfg ==
   mfg  262144 bytes  HT495WM00193-20261104-045201.mfg.img
 writing 262144 bytes to mfg
@@ -1042,12 +1034,9 @@ scripts/stool.sh restore mfg HT495WM00193-20261104-045201.mfg.img
 Any firmware partition on the phone works, not only the seven this tool writes.
 `system`, `cache` and `userdata` are refused up front: those are Android's
 filesystems, not firmware this tool touches. Before writing, it prints the
-current phone's serial, model, MID and S state (the model line is
-`ro.product.model` and `ro.product.device` from the running ROM, so it changes
-with the ROM - the serial is what identifies the hardware). When the filename
-starts with a serial, that serial has to match the phone, otherwise the run
-stops without writing a byte (old backups without the prefix only get a note).
-What is left is
+When the filename starts with a serial, that serial has to match the phone,
+otherwise the run stops without writing a byte (old backups without the prefix
+only get a note). What is left is
 length: an image is one whole partition, so it has to be exactly that
 partition's length, and the numbers come from the device
 (`/sys/class/block/*/uevent`, the same probe that picks the `targets.conf`

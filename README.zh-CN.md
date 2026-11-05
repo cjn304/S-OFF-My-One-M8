@@ -88,7 +88,7 @@ M8 的 `backup` 写出这些文件：
 | `<serial>-<timestamp>.pg2fs.img` | p6，status flag 在这里 | 24 MB |
 | `<serial>-<timestamp>.misc.img` | p24，version-main 在这里 | 1 MB |
 
-文件名以序列号（`ro.serialno`）开头，后接时间戳，两台 M8 的备份放在同一个 `backup/` 里也不会混。`restore` 写之前先打印当前机器的序列号、型号、MID 和 S 状态；文件名里的序列号和当前机器不一致时直接拒绝，一个字节都不写。
+文件名以序列号（`ro.serialno`）开头，后接时间戳，两台 M8 的备份放在同一个 `backup/` 里也不会混。`restore` 只比对文件名里的序列号：和当前机器不一致时直接拒绝，一个字节都不写。
 
 txt 里就是 `status` 打到屏幕上的那份内容：`== state ==` 一段（含 `modules` 和 `selinux` 两行）、`== parameters ==` 一段。两处用的是同一个函数（`status_show`），所以文件不会和屏幕上的说法分叉。末尾是 `== restore ==`，每个本次真正落盘的镜像一行，照抄就能写回去：
 
@@ -508,7 +508,7 @@ adb shell 'dd if=/data/local/tmp/x.bin of=/dev/block/bootdevice/by-name/pg1fs bs
 
 ```
 == state ==
-target: m8_ul  [htc_m8, hboot 3.19.*]
+target: m8_ul
 Secure state: ON
 BL state: unlocked
 hboot: 3.19.0.0000
@@ -526,7 +526,7 @@ tamper      0           pg2fs @ 0x511804
 
 这是刷了 1540、改过 CID/MID、但仍是 S-ON 的机器，`soff` 要的就是这个状态。
 
-`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。方括号里的 `hboot 3.19.*` 是 `targets.conf` 拿来匹配的通配串，下面 `hboot:` 那行才是设备实际报告的构建号。`soff` 要的是 `Secure state: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Secure state: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper` 一个字节决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
+`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Secure state: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Secure state: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper` 一个字节决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `gen_addr.sh`
 
@@ -656,12 +656,6 @@ adb shell 'dmesg | grep -i "card status"'
 ### `restore`
 
 ```
-== device ==
-  serial  HT495WM00193
-  model   HTC One_M8 (htc_m8)
-  MID     0P6B12000
-  S state S-OFF (secure_flag 0)
-
 == mfg ==
   mfg  262144 bytes  HT495WM00193-20261104-045201.mfg.img
 writing 262144 bytes to mfg
@@ -677,7 +671,7 @@ writing 262144 bytes to mfg
 scripts/stool.sh restore mfg HT495WM00193-20261104-045201.mfg.img
 ```
 
-这台手机上的固件分区都能写，不限于本工具写的那七个。`system`、`cache`、`userdata` 同样除外，`restore system ...` 会在读文件之前就拒绝。写之前先打印当前机器的序列号、型号、MID 和 S 状态（型号那行的 `HTC One_M8` 和 `htc_m8` 读的是当前 ROM 的 `ro.product.model` 和 `ro.product.device`，换 ROM 就变，不是硬件身份；序列号才是）；文件名以序列号开头时，序列号必须和当前机器一致，否则拒绝，一个字节都不写（旧备份没有序列号前缀，只提示一行，不阻塞）。剩下的检查是长度：镜像就是一个完整分区，所以必须正好等于那个分区的长度，长度表来自设备（`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测）。长度对不上、分区名不存在、或者那不是这台手机 eMMC 上的分区，都在写入前停下。写完回读分区算 md5，与镜像比对。
+这台手机上的固件分区都能写，不限于本工具写的那七个。`system`、`cache`、`userdata` 同样除外，`restore system ...` 会在读文件之前就拒绝。文件名以序列号开头时，序列号必须和当前机器一致，否则拒绝，一个字节都不写（旧备份没有序列号前缀，只提示一行，不阻塞）。剩下的检查是长度：镜像就是一个完整分区，所以必须正好等于那个分区的长度，长度表来自设备（`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测）。长度对不上、分区名不存在、或者那不是这台手机 eMMC 上的分区，都在写入前停下。写完回读分区算 md5，与镜像比对。
 
 和备份一样，`restore` 也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能还原。
 
