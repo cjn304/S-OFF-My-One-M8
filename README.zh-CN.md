@@ -658,7 +658,7 @@ adb shell 'dmesg | grep -i "card status"'
 ```
 == device ==
   serial  HT495WM00193
-  model   HTC_One_M8 (htc_m8)
+  model   HTC One_M8 (htc_m8)
   MID     0P6B12000
   S state S-OFF (secure_flag 0)
 
@@ -677,7 +677,7 @@ writing 262144 bytes to mfg
 scripts/stool.sh restore mfg HT495WM00193-20261104-045201.mfg.img
 ```
 
-这台手机上的固件分区都能写，不限于本工具写的那七个。`system`、`cache`、`userdata` 同样除外，`restore system ...` 会在读文件之前就拒绝。写之前先打印当前机器的序列号、型号、MID 和 S 状态；文件名以序列号开头时，序列号必须和当前机器一致，否则拒绝，一个字节都不写（旧备份没有序列号前缀，只提示一行，不阻塞）。剩下的检查是长度：镜像就是一个完整分区，所以必须正好等于那个分区的长度，长度表来自设备（`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测）。长度对不上、分区名不存在、或者那不是这台手机 eMMC 上的分区，都在写入前停下。写完回读分区算 md5，与镜像比对。
+这台手机上的固件分区都能写，不限于本工具写的那七个。`system`、`cache`、`userdata` 同样除外，`restore system ...` 会在读文件之前就拒绝。写之前先打印当前机器的序列号、型号、MID 和 S 状态（型号那行的 `HTC One_M8` 和 `htc_m8` 读的是当前 ROM 的 `ro.product.model` 和 `ro.product.device`，换 ROM 就变，不是硬件身份；序列号才是）；文件名以序列号开头时，序列号必须和当前机器一致，否则拒绝，一个字节都不写（旧备份没有序列号前缀，只提示一行，不阻塞）。剩下的检查是长度：镜像就是一个完整分区，所以必须正好等于那个分区的长度，长度表来自设备（`/sys/class/block/*/uevent`，也就是选 `targets.conf` 那一节时用的同一份探测）。长度对不上、分区名不存在、或者那不是这台手机 eMMC 上的分区，都在写入前停下。写完回读分区算 md5，与镜像比对。
 
 和备份一样，`restore` 也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能还原。
 

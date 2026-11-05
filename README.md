@@ -1019,7 +1019,7 @@ written and read back by then.
 ```
 == device ==
   serial  HT495WM00193
-  model   HTC_One_M8 (htc_m8)
+  model   HTC One_M8 (htc_m8)
   MID     0P6B12000
   S state S-OFF (secure_flag 0)
 
@@ -1041,9 +1041,12 @@ scripts/stool.sh restore mfg HT495WM00193-20261104-045201.mfg.img
 Any firmware partition on the phone works, not only the seven this tool writes.
 `system`, `cache` and `userdata` are refused up front: those are Android's
 filesystems, not firmware this tool touches. Before writing, it prints the
-current phone's serial, model, MID and S state; when the filename starts with a
-serial, that serial has to match the phone, otherwise the run stops without
-writing a byte (old backups without the prefix only get a note). What is left is
+current phone's serial, model, MID and S state (the model line is
+`ro.product.model` and `ro.product.device` from the running ROM, so it changes
+with the ROM - the serial is what identifies the hardware). When the filename
+starts with a serial, that serial has to match the phone, otherwise the run
+stops without writing a byte (old backups without the prefix only get a note).
+What is left is
 length: an image is one whole partition, so it has to be exactly that
 partition's length, and the numbers come from the device
 (`/sys/class/block/*/uevent`, the same probe that picks the `targets.conf`
