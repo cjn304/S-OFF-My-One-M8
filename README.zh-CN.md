@@ -115,7 +115,7 @@ FAILED (status read failed (Too many links))
 
 ### 警告红字
 
-六行开发警告红字是 hboot 在启动镜像签名校验失败时画出来的，校验覆盖 `boot` 和 `recovery` 两个分区，任一不符都会画。
+六行开发警告是 hboot 在启动镜像签名校验失败时画出来的，校验覆盖 `boot` 和 `recovery` 两个分区，任一不符都会画。
 
 在 6.12.1540.4 的 hboot 里，六行共用一个绘制函数（文件偏移 `0x18B64`），全镜像只有一条 `bl` 指令进入它（`0x147EA`）。这条指令位于按分区校验的函数里，而该函数有六个入口：两个把 mode 设为 `9` 或 `0x0F`，读 `boot`；四个设为 `3`，读 `recovery`。任一入口校验失败，都会执行同一条 `bl 0x18B64`。其中两个 recovery 入口在 fastboot 命令处理函数里，调用前刚给主机回过 `OKAY`。
 
@@ -263,7 +263,7 @@ done
 | status | `tamper` | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时读作 4，Official 时是 0 |
 | secure | `secure` | `pg1fs` p2 | 0x8400，u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
 | BL | `blmagic` | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
-| 红字 | `hbootpart` | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
+| 警告 | `hbootpart` | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
 | 第一屏 | `splash` | `sp1` p12 | 0 | 画面从 0 开始：W x H x 2 字节 |
 
 `screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`hbootpart` 则告诉 `nowarn` 用哪个分区来校验镜像大小。

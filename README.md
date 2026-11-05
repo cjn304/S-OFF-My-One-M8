@@ -407,7 +407,7 @@ The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 | status | `tamper` | `pg2fs` p6 | 0x511804, u32 LE | reads 4 while hboot says `Software status: Modified`, 0 when Official |
 | secure | `secure` | `pg1fs` p2 | 0x8400, u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
 | BL | `blmagic` | `pg1fs` p2 | 0x8404, 4 chars | right after the flag: `HTCU` unlocked, `00000000` locked |
-| red text | `hbootpart` | `hboot` p26 | run time | six known banner strings, searched per image |
+| warning | `hbootpart` | `hboot` p26 | run time | six known banner strings, searched per image |
 | first screen | `splash` | `sp1` p12 | 0 | the frame starts at 0: W x H x 2 bytes |
 
 `screen` is the only key without an offset: it sets the default WxH `splash`
