@@ -197,11 +197,11 @@ nothing at all.
 
 ### Red text at boot
 
-The red text is drawn by hboot when the **recovery partition fails its
-signature check**. The check runs at normal boot: flash only TWRP, leave boot at
-the HTC image, and the lines still appear. The check picks its partition from
-the boot mode, and normal boot takes the recovery branch; the boot image is
-checked on the other branch, which is not what triggers this banner.
+The red text is drawn by hboot when a **boot image fails its signature check**.
+Both `boot` and `recovery` are checked, and either one failing paints the six
+lines.  Measured both ways: only TWRP flashed, with `boot` at the HTC image,
+draws them; `recovery` restored to the official image while `boot` still carries
+a Magisk patch also draws them.
 
 Neither S-OFF nor the `HTCU` at `pg1fs 0x8404` triggers it - that four-byte
 value only decides whether the bootloader screen says `*** UNLOCKED ***`,
@@ -218,11 +218,13 @@ What follows from that:
 
 - TWRP writes the `recovery` partition and never touches `boot`; the recovery
   image is not HTC-signed, so the lines still appear.
+- A `boot` image modified by Magisk, SuperSU or a custom kernel draws them too;
+  restoring only `recovery` does not help.
 - Relocking (`0x8404` back to 0) only changes the wording on the bootloader
-  screen; it does not change the image, so the lines stay until an official
-  `recovery` image is flashed back.
+  screen; it does not change the images, so the lines stay until both `boot` and
+  `recovery` are back to HTC-signed images.
 - S-OFF is not the switch; it only makes partitions writable. Whether the
-  checked image passes is what decides.
+  checked images pass is what decides.
 - `Software status: Modified` (tamper) is a different line on the bootloader
   screen, driven by the tamper value, not part of this boot screen or these six
   lines.

@@ -118,7 +118,7 @@ FAILED (status read failed (Too many links))
 
 ### 开机红字
 
-红字是 hboot 在校验 **recovery 分区签名**失败时画出来的。正常启动就会校验 recovery：只刷 TWRP、boot 保持官方签名，开机同样会画。校验函数按 boot mode 选分区，正常启动走的是 recovery 这一支；boot 的校验在另一支上，不是这里的触发点。
+红字是 hboot 在**启动镜像签名校验失败**时画出来的，校验覆盖 `boot` 和 `recovery` 两个分区，任一不符都会画。实测两种情况：只刷 TWRP、`boot` 保持官方，会画；把 `recovery` 刷回官方、`boot` 仍是 Magisk 补丁，也照画。
 
 触发它的不是 S-OFF，也不是 `pg1fs 0x8404` 里的 `HTCU`：那个四字节只让 bootloader 界面显示 `*** UNLOCKED ***` / `*** RELOCKED ***` / `*** LOCKED ***`。
 
@@ -127,9 +127,9 @@ FAILED (status read failed (Too many links))
 所以：
 
 - TWRP 写的是 `recovery` 分区，不碰 `boot`；但 `recovery` 不是 HTC 签名，红字照样出现。
-- 回锁（`0x8404` 写回 0）只改变界面上的字样，不改变镜像内容，不会让红字消失；把官方 `recovery` 刷回去才会。
+- `boot` 被 Magisk、SuperSU 或第三方内核改过，同样会画；只把 `recovery` 刷回官方消不掉。
+- 回锁（`0x8404` 写回 0）只改变界面上的字样，不改变镜像内容，不会让红字消失；`boot` 和 `recovery` 都回到官方签名才会。
 - S-OFF 不是开关，它只让分区可写；红字取决于被校验的镜像能不能通过。
-- `Software status: Modified`（tamper）是 bootloader 界面上的另一行，由 tamper 值决定，不在启动画面上，也不属于这六行。
 - `Software status: Modified`（tamper）是 bootloader 界面上的另一行，由 tamper 值决定，不在启动画面上，也不属于这六行。
 
 `nowarn` 是按内容找那六行，不是写死偏移。它先把整个 4 MB 的 `hboot` 分区 dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回，再逐字节读回校验。偏移在不同构建之间是变动的（6.12.1540.4 上是 `0x8C340`，6.31.1402.1 的 dump 上是 `0x8C3F8`，更老的 m8_ul 镜像上是 `0x899CE`），所以必须动态找。
