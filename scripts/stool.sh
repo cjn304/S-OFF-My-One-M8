@@ -550,6 +550,11 @@ print_state() {
 		*)   say "Secure state: ON" ;;
 		esac
 		say "BL state: $(bl_state)"
+		# The build hboot reports about itself, not the pattern from targets.conf;
+		# getvar answers with the same string, so both modes print one line here.
+		hb=$("$ADB" shell getprop ro.boot.bootloader 2>/dev/null | tr -d '\r')
+		[ -n "$hb" ] || hb=unknown
+		say "hboot: $hb"
 		# The bootloader prints this line from the tamper byte: 0 is Official,
 		# anything else is Modified.  Reading the same byte keeps the two in step.
 		say "Software status: $(p_status)"
@@ -574,6 +579,9 @@ print_state() {
 		*"device locked"*)   say "BL state: locked" ;;
 		*) say "BL state: unknown" ;;
 		esac
+		hb=$("$FB" getvar version-bootloader 2>&1 | sed -n 's/.*version-bootloader: //p' | tr -d '\r')
+		[ -n "$hb" ] || hb=unknown
+		say "hboot: $hb"
 		;;
 	*)
 		die "no device found (adb or fastboot)"
@@ -708,18 +716,13 @@ status_show() {
 	print_state
 	mode=$(device_mode)
 	if [ "$mode" = fastboot ]; then
-		say "== parameters (bootloader view) =="
+		# Only the three hboot can answer for.  BL_magic and secure_flag are
+		# readable here too, but they are storage offsets, and this mode has no
+		# partition-table match, so the block stays to the getvar values.
+		say "== parameters =="
 		printf '%-11s %s\n' CID     "$("$FB" getvar cidnum 2>&1 | sed -n 's/.*cidnum: //p' | tr -d '\r')"
 		printf '%-11s %s\n' MID     "$("$FB" getvar modelid 2>&1 | sed -n 's/.*modelid: //p' | tr -d '\r')"
 		printf '%-11s %s\n' version "$("$FB" getvar version-main 2>&1 | sed -n 's/.*version-main: //p' | tr -d '\r')"
-		printf '%-11s %s\n' hboot   "$("$FB" getvar version-bootloader 2>&1 | sed -n 's/.*version-bootloader: //p' | tr -d '\r')"
-		blv=$("$FB" oem refurbish unlockstatus 2>&1 | tr -d '\r')
-		case "$blv" in
-		*"device unlocked"*) blv=unlocked ;;
-		*"device locked"*)   blv=locked ;;
-		*) blv=unknown ;;
-		esac
-		printf '%-11s %s\n' "BL lock" "$blv"
 		return 0
 	fi
 	# print_state already explained why it could not read anything

@@ -791,6 +791,7 @@ worked, and the failure that belongs to it.
 target: m8  [htc_m8, hboot 3.19.*]
 Secure state: ON
 BL state: unlocked
+hboot: 3.19.0.0000
 Software status: Official
 modules: enabled
 selinux: Enforcing
@@ -809,7 +810,9 @@ S-ON, which is exactly the state `soff` wants.
 `target` is the `targets.conf` section that matched, and it is the first thing
 to look at: `unknown - no targets.conf section matches` means the table has no
 entry for this layout, and the `observed:` line under it is what to paste into a
-new section ([section 6](#6-parameter-offsets)). `soff` wants
+new section ([section 6](#6-parameter-offsets)). The `hboot 3.19.*` inside the
+brackets is the wildcard `targets.conf` matched on; the `hboot:` line below it
+is the build the phone actually reports. `soff` wants
 `Secure state: ON`; on an already S-OFF phone it prints `already S-OFF` and
 returns. `Secure state: unknown (no root ...)` means `su` does not work yet, and
 nothing below will either. `Software status` is the same line the bootloader
