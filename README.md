@@ -212,14 +212,20 @@ between builds - `0x8C340` on 6.12.1540.4, `0x8C3F8` on the 6.31.1402.1 dump,
 
 Two things to know before running it:
 
-- hboot carries the HTC signature.  Changing bytes breaks it; S-OFF is what
-  makes the SBL skip the check.  Never run this while S-ON, and keep the dumped
-  `<timestamp>.hboot.img` - `restore <timestamp>.hboot.img` writes it back.
+- hboot carries the HTC signature; one changed byte kills it.  While S-OFF the
+  SBL skips the check and the phone still boots.  The moment `son` writes the
+  secure flag back to 3, the SBL verifies hboot again, fails, and stops: hboot
+  never runs, so neither fastboot nor RUU comes up - only EDL is left.  Keep the
+  `<timestamp>.hboot.img` that `nowarn` prints and write it back with
+  `restore hboot <stamp>.hboot.img` before running `son`.  While S-ON the write
+  protection is still armed, so the write would not even land; `son` now checks
+  the six strings first and refuses if they were blanked.
 - These six strings are **not** unreferenced.  The draw function loads their
-  addresses with a 16-bit `ldr rX, [pc, #imm]` plus `add rX, pc`, which is why
-  searching for a 32-bit absolute address finds nothing.  It sits at `0x18B64`
-  on 6.12.1540.4 and at `0x18258` on the 4.18 `3aa067db` build.  Blanking the
-  strings is still the smallest edit, because there is only one place that draws
+  addresses with a 16-bit `ldr rX, [pc, #imm]` plus `add rX, pc`: a small
+  offset, then the current PC added.  That is why searching for a 32-bit
+  absolute address finds nothing, though the draw function does exist - at
+  `0x18B64` on 6.12.1540.4 and at `0x18258` on the 4.18 `3aa067db` build.
+  Blanking the strings is still the smallest edit, because only one place draws
   them and the edit changes the text, not the control flow.
 
 ### First screen

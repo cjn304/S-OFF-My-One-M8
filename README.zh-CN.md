@@ -125,8 +125,8 @@ FAILED (status read failed (Too many links))
 
 运行前要知道两件事：
 
-- hboot 带 HTC 签名，改字节就会破坏签名，全靠 S-OFF 让 SBL 跳过校验。S-ON 时绝对不能碰，并且一定要保留 dump 出来的 `<timestamp>.hboot.img`：`restore <时间戳>.hboot.img` 就是把它原样写回去。
-- 这六行不是「没有引用」：绘制函数用 16 位 `ldr rX, [pc, #imm]` 加 `add rX, pc` 取字符串地址，所以按 32 位绝对地址去搜一个都搜不到。6.12.1540.4 上是 `0x18B64`，4.18 的 `3aa067db` 上是 `0x18258`。改字符串仍然是最小改动，因为绘制只有这一处，改完只是内容变空，不动控制流。
+- hboot 带 HTC 签名，改一个字节签名就废了。S-OFF 时 SBL 跳过校验，所以还能启动；一旦 `son` 把 secure flag 写回 3，下次启动 SBL 重新验签，失败就停在那里——hboot 不会执行，fastboot、RUU 都进不去，只剩 EDL。改之前必须留下 `nowarn` 打出的 `<timestamp>.hboot.img`，并且在 `son` 之前用 `restore hboot <时间戳>.hboot.img` 写回去。S-ON 状态下写保护本来就没解除，想改也写不进去；`son` 现在会先检查六行是否还在，发现被清空就直接拒绝。
+- 这六行有引用，只是不用 32 位绝对地址：代码先 `ldr rX, [pc, #imm]` 取一个小偏移，再 `add rX, pc` 加上当前 PC，得到字符串地址。所以按 `0x0F58xxxx` 这种绝对地址搜不到，但绘制函数确实存在：6.12.1540.4 上是 `0x18B64`，4.18 的 `3aa067db` 上是 `0x18258`。改字符串仍然是最小改动，因为六行只有这一处绘制，清空内容不影响控制流。
 
 ### 第一屏
 
