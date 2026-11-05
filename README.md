@@ -186,7 +186,7 @@ Check the battery and leave the cable alone. `backup hboot` only helps while
 hboot still reaches the bootloader; it cannot recover a phone that shows
 nothing at all.
 
-### Warning text
+### Warning red text
 
 The six dev-warning lines is drawn by hboot when a boot image fails its
 signature check. Both `boot` and `recovery` are checked, and either one failing
