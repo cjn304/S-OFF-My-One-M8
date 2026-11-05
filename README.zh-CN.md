@@ -510,9 +510,9 @@ adb shell 'dd if=/data/local/tmp/x.bin of=/dev/block/bootdevice/by-name/pg1fs bs
 == state ==
 target: m8_ul
 serial: HT495WM00193
+hboot: 3.19.0.0000
 Secure state: ON
 BL state: unlocked
-hboot: 3.19.0.0000
 Software status: Official
 modules: enabled
 selinux: Enforcing

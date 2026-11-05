@@ -550,16 +550,16 @@ print_state() {
 		sn=$(device_serial)
 		[ -n "$sn" ] || sn=unknown
 		say "serial: $sn"
+		# The build hboot reports about itself; getvar answers with the same
+		# string, so both modes print one line in the same place.
+		hb=$("$ADB" shell getprop ro.boot.bootloader 2>/dev/null | tr -d '\r')
+		[ -n "$hb" ] || hb=unknown
+		say "hboot: $hb"
 		case "$(secure_state)" in
 		off) say "Secure state: OFF" ;;
 		*)   say "Secure state: ON" ;;
 		esac
 		say "BL state: $(bl_state)"
-		# The build hboot reports about itself, not the pattern from targets.conf;
-		# getvar answers with the same string, so both modes print one line here.
-		hb=$("$ADB" shell getprop ro.boot.bootloader 2>/dev/null | tr -d '\r')
-		[ -n "$hb" ] || hb=unknown
-		say "hboot: $hb"
 		# The bootloader prints this line from the tamper byte: 0 is Official,
 		# anything else is Modified.  Reading the same byte keeps the two in step.
 		say "Software status: $(p_status)"
@@ -575,6 +575,9 @@ print_state() {
 		sn=$("$FB" getvar serialno 2>&1 | sed -n 's/.*serialno: //p' | tr -d '\r')
 		[ -n "$sn" ] || sn=unknown
 		say "serial: $sn"
+		hb=$("$FB" getvar version-bootloader 2>&1 | sed -n 's/.*version-bootloader: //p' | tr -d '\r')
+		[ -n "$hb" ] || hb=unknown
+		say "hboot: $hb"
 		sf=$("$FB" oem readsecureflag 2>&1 | sed -n 's/.*secure_flag: //p' | tr -d '\r')
 		case "$sf" in
 		0) say "Secure state: OFF" ;;
@@ -587,9 +590,6 @@ print_state() {
 		*"device locked"*)   say "BL state: locked" ;;
 		*) say "BL state: unknown" ;;
 		esac
-		hb=$("$FB" getvar version-bootloader 2>&1 | sed -n 's/.*version-bootloader: //p' | tr -d '\r')
-		[ -n "$hb" ] || hb=unknown
-		say "hboot: $hb"
 		;;
 	*)
 		die "no device found (adb or fastboot)"

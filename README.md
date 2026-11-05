@@ -789,9 +789,9 @@ worked, and the failure that belongs to it.
 == state ==
 target: m8_ul
 serial: HT495WM00193
+hboot: 3.19.0.0000
 Secure state: ON
 BL state: unlocked
-hboot: 3.19.0.0000
 Software status: Official
 modules: enabled
 selinux: Enforcing
