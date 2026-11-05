@@ -709,6 +709,24 @@ the partition head (0..0x1000, including `0x424`) stayed byte-identical to the
 pre-change backup after a successful S-OFF, and the phone booted normally. Leave
 it alone.
 
+For any other offset, without going through `set`:
+
+```sh
+# read 4 bytes at 0x8400 (33792)
+adb shell 'dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=33792 count=4 2>/dev/null' | od -An -tx1
+
+# write 4 bytes
+printf '\0\0\0\0' > /tmp/x.bin
+adb push /tmp/x.bin //data/local/tmp/x.bin
+adb shell 'dd if=/data/local/tmp/x.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=4; sync'
+```
+
+Use 4 KB alignment for larger reads: `bs=4096 skip=8 count=1` is 4 KB at offset
+32768. Toybox `dd` disables `conv=notrunc` and answers `conv option disabled`;
+leave it out for block devices, it cannot truncate a partition. After a write,
+`sync`, then `echo 3 > /proc/sys/vm/drop_caches`, then read back, or you may get
+the page cache. `hex_at` and `write_hex` in the script do exactly this.
+
 ### 5. Why it stays off
 
 After the reboot hboot reads `secure_flag = 0` and takes its S-OFF path — which

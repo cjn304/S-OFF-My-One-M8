@@ -458,6 +458,20 @@ dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 
 `pg1fs + 0x424` 还有 4 个字节，老版 Firewater/Sunshine 的配方会一起写。**这台机器上不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，手机正常启动。不要动它。
 
+要读写别的偏移，不经过 `set` 的话：
+
+```sh
+# 读 4 字节，0x8400 = 33792
+adb shell 'dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=33792 count=4 2>/dev/null' | od -An -tx1
+
+# 写 4 字节
+printf '\0\0\0\0' > /tmp/x.bin
+adb push /tmp/x.bin //data/local/tmp/x.bin
+adb shell 'dd if=/data/local/tmp/x.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=4; sync'
+```
+
+大块按 4 KB 对齐，`bs=4096 skip=8 count=1` 就是偏移 32768 处的 4 KB。toybox 的 `dd` 禁用了 `conv=notrunc`，会报 `conv option disabled`，对块设备省略它就行，不会截断分区。写完先 `sync`，再 `echo 3 > /proc/sys/vm/drop_caches`，然后回读，否则读到的是页缓存。脚本里做这件事的是 `hex_at` 和 `write_hex`。
+
 ### 5. 为什么之后一直有效
 
 重启后 hboot 读到 `secure_flag = 0`，走它的 S-OFF 分支，其中就包括**不再设置 power-on 写保护**。所以 S-OFF 设备上第二次 `CMD31` 返回全 0，`pg1fs` 从那时起一直可写。写保护不是被"攻破"的，是**不再被设置**了。
