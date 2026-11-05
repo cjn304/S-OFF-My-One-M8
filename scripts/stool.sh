@@ -20,8 +20,8 @@
 #
 # Every command reads the current S state first, and every command that writes
 # is refused while S-ON.  Nothing is backed up automatically: `backup` writes
-# one image per partition plus a readable txt, and `restore` writes one named
-# image back.
+# one image per partition plus a txt of what `status` prints and the command
+# that restores each image, and `restore` writes one named image back.
 #
 # Where each parameter lives is not fixed here.  targets.conf holds one section
 # per partition layout and the script picks one by comparing the sizes the
@@ -479,10 +479,6 @@ p_bl()      { h=$(hex_at "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")
 	             00000000) printf "00000000";;
 	             *) printf "%s" "$h";; esac; }
 
-at_line() { # part offset len -> "part:0xOFF=hex", the bytes behind a value
-	printf '%s:0x%x=%s' "$1" "$(( $2 ))" "$(hex_at "$1" "$2" "$3")"
-}
-
 check_param() { # param value - dies on a value that could never be written
 	# Runs before require_android and before the snapshot, so a typo costs
 	# nothing.  The one thing it cannot check is the write protection, which
@@ -576,36 +572,32 @@ device_tag() { # filename-safe identity, never empty
 	printf '%s' "${_t:-noserial}"
 }
 
-snapshot_write() { # target file [tag]
+# The txt is the status output plus the commands that put the images back, so
+# it needs no second format to keep in sync: whatever `status` reports is what
+# the file records.  Called after the dump, with the images that actually
+# landed, so no listed restore command can point at a missing file.
+snapshot_write() { # target file tag [saved-image ...]
 	f=$1
-	tag=${2:-$(device_tag)}
+	tag=$2
+	shift 2
 	{
-		printf '# S-OFF-My-One-M8 parameter snapshot\n'
-		printf '# time=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-		printf '# serial=%s\n' "$tag"
-		printf '# model=%s (%s)\n' "$("$ADB" shell getprop ro.product.model 2>/dev/null | tr -d '\r')" \
-			"$("$ADB" shell getprop ro.product.device 2>/dev/null | tr -d '\r')"
-		printf '# hboot=%s\n' "$("$ADB" shell getprop ro.boot.bootloader 2>/dev/null | tr -d '\r')"
-		printf '# kernel=%s\n' "$("$ADB" shell uname -r 2>/dev/null | tr -d '\r')"
-		printf '# emmc=%s sectors\n' "$(devsh "cat /sys/class/block/mmcblk0/size 2>/dev/null" | tr -d '\r')"
-		printf '# target=%s\n' "$TARGET"
-		# the stamp the images are named after: <dir>/<stamp>.txt -> <stamp>
-		stamp=${f##*/}
-		stamp=${stamp%.txt}
-		printf '# whole images: %s.<partition>.img   (stool.sh restore <partition> <file>)\n' \
-			"$stamp"
-		printf 'secure=%s/%s\n'  "$(secure_state)" \
-			"$(at_line "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"
-		printf 'BL=%s/%s\n'      "$(bl_state)" \
-			"$(at_line "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")"
-		printf 'tamper=%s/%s\n'  "$(p_tamper)" \
-			"$(at_line "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"
-		printf 'CID=%s/%s\n'     "$(p_cid)" \
-			"$(at_line "$PART_CID" "$OFF_CID" "$LEN_CID")"
-		printf 'MID=%s/%s\n'     "$(p_mid)" \
-			"$(at_line "$PART_MID" "$OFF_MID" "$LEN_MID")"
-		printf 'version=%s/%s\n' "$(p_version)" \
-			"$(at_line "$PART_VER" "$OFF_VER" "$LEN_VER")"
+		printf '# S-OFF-My-One-M8 backup  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+		printf '# serial %s\n' "$tag"
+		printf '#\n'
+		status_show
+		printf '\n'
+		printf '== restore ==\n'
+		if [ $# -eq 0 ]; then
+			printf '  no image from this run landed - nothing to restore\n'
+		else
+			printf '  stool.sh restore <partition> <file>   (bare filename = look in backup/)\n'
+			for one in "$@"; do
+				nm=${one##*/}
+				pn=${nm%.img}
+				pn=${pn##*.}
+				printf '  stool.sh restore %-11s %s\n' "$pn" "$nm"
+			done
+		fi
 	} > "$f"
 }
 
@@ -660,27 +652,36 @@ cmd_backup() { # [partition] - every partition plus the txt, or just the one
 	fi
 
 	f=$BACKUP_DIR/$tag-$ts.txt
-	snapshot_write "$f" "$tag"
-	[ -s "$f" ] || die "backup failed"
 
-	# The txt only holds the bytes this tool writes - six small ranges.  Keep
-	# whole images of every partition this tool writes: the one carrying the
+	# Whole images of every partition this tool writes: the one carrying the
 	# secure flag is the largest (pg1fs, ~119 MB on the M8), the tamper flag has
 	# its own.  Radio is never written here, so it is not dumped.  The names come
 	# from targets.conf; pg1fs appears twice there (flag and BL magic), so dedupe.
+	# The txt is written afterwards and lists only what landed, so it never
+	# carries a restore command for a file the dump failed to produce.
+	set --
 	for part in $(target_parts); do
-		dump_one "$part" "$BACKUP_DIR/$tag-$ts.$part.img" || {
+		img=$BACKUP_DIR/$tag-$ts.$part.img
+		if dump_one "$part" "$img"; then
+			set -- "$@" "$img"
+		else
+			rm -f "$img"
 			warn "could not dump $part"
-			continue
-		}
+		fi
 	done
+
+	snapshot_write "$f" "$tag" "$@"
+	[ -s "$f" ] || die "backup failed"
 
 	printf '%s\n' "$f"
 }
 
 # ---------------------------------------------------------------- status
 
-cmd_status() {
+# status_show prints everything `status` prints and nothing else.  The backup
+# txt is written from this same function, so the file and the screen can never
+# drift apart: one source, two destinations.
+status_show() {
 	say "== state =="
 	print_state
 	mode=$(device_mode)
@@ -714,6 +715,10 @@ cmd_status() {
 	say ""
 	printf '%-9s %s\n' modules  "$(devsh "cat /proc/sys/kernel/modules_disabled 2>/dev/null" | tr -d '\r')"
 	printf '%-9s %s\n' selinux  "$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')"
+}
+
+cmd_status() {
+	status_show
 }
 
 # ---------------------------------------------------------------- set

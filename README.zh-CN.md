@@ -69,7 +69,7 @@ scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 tar
 
 每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
-每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<序列号>-<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
+每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<序列号>-<时间戳>.{txt,img}`（五个整分区，外加一份等于 `status` 输出、末尾附还原命令的 txt），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
 
@@ -81,7 +81,7 @@ M8 的 `backup` 写出这些文件：
 
 | 文件 | 内容 | 大小 |
 |---|---|---|
-| `<serial>-<timestamp>.txt` | 全部参数的值，连同上一次读到的字节 | 约 0.5 KB |
+| `<serial>-<timestamp>.txt` | `status` 的输出，末尾附上每个镜像的还原命令 | 约 1 KB |
 | `<serial>-<timestamp>.pg1fs.img` | p2，secure flag、BL magic 在这里 | 119 MB |
 | `<serial>-<timestamp>.board_info.img` | p3，CID、IMEI、板级数据在这里 | 16 KB |
 | `<serial>-<timestamp>.mfg.img` | p5，MID 在这里 | 256 KB |
@@ -90,7 +90,17 @@ M8 的 `backup` 写出这些文件：
 
 文件名以序列号（`ro.serialno`）开头，后接时间戳，两台 M8 的备份放在同一个 `backup/` 里也不会混。`restore` 写之前先打印当前机器的序列号、型号、MID 和 S 状态；文件名里的序列号和当前机器不一致时直接拒绝，一个字节都不写。
 
-txt 只是给人看的记录。`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留：CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 144 MB，走 USB 大概一分钟。
+txt 里就是 `status` 打到屏幕上的那份内容：`== state ==` 一段、`== parameters ==` 一段，外加 `modules` 和 `selinux`。两处用的是同一个函数（`status_show`），所以文件不会和屏幕上的说法分叉。末尾是 `== restore ==`，每个本次真正落盘的镜像一行，照抄就能写回去：
+
+```text
+== restore ==
+  stool.sh restore <partition> <file>   (bare filename = look in backup/)
+  stool.sh restore pg1fs       HT495WM00193-20261105-215502.pg1fs.img
+  stool.sh restore mfg         HT495WM00193-20261105-215502.mfg.img
+  stool.sh restore misc        HT495WM00193-20261105-215502.misc.img
+```
+
+只列 dump 成功的分区，失败的那个不写进来，所以不会出现指向不存在文件的命令。`restore` 只给文件名时到 `backup/` 里找。`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留：CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 144 MB，走 USB 大概一分钟。
 
 ### CID、MID 和刷机的关系
 
@@ -559,7 +569,7 @@ pwrsq_on: (no undefined symbols)
 /path/to/repo/backup/HT495WM00193-20261104-031826.txt
 ```
 
-每个分区一行打到 stderr，最后一行是 txt 的路径（stdout）。整套约 144 MB，走 USB 大概一分钟。某个分区读不出来会打 `warning: could not dump <分区>` 然后继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
+每个分区一行打到 stderr，最后一行是 txt 的路径（stdout）。txt 在五个镜像都 dump 完之后才写，内容就是 `status` 的输出加一段 `== restore ==`，只列成功的那几个分区。整套约 144 MB，走 USB 大概一分钟。某个分区读不出来会打 `warning: could not dump <分区>` 然后继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
 
 写出分区名就只备份那一个，不写 txt：
 

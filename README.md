@@ -96,8 +96,9 @@ section is refused before anything is written - see
 [section 6](#6-parameter-offsets) to add one.
 
 Every command reads the S state first. Nothing is backed up automatically:
-`backup` writes `backup/<serial>-<timestamp>.{txt,img}` - five whole partitions plus a
-txt with a readable summary - and `restore` writes those images
+`backup` writes `backup/<serial>-<timestamp>.{txt,img}` - five whole partitions
+plus a txt that reproduces `status` and ends with one restore command per image
+- and `restore` writes those images
 back, `0x8400` among them. The flag inside the image wins, so restoring a set
 taken while S-ON puts the phone back to S-ON. The only dumps taken without
 asking are the ones `nowarn` and `splash` make of the single partition they
@@ -126,7 +127,7 @@ What a M8's backup holds:
 
 | file | content | size |
 |---|---|---|
-| `<serial>-<timestamp>.txt` | every parameter, with the bytes it was read from | ~0.5 KB |
+| `<serial>-<timestamp>.txt` | what `status` prints, plus a restore command per image | ~1 KB |
 | `<serial>-<timestamp>.pg1fs.img` | p2 — the secure flag, BL magic lives here | 119 MB |
 | `<serial>-<timestamp>.board_info.img` | p3 — CID, IMEI, board data lives here | 16 KB |
 | `<serial>-<timestamp>.mfg.img` | p5 — MID lives here | 256 KB |
@@ -138,12 +139,26 @@ M8s can share one `backup/` directory without getting mixed up. `restore`
 prints the current serial, model, MID and S state first, and refuses an image
 whose name carries another phone's serial.
 
-The txt is the record you read. `set cid` writes its 8 bytes at `board_info`
-0x14 with `dd`, like the rest; hboot reads it at boot, so `getvar cidnum`
-changes only after a reboot. The whole p3 image is still kept - the CID sits
-next to the IMEI and board data this tool never touches. Radio (p20) is never
-written, so it is not dumped. The whole set is ~144 MB and takes about a
-minute over USB.
+The txt holds exactly what `status` prints: the `== state ==` block, the
+`== parameters ==` block, then `modules` and `selinux`. Both come from the same
+function (`status_show`), so the file and the screen cannot drift apart. It ends
+with `== restore ==`, one line per image that actually landed, ready to copy:
+
+```text
+== restore ==
+  stool.sh restore <partition> <file>   (bare filename = look in backup/)
+  stool.sh restore pg1fs       HT495WM00193-20261105-215502.pg1fs.img
+  stool.sh restore mfg         HT495WM00193-20261105-215502.mfg.img
+  stool.sh restore misc        HT495WM00193-20261105-215502.misc.img
+```
+
+Only partitions whose dump succeeded are listed, so no line points at a missing
+file. A bare filename is looked up in `backup/`. `set cid` writes its 8 bytes at
+`board_info` 0x14 with `dd`, like the rest; hboot reads it at boot, so
+`getvar cidnum` changes only after a reboot. The whole p3 image is still kept -
+the CID sits next to the IMEI and board data this tool never touches. Radio
+(p20) is never written, so it is not dumped. The whole set is ~144 MB and takes
+about a minute over USB.
 
 ### CID, MID and flashing
 
@@ -851,7 +866,9 @@ whether the power cycle worked.
 /path/to/repo/backup/HT495WM00193-20261104-031826.txt
 ```
 
-One line per partition on stderr, the txt path on stdout. The whole set is
+One line per partition on stderr, the txt path on stdout. The txt is written
+after all five dumps and holds the `status` output plus a `== restore ==` block
+listing only the partitions that landed. The whole set is
 about 144 MB and takes roughly a minute over USB. A partition that cannot be
 read gives `warning: could not dump <part>` and the run continues; a short image
 gives `<part>: expected N bytes, got M`.
