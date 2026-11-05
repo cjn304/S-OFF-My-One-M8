@@ -208,11 +208,15 @@ value only decides whether the bootloader screen says `*** UNLOCKED ***`,
 `*** RELOCKED ***` or `*** LOCKED ***`.
 
 On the 6.12.1540.4 hboot the six lines share one draw function at file offset
-`0x18B64`, and the whole image calls it from exactly one place, `0x147EA`.  The
-instruction right before is the image signature check at `0x147D4`: a zero return
-boots straight on, a non-zero return enters the function, paints the six lines,
-flushes the screen and then carries on booting.  The 4.18 `3aa067db` build has
-the same shape - function `0x18258`, call site `0x142AE`, check at `0x14298`.
+`0x18B64`, reached by exactly one `bl` instruction, `0x147EA`.  That instruction
+sits inside the per-partition check, and the check is entered twice: `0xF5084A6`
+sets mode `0x0F` and calls `0xF51490C` (reads `boot`), `0xF530E3E` sets mode `3`
+and calls `0xF51490C` (reads `recovery`).  Either check failing executes the same
+`bl 0x18B64`.  The instruction right before it is the image signature check at
+`0x147D4`: a zero return boots straight on, a non-zero return enters the
+function, paints the six lines, flushes the screen and then carries on booting.
+The 4.18 `3aa067db` build has the same shape - function `0x18258`, call site
+`0x142AE`, check at `0x14298`.
 
 What follows from that:
 
