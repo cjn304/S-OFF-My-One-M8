@@ -197,13 +197,32 @@ nothing at all.
 
 ### Red text at boot
 
-Red text is not an S-OFF artefact; it comes from an unlocked bootloader. When
-hboot reads `HTCU` at `pg1fs 0x8404`, it prints those six lines under the HTC
-logo at boot. Relocking to `00000000` normally stops them and the screen shows
-`*** RELOCKED ***` instead, though some builds keep printing them based on the
-tamper flag. An S-OFF phone with the BL still unlocked keeps them, and so does
-an S-ON phone that was officially unlocked. `Software status: Modified`
-(tamper=4) is a separate line on the bootloader screen, not one of the six.
+The red text is drawn by hboot when the **boot partition fails its signature
+check**. Neither S-OFF nor the `HTCU` at `pg1fs 0x8404` triggers it - that
+four-byte value only decides whether the bootloader screen says
+`*** UNLOCKED ***`, `*** RELOCKED ***` or `*** LOCKED ***`.
+
+On the 6.12.1540.4 hboot the six lines share one draw function at file offset
+`0x18B64`, and the whole image calls it from exactly one place, `0x147EA`.  The
+instruction right before is the boot signature check at `0x147D4`: a zero return
+boots straight on, a non-zero return enters the function, paints the six lines,
+flushes the screen and then carries on booting.  The 4.18 `3aa067db` build has
+the same shape - function `0x18258`, call site `0x142AE`, check at `0x14298`.
+
+What follows from that:
+
+- Once unlocked, hboot no longer treats the boot image as verified - the check
+  takes the failure branch - so an unlocked phone paints the lines on every
+  boot.  That is why they appear the moment HTCdev unlocks the phone.
+- Relocking (`0x8404` back to 0) only changes the wording on the bootloader
+  screen; it does not make the check pass.  The lines go away only when the boot
+  image is HTC-signed again.  With a modified boot (root, custom kernel, an
+  S.Team ROM) they stay after relocking, and the phone may not boot at all.
+- S-OFF is not the switch; it only makes partitions writable. The boot image
+  passing or failing the check is what decides.
+- `Software status: Modified` (tamper) is a different line on the bootloader
+  screen, driven by the tamper value, not part of this boot screen or these six
+  lines.
 
 `nowarn` finds the six lines by content, not by a hard-coded offset.  It
 dumps the whole 4 MB `hboot` partition, searches for the six strings, blanks
@@ -216,12 +235,12 @@ Two things to know before running it:
 - hboot carries the HTC signature.  Changing bytes breaks it; S-OFF is what
   makes the SBL skip the check.  Never run this while S-ON, and keep the dumped
   `<timestamp>.hboot.img` - `restore <timestamp>.hboot.img` writes it back.
-- On the 6.12.1540.4 hboot these six strings have **no static cross reference**
-  in the image.  Every form was scanned: absolute address, raw file offset,
-  low-20-bit match, ARM and Thumb `movw`/`movt`, and the literal pool of the
-  code section.  The banner is assembled at run time, so blanking the strings is
-  the only safe edit - there is no "draw function" with a patchable argument to
-  find.
+- These six strings are **not** unreferenced.  The draw function loads their
+  addresses with a 16-bit `ldr rX, [pc, #imm]` plus `add rX, pc`, which is why
+  searching for a 32-bit absolute address finds nothing.  It sits at `0x18B64`
+  on 6.12.1540.4 and at `0x18258` on the 4.18 `3aa067db` build.  Blanking the
+  strings is still the smallest edit, because there is only one place that draws
+  them and the edit changes the text, not the control flow.
 
 ### First screen
 
