@@ -372,7 +372,7 @@ device reports in `/sys/class/block/*/uevent` (`PARTNAME` plus `size`, in
 rewriting MID or CID moves nothing, because both are contents of partitions,
 while a different firmware gives the partitions that carry the records
 different sizes. When nothing matches, the script stops before touching the
-card and prints what it saw:
+eMMC and prints what it saw:
 
 ```
 error: no section in targets.conf matches this device.
@@ -474,6 +474,7 @@ The reference build is:
 | kernel | `3.4.0-perf-ga6393e1` (Jan 2016) / `3.4.0-perf-g708019f` (Nov 2015) |
 | hboot | `3.19.0.0000` |
 | root | Magisk 20.1 (`su`), `modules_disabled=0` |
+| 32 GB test unit | 4.18.708.12 (S-ON), hboot `3aa067db`, Magisk 20.1, 61071360-sector eMMC |
 
 MID and CID are the values the phone shipped with; the reference unit was later
 switched to `0P6B12000` / `11111111` and re-flashed with the Dev firmware, which
@@ -592,7 +593,7 @@ Power-on protection is only cleared by a power cycle. `CMD29`
 (CLEAR_WRITE_PROT) has no effect on it, and `dd` to `pg1fs` comes back with
 `card status 0x400d00` — bit 22, `WP_ERASE_SKIP`.
 
-Protection is not per partition but per **write protect group**, and the card
+Protection is not per partition but per **write protect group**, and the eMMC
 decides how big a group is. `mmc_cmd extcsd` reads the fields that settle it:
 
 ```
@@ -603,11 +604,11 @@ decides how big a group is. `mmc_cmd extcsd` reads the fields that settle it:
   32 groups    256 MiB of 14910 MiB (1.7%)
 ```
 
-8 MiB per group and CMD31 reports 32 of them, so this card can describe at most
-the first 256 MiB. Measured on an S-ON M8, that bitmap is **not** what the card
+8 MiB per group and CMD31 reports 32 of them, so this bitmap can describe at most
+the first 256 MiB. Measured on an S-ON M8, that bitmap is **not** what the eMMC
 obeys: it says 31 of the 32 groups are protected, yet a byte written at 120 MiB
 lands and one written at 315 MiB comes back `card status 0x400d00` and never
-reaches the card. `WP_GRP_ENABLE = 0` says the same thing from the other side:
+reaches the eMMC. `WP_GRP_ENABLE = 0` says the same thing from the other side:
 the group mechanism is off, hboot protects ranges, and `mmc_cmd wp` is only good
 as an all-or-nothing check.
 
@@ -683,8 +684,11 @@ discharges before power is restored).
 The log these produce is in [diagnostic](#diagnostic); the two lines that matter
 here are `ops->disable ret=0` and `ops->enable ret=0` - they mean the driver ops
 really ran instead of being short-circuited by the core.  The `mmc_reinit_card`
-pair at the end is HTC's own re-initialisation path in `sdhci_msm`: the eMMC
-comes back, with its partitions, without rebooting.
+pair at the end is HTC's own re-initialisation path in `sdhci_msm`: on the
+reference build the eMMC comes back that way, with its partitions, without
+rebooting.  The 32 GB phone with an 8 s cut does not take that path: the host
+reports `runtime_error -110` first and the nodes appear a minute or two later,
+see [Power cycle](#power-cycle).
 
 ### 4. The write
 
@@ -750,10 +754,14 @@ modules   0
 selinux   Enforcing
 ```
 
+This is a phone that already runs 1540 with a changed CID/MID but is still
+S-ON, which is exactly the state `soff` wants.
+
 `target` is the `targets.conf` section that matched, and it is the first thing
 to look at: `unknown - no targets.conf section matches` means the table has no
 entry for this layout, and the `observed:` line under it is what to paste into a
-new section ([section 6](#6-parameter-offsets)). `S state` has to read `S-ON`.
+new section ([section 6](#6-parameter-offsets)). `soff` wants `S-ON`; on an
+already S-OFF phone it prints `already S-OFF` and returns.
 `unknown (no root ...)` means `su` does not work yet, and nothing below will
 either. `modules` must be `0`; anything else and `insmod` is denied.
 `selinux Enforcing` is not fatal - `soff` warns and carries on, and whether the
@@ -761,6 +769,9 @@ module loads depends on the domain `su` lands in. If it is denied,
 `setenforce 0` for this boot and rerun.
 
 ### `gen_addr.sh`
+
+The block below comes from another machine (`g708019f`); addresses and the crc
+change with the build, so do not copy them:
 
 ```
 wrote .../kmod/addr.h
@@ -854,10 +865,13 @@ match this kernel, and the run stops there.
 and two `sync` calls. The eMMC is about to lose power, so nothing may be
 writing to it.
 
-`/data` is mounted `errors=panic`: any write that reaches a dead eMMC panics.
-The phone reboots by itself, the protection is re-armed and the flag is
-untouched, so a panic here costs time and nothing else - fix the cause and
-retry. To take `/data` out of the picture entirely, remount it read-only first:
+`/data` is mounted `errors=panic`: a write that reaches a dead eMMC raises I/O
+errors and aborts the ext4 journal, and a panic is the worst case. If it does
+panic, the phone reboots by itself, the protection is re-armed and the flag is
+untouched, so it costs time and nothing else. On the 32 GB phone, 25 s with the
+rail down did not panic: `JBD2: Detected IO errors` and an aborted journal, and
+the next boot recovered. To take `/data` out of the picture entirely, remount it
+read-only first:
 
 ```sh
 adb shell 'su -c "mount -o remount,ro /data"'
@@ -869,8 +883,9 @@ on the `stop` + `sync` above.
 #### Power cycle
 
 `== power cycle ==` - `OFF_DONE`, the rail stays down for 8 s
-(`PWRSQ_OFF_SEC` changes it), then `ON_DONE`. `dmesg | grep mmc_reinit_card`
-shows the re-scan itself.
+(`PWRSQ_OFF_SEC` changes it), then `ON_DONE`. On the reference build
+`dmesg | grep mmc_reinit_card` shows the re-scan; the 32 GB phone has no such
+line, only `runtime_error -110`, see below.
 
 Measured on the 32 GB phone: 1.5 s was not enough, the bitmap still listed 31
 groups after the rail came back; 8 s cleared it. The longer the rail stays down,
@@ -911,8 +926,12 @@ adb shell 'dmesg | grep -i "card status"'
 
 * `card status 0x400d00` (bit 22, `WP_ERASE_SKIP`) - protection still active,
   the power cycle did not actually happen. `pwrsq: ops->disable ret=0` must
-  appear in `dmesg`, and `cat /sys/kernel/debug/regulator/8941_l20/enable` must
-  read 0 while the eMMC is gone.
+  appear in `dmesg`. With debugfs mounted as in the quick start,
+  `/sys/kernel/debug/regulator/8941_l20/enable` exists and must read 0 while the
+  eMMC is gone; without debugfs that path does not exist, and
+  `ops->disable ret=0` plus the I/O errors are what you have. The module's
+  `Failed to create debugfs directory` only means regulator core created that
+  directory first.
 * no `card status` error at all - you read back from the page cache. Always
   `sync` + `echo 3 > /proc/sys/vm/drop_caches` before verifying.
 
@@ -972,7 +991,7 @@ length both come from the device, so it runs on a phone this tool has no offsets
 for.
 
 What decides whether it worked is the read-back, not the write. On an S-ON phone
-the bootloader write-protects some partitions at the card level; a write to one
+the bootloader write-protects some partitions at the eMMC level; a write to one
 of those is refused, `dd` still reports success, and the md5 comparison is what
 catches it. `dmesg` shows `card status 0x400d00` for the refusal. S-OFF stops
 arming that protection, but the command itself no longer insists on it.
@@ -1001,8 +1020,9 @@ Enter the bootloader (volume down + power). If hboot comes up,
 `fastboot getvar all`: still S-ON means nothing was modified and a normal ROM
 flash recovers you; S-OFF with a dead Android can be fixed with any matching
 RUU. If hboot does not come up, the problem is not in `pg1fs` - the S-OFF
-procedure never touches `hboot`, `sbl1` or `tz`. `noredtext` is the one command
-that writes `hboot`, and it keeps a dump.
+procedure never touches `hboot`, `sbl1` or `tz`. `noredtext` is the only command
+that changes what is inside `hboot`, and it keeps a dump first; `restore hboot`
+also writes, but only puts your own image back.
 
 ---
 
@@ -1114,7 +1134,8 @@ Intended for security research and maintenance on devices you own. Cutting power
 to an eMMC while Android is running is not a supported operation.
 
 * Remount `/data` read-only or stop the framework before the power cycle.
-  `/data` is `errors=panic`; a write to a dead eMMC panics the kernel.
+  `/data` is `errors=panic`; a write to a dead eMMC raises I/O errors, and a
+  panic is the worst case.
 * If the eMMC does not re-enumerate, the phone will not boot until it is power
   cycled by hand. Nothing is lost, but you need physical access.
 * `stool.sh backup` exists because "should not happen" is not a recovery plan.
@@ -1132,9 +1153,9 @@ voided warranties. If you brick it, you own both halves.
 ## Credits
 
 Substantial parts of the code and prose here were written with AI assistance.
-Every address, offset, and verified claim was checked against a real device: the
-experiments, the failure analysis and the decisions about what to keep are human
-work.
+Every address, offset, and verified claim was checked against a real device;
+what could not be tested is marked as such. The experiments, the failure
+analysis and the decisions about what to keep are human work.
 
 * HTC for publishing the kernel source, and for the `mmc_reinit_card` path that
   makes the eMMC come back without a reboot.

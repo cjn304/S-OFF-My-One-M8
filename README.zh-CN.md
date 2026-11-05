@@ -234,7 +234,7 @@ cat kmod/addr.h
 
 `kmod/addr.h` 管的是内核符号；参数偏移也不由任何脚本生成。它们跟着分区布局走，所以放在 `targets.conf` 里。
 
-选哪一项，是拿它的 `layout` 行去比设备在 `/sys/class/block/*/uevent` 里报的尺寸（`PARTNAME` 加 `size`，单位 512 字节扇区；无需 root）。用尺寸当键是有道理的：改 MID 或 CID 不会挪动任何东西，因为那两项都是分区里的内容；换了固件，装这些记录的分区尺寸就跟着变。一项都对不上时，脚本在动卡之前停下，把看到的布局原样打出来：
+选哪一项，是拿它的 `layout` 行去比设备在 `/sys/class/block/*/uevent` 里报的尺寸（`PARTNAME` 加 `size`，单位 512 字节扇区；无需 root）。用尺寸当键是有道理的：改 MID 或 CID 不会挪动任何东西，因为那两项都是分区里的内容；换了固件，装这些记录的分区尺寸就跟着变。一项都对不上时，脚本在动 eMMC 之前停下，把看到的布局原样打出来：
 
 ```
 error: no section in targets.conf matches this device.
@@ -318,6 +318,7 @@ make -C tools CROSS=arm-none-linux-gnueabihf-
 | 内核 | `3.4.0-perf-ga6393e1`（2016-01）/ `3.4.0-perf-g708019f`（2015-11） |
 | hboot | `3.19.0.0000` |
 | root | Magisk 20.1（`su`）、`modules_disabled=0` |
+| 32 GB 测试机 | 4.18.708.12（S-ON），hboot `3aa067db`，Magisk 20.1，eMMC 61071360 扇区 |
 
 MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷了 Dev 固件，所以上面列了两个构建。
 
@@ -383,7 +384,7 @@ CMD31 -> aaaaaaaa2aaaaaaa
 
 power-on 保护只能靠掉电清除。`CMD29`（CLEAR_WRITE_PROT）对它无效，`dd` 写 `pg1fs` 会拿到 `card status 0x400d00`，第 22 位，`WP_ERASE_SKIP`。
 
-保护不是按分区挂的，而是按**写保护组**，一组多大由卡自己定。`mmc_cmd extcsd` 把决定这件事的几个 EXT_CSD 字段读出来：
+保护不是按分区挂的，而是按**写保护组**，一组多大由 eMMC 自己定。`mmc_cmd extcsd` 把决定这件事的几个 EXT_CSD 字段读出来：
 
 ```
   [221] HC_WP_GRP_SIZE     = 16
@@ -393,7 +394,7 @@ power-on 保护只能靠掉电清除。`CMD29`（CLEAR_WRITE_PROT）对它无效
   32 groups    256 MiB of 14910 MiB (1.7%)
 ```
 
-每组 8 MiB，CMD31 只报 32 组，所以这张卡最多只能描述前 256 MiB。但在一台 S-ON 的 M8 上实测，位图**并不是**这张卡遵守的东西：它说 32 组里有 31 组受保护，可写 120 MiB 处那一个字节能落盘，写 315 MiB 处却回 `card status 0x400d00`、根本没到卡上。`WP_GRP_ENABLE = 0` 从另一侧说的是同一件事：组机制是关的，hboot 保护的是区间，`mmc_cmd wp` 只能当「有没有保护」的总开关用。
+每组 8 MiB，CMD31 只报 32 组，所以这张位图最多只能描述前 256 MiB。但在一台 S-ON 的 M8 上实测，位图**并不是** eMMC 遵守的东西：它说 32 组里有 31 组受保护，可写 120 MiB 处那一个字节能落盘，写 315 MiB 处却回 `card status 0x400d00`、根本没到 eMMC 上。`WP_GRP_ENABLE = 0` 从另一侧说的是同一件事：组机制是关的，hboot 保护的是区间，`mmc_cmd wp` 只能当「有没有保护」的总开关用。
 
 于是问题收敛成一句话：**把 eMMC 的 VCC 断掉再上电，且不能让 SoC 重启。**
 
@@ -445,7 +446,7 @@ eMMC 消失了，`mmcblk0*` 全没了，除了重启没有回头路。这就是�
 
 同一份源码编出三个变体：`diag`（stage 3，只读）、`off`（stage 1）、`on`（stage 2，先 `msleep(1500)` 让电放干净再上电）。
 
-它打出来的日志在[诊断](#诊断)里；这里真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行：它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：eMMC 回来了，分区都在，手机没重启。
+它打出来的日志在[诊断](#诊断)里；这里真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行：它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：参考构建上 eMMC 就是这样回来的，分区都在，手机没重启。32 GB 机器断电 8 秒时不走这条路，host 先报 `runtime_error -110`，节点要一两分钟才回来，见[断电上电](#断电上电)。
 
 ### 4. 写哪一个字节
 
@@ -472,7 +473,7 @@ dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 
 ## 期望输出与故障处理
 
-快速开始的每一步，按执行顺序：什么输出说明它成了，以及对应会卡在哪。
+快速开始的每一步，按执行顺序：什么输出说明它成了，以及对应会停在哪。
 
 ### `stool.sh status`
 
@@ -494,9 +495,13 @@ modules   0
 selinux   Enforcing
 ```
 
-`target` 是 `targets.conf` 里命中的那一项，也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。`S state` 必须是 `S-ON`；出现 `unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`modules` 必须是 `0`，否则 `insmod` 会被拒。`selinux Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
+这是刷了 1540、改过 CID/MID、但仍是 S-ON 的机器，`soff` 要的就是这个状态。
+
+`target` 是 `targets.conf` 里命中的那一项，也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。`soff` 要的是 `S-ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`modules` 必须是 `0`，否则 `insmod` 会被拒。`selinux Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `gen_addr.sh`
+
+下面是另一台机器（`g708019f`）的输出，地址和 crc 都随构建变，不能照抄：
 
 ```
 wrote .../kmod/addr.h
@@ -568,7 +573,7 @@ pwrsq: done
 
 `== quiesce ==`：`framework stopped, caches flushed`，也就是 `stop`、一次 `sleep`、两次 `sync`。eMMC 马上要断电，不能有人正在写。
 
-`/data` 是 `errors=panic` 挂载的：往已断电的 eMMC 写一次就会 panic。手机会自己重启，写保护重新挂上，flag 没动，所以这里的 panic 只损失时间，修掉原因再来一次。想把 `/data` 也摘出去，先挂成只读：
+`/data` 是 `errors=panic` 挂载的：往已断电的 eMMC 写入会报 I/O error 并中止 ext4 日志，最坏触发 panic。真 panic 了手机会自己重启，写保护重新挂上，flag 没动，只损失时间。这台 32 GB 机器上实测断电 25 秒没有 panic，只是 `JBD2: Detected IO errors` 和日志中止，重启后自行恢复。想把 `/data` 也摘出去，先挂成只读：
 
 ```sh
 adb shell 'su -c "mount -o remount,ro /data"'
@@ -578,7 +583,7 @@ adb shell 'su -c "mount -o remount,ro /data"'
 
 #### 断电上电
 
-`== power cycle ==`：先 `OFF_DONE`，电源轨保持关断 8 秒（`PWRSQ_OFF_SEC` 可改），再 `ON_DONE`。重扫本身的日志在 `dmesg | grep mmc_reinit_card` 里。
+`== power cycle ==`：先 `OFF_DONE`，电源轨保持关断 8 秒（`PWRSQ_OFF_SEC` 可改），再 `ON_DONE`。参考构建上重扫本身的日志是 `dmesg | grep mmc_reinit_card`；32 GB 机器没有这行，只有 `runtime_error -110`，见下。
 
 32 GB 的机器上实测：只断 1.5 秒不够，重新上电后位图仍是 31 组；8 秒才真正清掉。断得越久，host 恢复越慢，`pg1fs` 节点可能在 1 到 2 分钟后才出现，期间 `dmesg` 里是 `mmc0: err: runtime_error: -110` 和 `/data` 的 `JBD2: Detected IO errors`。脚本会轮询约 2.5 分钟。
 
@@ -604,7 +609,7 @@ adb shell 'su -c "/dev/mmc_cmd wp"'            # 有非零组 => 保护还在
 adb shell 'dmesg | grep -i "card status"'
 ```
 
-* `card status 0x400d00`（第 22 位，`WP_ERASE_SKIP`）：保护还在，说明断电实际上没发生。`dmesg` 里必须有 `pwrsq: ops->disable ret=0`，并且 eMMC 消失期间 `cat /sys/kernel/debug/regulator/8941_l20/enable` 应当是 0。
+* `card status 0x400d00`（第 22 位，`WP_ERASE_SKIP`）：保护还在，说明断电实际上没发生。`dmesg` 里必须有 `pwrsq: ops->disable ret=0`。按快速开始挂载过 debugfs 的话，`/sys/kernel/debug/regulator/8941_l20/` 下有 `enable`，eMMC 消失期间它应当是 0；没挂 debugfs 时这个路径不存在，只能靠 `ops->disable ret=0` 和断电后的 I/O 错误判断。模块日志里的 `Failed to create debugfs directory` 是因为 regulator core 已经建过同名目录，无害。
 * 完全没有 `card status` 报错，你读的是页缓存。验证之前永远先 `sync` + `echo 3 > /proc/sys/vm/drop_caches`。
 
 #### 写 flag
@@ -641,7 +646,7 @@ scripts/stool.sh restore mfg 20261104-045201.mfg.img
 
 和备份一样，`restore` 也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能还原。
 
-判断是否成功靠的是回读，不是写入。S-ON 的机器上，bootloader 在卡这一级保护了部分分区；写这些分区会被拒绝，而 `dd` 照样报成功，抓住它的是 md5 比对。`dmesg` 里对应的记录是 `card status 0x400d00`。S-OFF 让这层保护不再被挂上，但命令本身已经不再强制要求它。
+判断是否成功靠的是回读，不是写入。S-ON 的机器上，bootloader 在 eMMC 这一级保护了部分分区；写这些分区会被拒绝，而 `dd` 照样报成功，抓住它的是 md5 比对。`dmesg` 里对应的记录是 `card status 0x400d00`。S-OFF 让这层保护不再被挂上，但命令本身已经不再强制要求它。
 
 别的一概不动：还原 `pg1fs` 不碰 `hboot`，反之亦然。`hboot` 和 `sp1` 也走同一条命令，所以 `noredtext` 和 `splash` 各自那个 `--restore` 已经去掉。
 
@@ -653,7 +658,7 @@ scripts/stool.sh restore mfg 20261104-045201.mfg.img
 
 ### 整机不启动
 
-进 bootloader（音量下 + 电源）。如果 hboot 能起来，`fastboot getvar all`：还是 S-ON 说明什么都没改，正常刷 ROM 即可恢复；S-OFF 但系统坏了，刷对应 RUU 就行。如果 hboot 都起不来，问题不在 `pg1fs`：S-OFF 流程从不碰 `hboot`、`sbl1`、`tz`。唯一会写 `hboot` 的是 `noredtext`，而它会先留一份 dump。
+进 bootloader（音量下 + 电源）。如果 hboot 能起来，`fastboot getvar all`：还是 S-ON 说明什么都没改，正常刷 ROM 即可恢复；S-OFF 但系统坏了，刷对应 RUU 就行。如果 hboot 都起不来，问题不在 `pg1fs`：S-OFF 流程从不碰 `hboot`、`sbl1`、`tz`。会改 `hboot` 内容的只有 `noredtext`，它写之前先留一份 dump；`restore hboot` 也能写，但那是把你自己的镜像原样写回。
 
 ---
 
@@ -745,7 +750,7 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 
 仅用于**自己持有设备**上的安全研究与系统维护。在 Android 运行时切断 eMMC 供电不是受支持的操作。
 
-* 断电之前把 `/data` 挂成只读，或者至少停掉框架。`/data` 是 `errors=panic`，往已断电的 eMMC 写一次就会 panic。
+* 断电之前把 `/data` 挂成只读，或者至少停掉框架。`/data` 是 `errors=panic`，往已断电的 eMMC 写入会报 I/O error，最坏触发 panic。
 * eMMC 如果没重新枚举，手机要手动断电才能再启动。数据不会丢，但你需要能够碰到机器。
 * `stool.sh backup` 之所以存在，是因为"应该不会出事"不叫恢复方案。镜像留在电脑上，不要留在手机里。
 * 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。真正没法原地撤销的是改过的 `hboot`（`noredtext`），回 S-ON 之前先把 dump 的镜像写回去。
@@ -756,7 +761,7 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 
 ## 致谢
 
-本项目相当一部分代码和文字是在 AI 协助下写成的。但每一个地址、每一个偏移、每一条声称已验证的结论，都在真机上核对过：实验、失败分析，以及保留什么、放弃什么的决定，是人做的。
+本项目相当一部分代码和文字是在 AI 协助下写成的。但每一个地址、每一个偏移、每一条声称已验证的结论，都在真机上核对过；没有条件实测的，文中明确标了「未实测」。实验、失败分析，以及保留什么、放弃什么的决定，是人做的。
 
 * HTC 公开内核源码，以及 `sdhci_msm` 里那条 `mmc_reinit_card`：eMMC 不用重启就能回来。
 * XDA/ARHD 社区关于 RUU/CID/MID 的整理，本项目的判断建立在这些之上。
