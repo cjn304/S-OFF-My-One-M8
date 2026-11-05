@@ -469,9 +469,8 @@ p_version() { hex2str   "$(hex_at "$PART_VER"    "$OFF_VER"    "$LEN_VER")"; }
 p_tamper()  { le32      "$(hex_at "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"; }
 p_status()  { # what hboot prints after "Software status:", from that byte
 	case "$(p_tamper)" in
-	0) printf official ;;
-	4) printf modified ;;
-	*) printf '%s' "$(p_tamper)" ;;
+	0) printf Official ;;
+	*) printf Modified ;;
 	esac; }
 p_secure()  { le32      "$(hex_at "$PART_SECURE" "$OFF_SECURE" "$LEN_SECURE")"; }
 p_bl()      { h=$(hex_at "$PART_BLMAGIC" "$OFF_BLMAGIC" "$LEN_BLMAGIC")
@@ -521,30 +520,35 @@ print_state() {
 	case "$(device_mode)" in
 	android)
 		if ! detect_root; then
-			say "S state : unknown (no root - TWRP, adb root or Magisk su needed)"
+			say "target: unknown"
+			say "Secure state: unknown (no root - TWRP, adb root or Magisk su needed)"
 			return 0
 		fi
 		if ! target_find; then
-			say "target  : unknown - no targets.conf section matches"
+			say "target: unknown - no targets.conf section matches"
 			say "  observed:$OBSERVED_LAYOUT"
 			return 0
 		fi
 		if ! detect_dev; then
-			say "target  : $TARGET (layout ok) but no by-name directory holds $PART_SECURE"
+			say "target: $TARGET (layout ok) but no by-name directory holds $PART_SECURE"
 			return 0
 		fi
-		say "target  : $TARGET  [$TARGET_DEVICE, hboot $TARGET_HBOOT]"
-		st=$(secure_state)
-		if [ "$st" = off ]; then say "S state : S-OFF (secure_flag 0)"
-		else say "S state : S-ON  (secure_flag $(p_secure))"; fi
-		say "BL state: $(bl_state) ($PART_BLMAGIC 0x$(printf '%x' "$((OFF_BLMAGIC))") = $(p_bl))"
+		say "target: $TARGET  [$TARGET_DEVICE, hboot $TARGET_HBOOT]"
+		case "$(secure_state)" in
+		off) say "Secure state: OFF" ;;
+		*)   say "Secure state: ON" ;;
+		esac
+		say "BL state: $(bl_state)"
+		# The bootloader prints this line from the tamper byte: 0 is Official,
+		# anything else is Modified.  Reading the same byte keeps the two in step.
+		say "Software status: $(p_status)"
 		;;
 	fastboot)
 		sf=$("$FB" oem readsecureflag 2>&1 | sed -n 's/.*secure_flag: //p' | tr -d '\r')
 		case "$sf" in
-		0) say "S state : S-OFF (secure_flag 0)" ;;
-		"") say "S state : unknown (could not read secure_flag)" ;;
-		*) say "S state : S-ON  (secure_flag $sf)" ;;
+		0) say "Secure state: OFF" ;;
+		"") say "Secure state: unknown (could not read secure_flag)" ;;
+		*) say "Secure state: ON" ;;
 		esac
 		bl=$("$FB" oem refurbish unlockstatus 2>&1 | tr -d '\r')
 		case "$bl" in
@@ -552,6 +556,8 @@ print_state() {
 		*"device locked"*)   say "BL state: locked" ;;
 		*) say "BL state: unknown" ;;
 		esac
+		# not exposed over fastboot: only hboot itself knows, from pg2fs
+		say "Software status: unknown"
 		;;
 	*)
 		die "no device found (adb or fastboot)"
@@ -688,17 +694,17 @@ status_show() {
 	if [ "$mode" = fastboot ]; then
 		say ""
 		say "== parameters (bootloader view) =="
-		printf '%-9s %s\n' CID      "$("$FB" getvar cidnum 2>&1 | sed -n 's/.*cidnum: //p' | tr -d '\r')"
-		printf '%-9s %s\n' MID      "$("$FB" getvar modelid 2>&1 | sed -n 's/.*modelid: //p' | tr -d '\r')"
-		printf '%-9s %s\n' version  "$("$FB" getvar version-main 2>&1 | sed -n 's/.*version-main: //p' | tr -d '\r')"
-		printf '%-9s %s\n' hboot    "$("$FB" getvar version-bootloader 2>&1 | sed -n 's/.*version-bootloader: //p' | tr -d '\r')"
+		printf '%-11s %s\n' CID     "$("$FB" getvar cidnum 2>&1 | sed -n 's/.*cidnum: //p' | tr -d '\r')"
+		printf '%-11s %s\n' MID     "$("$FB" getvar modelid 2>&1 | sed -n 's/.*modelid: //p' | tr -d '\r')"
+		printf '%-11s %s\n' version "$("$FB" getvar version-main 2>&1 | sed -n 's/.*version-main: //p' | tr -d '\r')"
+		printf '%-11s %s\n' hboot   "$("$FB" getvar version-bootloader 2>&1 | sed -n 's/.*version-bootloader: //p' | tr -d '\r')"
 		blv=$("$FB" oem refurbish unlockstatus 2>&1 | tr -d '\r')
 		case "$blv" in
 		*"device unlocked"*) blv=unlocked ;;
 		*"device locked"*)   blv=locked ;;
 		*) blv=unknown ;;
 		esac
-		printf '%-9s %s\n' "BL lock" "$blv"
+		printf '%-11s %s\n' "BL lock" "$blv"
 		return 0
 	fi
 	# print_state already explained why it could not read anything
@@ -706,15 +712,15 @@ status_show() {
 	require_android ro
 	say ""
 	say "== parameters =="
-	printf '%-9s %-12s %s @ 0x%x\n' CID      "$(p_cid)"     "$PART_CID"    "$((OFF_CID))"
-	printf '%-9s %-12s %s @ 0x%x\n' MID      "$(p_mid)"     "$PART_MID"    "$((OFF_MID))"
-	printf '%-9s %-12s %s @ 0x%x\n' version  "$(p_version)" "$PART_VER"    "$((OFF_VER))"
-	printf '%-9s %-12s %s @ 0x%x\n' tamper   "$(p_tamper)"  "$PART_TAMPER" "$((OFF_TAMPER))"
-	printf '%-9s %-12s %s @ 0x%x\n' secure   "$(p_secure)"  "$PART_SECURE" "$((OFF_SECURE))"
-	printf '%-9s %-12s %s @ 0x%x\n' "BL lock" "$(bl_state)" "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
+	printf '%-11s %-11s %s @ 0x%x\n' CID      "$(p_cid)"     "$PART_CID"     "$((OFF_CID))"
+	printf '%-11s %-11s %s @ 0x%x\n' MID      "$(p_mid)"     "$PART_MID"     "$((OFF_MID))"
+	printf '%-11s %-11s %s @ 0x%x\n' version  "$(p_version)" "$PART_VER"     "$((OFF_VER))"
+	printf '%-11s %-11s %s @ 0x%x\n' BL_magic "$(p_bl)"      "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
+	printf '%-11s %-11s %s @ 0x%x\n' secure_flag "$(p_secure)" "$PART_SECURE" "$((OFF_SECURE))"
+	printf '%-11s %-11s %s @ 0x%x\n' tamper   "$(p_tamper)"  "$PART_TAMPER"  "$((OFF_TAMPER))"
 	say ""
-	printf '%-9s %s\n' modules  "$(devsh "cat /proc/sys/kernel/modules_disabled 2>/dev/null" | tr -d '\r')"
-	printf '%-9s %s\n' selinux  "$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')"
+	printf '%-11s %s\n' modules "$(devsh "cat /proc/sys/kernel/modules_disabled 2>/dev/null" | tr -d '\r')"
+	printf '%-11s %s\n' selinux "$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')"
 }
 
 cmd_status() {
