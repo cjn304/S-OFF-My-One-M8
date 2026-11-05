@@ -923,6 +923,18 @@ cmd_son() {
 	print_state
 	[ "$(secure_state)" = on ] && { say ""; say "already S-ON, nothing to do"; return 0; }
 
+	# A nowarn-patched hboot only boots while S-OFF: SBL skips the signature
+	# check now, but once this flag is 3 it verifies again, fails, and stops
+	# before hboot runs - no fastboot, no RUU, only EDL.  Refuse before writing.
+	hb=$(cmd_backup "$PART_HBOOT")
+	"$PY" "$(winpath "$ROOT/scripts/find_redtext.py")" < "$hb" >/dev/null 2>&1 || {
+		rm -f "$hb"
+		die "hboot no longer carries the six banner strings - it was patched (nowarn).
+  S-ON would make SBL reject it and the phone would never reach fastboot.
+  Restore the dump nowarn saved first: stool.sh restore hboot <stamp>.hboot.img"
+	}
+	rm -f "$hb"
+
 	say ""
 	say "== write secure flag =="
 	write_hex "$PART_SECURE" "$OFF_SECURE" "$(u32hex 3)"
