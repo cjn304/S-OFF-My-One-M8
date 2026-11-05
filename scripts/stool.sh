@@ -12,7 +12,7 @@
 #   stool.sh lock                  write the BL magic = locked
 #   stool.sh unlock                write the BL magic = unlocked
 #   stool.sh set <param> [value]    change one parameter
-#   stool.sh noredtext              blank the six "This build is for ..." lines in hboot
+#   stool.sh nowarn                blank the six "This build is for ..." lines in hboot
 #   stool.sh splash <image.png> [--size=WxH] [--fit=...]   first boot screen
 #
 #   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
@@ -37,10 +37,10 @@
 #
 # Two commands touch partitions that are not part of that layout:
 #
-#   noredtext hboot      (p26)  six NUL terminated lines, located at run time
+#   nowarn hboot      (p26)  six NUL terminated lines, located at run time
 #   splash    sp1        (p12)  little-endian RGB565, 1080x1920 unless --size=WxH
 #
-# Both need S-OFF; noredtext rewrites hboot, which is the only way to brick
+# Both need S-OFF; nowarn rewrites hboot, which is the only way to brick
 # this device.  It always dumps the whole hboot partition first.
 #
 # Licensed GPL-2.0.
@@ -232,7 +232,7 @@ $FV
 EOF
 	SCREEN=$(conf_get "$DUMP" "$TARGET" screen)
 	[ -n "$SCREEN" ] || SCREEN=1080x1920
-	# hboot image size, so noredtext does not carry 4194304 as a literal
+	# hboot image size, so nowarn does not carry 4194304 as a literal
 	hs=$(part_sectors "$PART_HBOOT")
 	case "$hs" in
 	"" | - | *[!0-9]*) HB_BYTES=0 ;;
@@ -629,7 +629,7 @@ cmd_backup() { # [partition] - every partition plus the txt, or just the one
 	mkdir -p "$BACKUP_DIR"
 	ts=$(date +%Y%m%d-%H%M%S)
 
-	# one partition: a single image, no txt - this is also what noredtext and
+	# one partition: a single image, no txt - this is also what nowarn and
 	# splash call before they overwrite theirs
 	if [ -n "${1:-}" ]; then
 		b=$(part_bytes "$1")
@@ -1031,11 +1031,11 @@ flash_part() { # part src-file  (write a whole image; used by restore)
 	devsh "rm -f /data/local/tmp/stool_flash.img" >/dev/null 2>&1
 }
 
-cmd_noredtext() {
+cmd_nowarn() {
 	# it used to take --restore; without this guard that word would fall through
 	# to the normal path and patch hboot
 	[ $# -eq 0 ] ||
-		die "noredtext takes no arguments.  To put a saved hboot back: stool.sh restore hboot <stamp>.hboot.img"
+		die "nowarn takes no arguments.  To put a saved hboot back: stool.sh restore hboot <stamp>.hboot.img"
 
 	require_android
 	say "== state before =="
@@ -1179,7 +1179,7 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh set secure <0|3>
   stool.sh lock                    write the BL magic = locked
   stool.sh unlock                  write the BL magic = unlocked
-  stool.sh noredtext               blank the six "This build is for ..." lines
+  stool.sh nowarn                  blank the six "This build is for ..." lines
   stool.sh splash <image.png> [--size=WxH] [--fit=cover|stretch]
                                    replace the first boot screen
 
@@ -1205,7 +1205,7 @@ lock)    [ $# -eq 0 ] || die "usage: stool.sh lock"
          cmd_bl locked ;;
 unlock)  [ $# -eq 0 ] || die "usage: stool.sh unlock"
          cmd_bl unlocked ;;
-noredtext) cmd_noredtext "$@" ;;
+nowarn) cmd_nowarn "$@" ;;
 splash)    cmd_splash "$@" ;;
 -h|--help|help) usage ;;
 *) usage; exit 2 ;;

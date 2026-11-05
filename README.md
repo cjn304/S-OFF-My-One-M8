@@ -66,7 +66,7 @@ scripts/stool.sh restore pg2fs 20261104-045201.pg2fs.img
 ## stool.sh
 
 `scripts/stool.sh` is the entry point for every command below. Commands that
-write (`set`, `lock`, `unlock`, `noredtext`, `splash`) check for S-OFF before
+write (`set`, `lock`, `unlock`, `nowarn`, `splash`) check for S-OFF before
 they dump or write anything, and stop with nothing written. `status` and
 `backup` only read, `restore` takes the partition from its argument, and
 `soff`, `son` and `set secure 0` are how the S state itself is changed, so none
@@ -85,7 +85,7 @@ scripts/stool.sh set tamper <0|4>        # 0 = Official, 4 = Modified
 scripts/stool.sh set secure <0|3>        # 0 = S-OFF, 3 = S-ON
 scripts/stool.sh lock                    # BL magic -> locked
 scripts/stool.sh unlock                  # BL magic -> unlocked
-scripts/stool.sh noredtext               # blank the six dev-warning lines in hboot
+scripts/stool.sh nowarn               # blank the six dev-warning lines in hboot
 scripts/stool.sh splash photo.png        # first boot screen, size from targets.conf
 ```
 
@@ -100,7 +100,7 @@ Every command reads the S state first. Nothing is backed up automatically:
 txt with a readable summary - and `restore` writes those images
 back, `0x8400` among them. The flag inside the image wins, so restoring a set
 taken while S-ON puts the phone back to S-ON. The only dumps taken without
-asking are the ones `noredtext` and `splash` make of the single partition they
+asking are the ones `nowarn` and `splash` make of the single partition they
 are about to overwrite; that dump is their undo path, nothing else.
 
 `set tamper` takes any decimal 0..255, but only `0` and `4` mean anything.
@@ -197,7 +197,15 @@ nothing at all.
 
 ### Red text at boot
 
-`noredtext` finds the six lines by content, not by a hard-coded offset.  It
+Red text is not an S-OFF artefact; it comes from an unlocked bootloader. When
+hboot reads `HTCU` at `pg1fs 0x8404`, it prints those six lines under the HTC
+logo at boot. Relocking to `00000000` normally stops them and the screen shows
+`*** RELOCKED ***` instead, though some builds keep printing them based on the
+tamper flag. An S-OFF phone with the BL still unlocked keeps them, and so does
+an S-ON phone that was officially unlocked. `Software status: Modified`
+(tamper=4) is a separate line on the bootloader screen, not one of the six.
+
+`nowarn` finds the six lines by content, not by a hard-coded offset.  It
 dumps the whole 4 MB `hboot` partition, searches for the six strings, blanks
 the first byte of each, writes them back and reads them back.  The offsets move
 between builds - `0x8C340` on 6.12.1540.4, `0x8C3F8` on the 6.31.1402.1 dump,
@@ -404,7 +412,7 @@ The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 | first screen | `splash` | `sp1` p12 | 0 | the frame starts at 0: W x H x 2 bytes |
 
 `screen` is the only key without an offset: it sets the default WxH `splash`
-converts to, and `hbootpart` gives the partition whose size bounds a noredtext
+converts to, and `hbootpart` names the partition whose size bounds the `nowarn`
 image.
 
 Two rules when repeating this on another build:
@@ -852,7 +860,7 @@ Any firmware partition can be dumped this way, not just the five. `system`,
 not firmware this tool touches. It needs no S-OFF - reading a partition never
 does - and no `targets.conf` section either: the name and the size both come
 from the device, so it works on a phone this tool has no offsets for.
-`noredtext` and `splash` call it before they overwrite the partition they are
+`nowarn` and `splash` call it before they overwrite the partition they are
 about to change.
 
 ### `soff`
@@ -1015,7 +1023,7 @@ catches it. `dmesg` shows `card status 0x400d00` for the refusal. S-OFF stops
 arming that protection, but the command itself no longer insists on it.
 
 Nothing else is touched: restoring `pg1fs` does not touch `hboot`, and vice
-versa. `hboot` and `sp1` are restored the same way, which is why `noredtext` and
+versa. `hboot` and `sp1` are restored the same way, which is why `nowarn` and
 `splash` no longer carry their own `--restore` flags.
 
 ### Do not
@@ -1038,7 +1046,7 @@ Enter the bootloader (volume down + power). If hboot comes up,
 `fastboot getvar all`: still S-ON means nothing was modified and a normal ROM
 flash recovers you; S-OFF with a dead Android can be fixed with any matching
 RUU. If hboot does not come up, the problem is not in `pg1fs` - the S-OFF
-procedure never touches `hboot`, `sbl1` or `tz`. `noredtext` is the only command
+procedure never touches `hboot`, `sbl1` or `tz`. `nowarn` is the only command
 that changes what is inside `hboot`, and it keeps a dump first; `restore hboot`
 also writes, but only puts your own image back.
 
@@ -1160,7 +1168,7 @@ to an eMMC while Android is running is not a supported operation.
   Keep the images on a PC, not on the phone.
 * Writing `0x8400` is the last step and the only one that flips S-ON/S-OFF:
   `00` = S-OFF, `03` = S-ON, and it can be written back. What cannot be undone
-  in place is a modified `hboot` (`noredtext`) — put the dumped image back
+  in place is a modified `hboot` (`nowarn`) — put the dumped image back
   before returning to S-ON.
 
 No warranty of any kind; the authors are not responsible for data loss or

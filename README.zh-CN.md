@@ -48,7 +48,7 @@ scripts/stool.sh restore pg2fs 20261104-045201.pg2fs.img
 
 ## stool.sh
 
-`scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`lock`、`unlock`、`noredtext`、`splash`）在 dump 和写入之前先查 S 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure 0` 本来就是改 S 状态本身，这几条不预先要求 S-OFF；`set secure 0` 仍会先探测写保护，真还有保护就拒绝。
+`scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 S 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure 0` 本来就是改 S 状态本身，这几条不预先要求 S-OFF；`set secure 0` 仍会先探测写保护，真还有保护就拒绝。
 
 ```sh
 scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
@@ -63,13 +63,13 @@ scripts/stool.sh set tamper <0|4>        # 0 = Official，4 = Modified
 scripts/stool.sh set secure <0|3>        # 0 = S-OFF，3 = S-ON
 scripts/stool.sh lock                    # BL magic -> 锁定
 scripts/stool.sh unlock                  # BL magic -> 解锁
-scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
+scripts/stool.sh nowarn               # 抹掉 hboot 里六行开发警告红字
 scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 targets.conf
 ```
 
 每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
-每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `noredtext` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
+每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<时间戳>.{txt,img}`（五个整分区，外加一份可读的 txt 摘要），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
 `set tamper` 接受 0..255 的十进制，但有意义的只有 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`04` 显示 `*** Software status: Modified ***`，`00` 显示 `*** Software status: Official ***`。
 
@@ -118,7 +118,9 @@ FAILED (status read failed (Too many links))
 
 ### 开机红字
 
-`noredtext` 是按内容找那六行，不是写死偏移。它先把整个 4 MB 的 `hboot` 分区 dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回，再逐字节读回校验。偏移在不同构建之间是变动的（6.12.1540.4 上是 `0x8C340`，6.31.1402.1 的 dump 上是 `0x8C3F8`，更老的 m8_ul 镜像上是 `0x899CE`），所以必须动态找。
+红字不是 S-OFF 带来的，是 bootloader 解锁带来的。hboot 在 `pg1fs 0x8404` 读到 `HTCU` 时，开机就会在 HTC logo 下方打出这六行；回锁成 `00000000` 后一般不再显示，界面改成 `*** RELOCKED ***`，但也有构建会按 tamper 标记继续显示。S-OFF 的机器只要 BL 还 unlocked，红字照旧；S-ON 但官方解锁过的机器同样会有。`Software status: Modified`（tamper=4）是 bootloader 界面上的另一行，不属于这六行。
+
+`nowarn` 是按内容找那六行，不是写死偏移。它先把整个 4 MB 的 `hboot` 分区 dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回，再逐字节读回校验。偏移在不同构建之间是变动的（6.12.1540.4 上是 `0x8C340`，6.31.1402.1 的 dump 上是 `0x8C3F8`，更老的 m8_ul 镜像上是 `0x899CE`），所以必须动态找。
 
 运行前要知道两件事：
 
@@ -263,7 +265,7 @@ done
 | 红字 | `hbootpart` | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
 | 第一屏 | `splash` | `sp1` p12 | 0 | 画面从 0 开始：W x H x 2 字节 |
 
-`screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`hbootpart` 则提供 noredtext 用来校验镜像大小的分区。
+`screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`hbootpart` 则告诉 `nowarn` 用哪个分区来校验镜像大小。
 
 换构建时重复这套流程，有两条规矩：
 
@@ -564,7 +566,7 @@ scripts/stool.sh backup misc
 /path/to/repo/backup/20261104-072924.misc.img
 ```
 
-这台手机上的固件分区都能这样 dump，不限于那五个。`system`、`cache`、`userdata` 除外：它们是 Android 的文件系统，不是本工具管的固件，`backup system` 会直接拒绝。它不需要 S-OFF（读分区从来不需要），也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能备份。`noredtext` 和 `splash` 在覆盖自己要改的那个分区之前，调用的就是它。
+这台手机上的固件分区都能这样 dump，不限于那五个。`system`、`cache`、`userdata` 除外：它们是 Android 的文件系统，不是本工具管的固件，`backup system` 会直接拒绝。它不需要 S-OFF（读分区从来不需要），也不需要 `targets.conf` 里有对应的一节：名字和长度都来自设备，所以本工具不认识偏移的机器照样能备份。`nowarn` 和 `splash` 在覆盖自己要改的那个分区之前，调用的就是它。
 
 ### `soff`
 
@@ -662,7 +664,7 @@ scripts/stool.sh restore mfg 20261104-045201.mfg.img
 
 判断是否成功靠的是回读，不是写入。S-ON 的机器上，bootloader 在 eMMC 这一级保护了部分分区；写这些分区会被拒绝，而 `dd` 照样报成功，抓住它的是 md5 比对。`dmesg` 里对应的记录是 `card status 0x400d00`。S-OFF 让这层保护不再被挂上，但命令本身已经不再强制要求它。
 
-别的一概不动：还原 `pg1fs` 不碰 `hboot`，反之亦然。`hboot` 和 `sp1` 也走同一条命令，所以 `noredtext` 和 `splash` 各自那个 `--restore` 已经去掉。
+别的一概不动：还原 `pg1fs` 不碰 `hboot`，反之亦然。`hboot` 和 `sp1` 也走同一条命令，所以 `nowarn` 和 `splash` 各自那个 `--restore` 已经去掉。
 
 ### 不要做
 
@@ -672,7 +674,7 @@ scripts/stool.sh restore mfg 20261104-045201.mfg.img
 
 ### 整机不启动
 
-进 bootloader（音量下 + 电源）。如果 hboot 能起来，`fastboot getvar all`：还是 S-ON 说明什么都没改，正常刷 ROM 即可恢复；S-OFF 但系统坏了，刷对应 RUU 就行。如果 hboot 都起不来，问题不在 `pg1fs`：S-OFF 流程从不碰 `hboot`、`sbl1`、`tz`。会改 `hboot` 内容的只有 `noredtext`，它写之前先留一份 dump；`restore hboot` 也能写，但那是把你自己的镜像原样写回。
+进 bootloader（音量下 + 电源）。如果 hboot 能起来，`fastboot getvar all`：还是 S-ON 说明什么都没改，正常刷 ROM 即可恢复；S-OFF 但系统坏了，刷对应 RUU 就行。如果 hboot 都起不来，问题不在 `pg1fs`：S-OFF 流程从不碰 `hboot`、`sbl1`、`tz`。会改 `hboot` 内容的只有 `nowarn`，它写之前先留一份 dump；`restore hboot` 也能写，但那是把你自己的镜像原样写回。
 
 ---
 
@@ -767,7 +769,7 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 * 断电之前把 `/data` 挂成只读，或者至少停掉框架。`/data` 是 `errors=panic`，往已断电的 eMMC 写入会报 I/O error，最坏触发 panic。
 * eMMC 如果没重新枚举，手机要手动断电才能再启动。数据不会丢，但你需要能够碰到机器。
 * `stool.sh backup` 之所以存在，是因为"应该不会出事"不叫恢复方案。镜像留在电脑上，不要留在手机里。
-* 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。真正没法原地撤销的是改过的 `hboot`（`noredtext`），回 S-ON 之前先把 dump 的镜像写回去。
+* 写 `0x8400` 是最后一步，也是唯一改变 S-ON/S-OFF 的一步：`00` = S-OFF，`03` = S-ON，可以写回去。真正没法原地撤销的是改过的 `hboot`（`nowarn`），回 S-ON 之前先把 dump 的镜像写回去。
 
 不提供任何形式的担保；作者不对数据丢失或保修失效负责。刷坏了自负。
 
