@@ -212,7 +212,10 @@ On the 6.12.1540.4 hboot the six lines share one draw function at file offset
 sits inside the per-partition check, and the check entry `0xF51490C` has six
 callers: two set mode `9` or `0x0F` and read `boot`, four set mode `3` and read
 `recovery`.  Either failure executes the same `bl 0x18B64`; two of the recovery
-entries are fastboot command handlers that answer `OKAY` first.  The instruction
+entries are fastboot command handlers that answer `OKAY` first.  The mode only
+selects which partition this check reads - it is not the current boot target.
+Normal boot also runs a mode-3 check on recovery, which is why TWRP alone, with
+`boot` untouched, still paints the lines.  The instruction
 right before it is the image signature check at `0x147D4`: a zero return boots
 straight on, a non-zero return enters the function, paints the six lines,
 flushes the screen and then carries on booting.  The 4.18 `3aa067db` build has
