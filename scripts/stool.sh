@@ -141,6 +141,10 @@ conf_dump() { # every line as section|key|value; comments and blanks dropped
 	{ sub(/\r$/, "") }
 	/^[ \t]*#/ { next }
 	/^[ \t]*$/ { next }
+	# trailing comment after a value: a "#" that follows whitespace is never
+	# part of a value here, and single-field keys like blpart would otherwise
+	# swallow it whole
+	{ sub(/[ \t]+#.*$/, "") }
 	/^\[/ {
 		s = $0
 		sub(/^\[[ \t]*/, "", s)
@@ -222,7 +226,7 @@ EOF
 	IFS=: read -r PART_BLMAGIC OFF_BLMAGIC LEN_BLMAGIC _ <<EOF
 $FV
 EOF
-	field_req hbootpart
+	field_req blpart
 	IFS=: read -r PART_HBOOT _ _ _ <<EOF
 $FV
 EOF
