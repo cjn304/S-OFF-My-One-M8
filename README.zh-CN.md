@@ -24,7 +24,7 @@ hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规�
 下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反：重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。每个 `stool.sh` 命令都会自己探测 root（Magisk 的 `su`、adb root 或 userdebug 固件）；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。[期望输出与故障处理](#期望输出与故障处理)。
 
 ```sh
-# 0. 检查 root、S 状态、modules_disabled、SELinux
+# 0. 检查 root、S 状态、modules、SELinux
 scripts/stool.sh status
 
 # 1. kptr_restrict 归零，kallsyms 才显示地址，然后读地址
@@ -90,7 +90,7 @@ M8 的 `backup` 写出这些文件：
 
 文件名以序列号（`ro.serialno`）开头，后接时间戳，两台 M8 的备份放在同一个 `backup/` 里也不会混。`restore` 写之前先打印当前机器的序列号、型号、MID 和 S 状态；文件名里的序列号和当前机器不一致时直接拒绝，一个字节都不写。
 
-txt 里就是 `status` 打到屏幕上的那份内容：`== state ==` 一段、`== parameters ==` 一段，外加 `modules` 和 `selinux`。两处用的是同一个函数（`status_show`），所以文件不会和屏幕上的说法分叉。末尾是 `== restore ==`，每个本次真正落盘的镜像一行，照抄就能写回去：
+txt 里就是 `status` 打到屏幕上的那份内容：`== state ==` 一段（含 `modules` 和 `selinux` 两行）、`== parameters ==` 一段。两处用的是同一个函数（`status_show`），所以文件不会和屏幕上的说法分叉。末尾是 `== restore ==`，每个本次真正落盘的镜像一行，照抄就能写回去：
 
 ```text
 == restore ==
@@ -512,7 +512,8 @@ target: m8  [htc_m8, hboot 3.19.*]
 Secure state: ON
 BL state: unlocked
 Software status: Official
-
+modules:     enabled
+selinux:     Enforcing
 == parameters ==
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
@@ -520,14 +521,11 @@ version     6.12.1540.4 misc @ 0xa0
 BL_magic    HTCU        pg1fs @ 0x8404
 secure_flag 3           pg1fs @ 0x8400
 tamper      0           pg2fs @ 0x511804
-
-modules     0
-selinux     Enforcing
 ```
 
 这是刷了 1540、改过 CID/MID、但仍是 S-ON 的机器，`soff` 要的就是这个状态。
 
-`target` 是 `targets.conf` 里命中的那一项，也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。`soff` 要的是 `Secure state: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Secure state: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper` 一个字节决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules` 必须是 `0`，否则 `insmod` 会被拒。`selinux Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
+`target` 是 `targets.conf` 里命中的那一项，也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。`soff` 要的是 `Secure state: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Secure state: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper` 一个字节决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `gen_addr.sh`
 

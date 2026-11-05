@@ -41,7 +41,7 @@ inside the su command, or the non-root shell performs it first and fails with
 [Expected output and troubleshooting](#expected-output-and-troubleshooting).
 
 ```sh
-# 0. check root, S state, modules_disabled, SELinux
+# 0. check root, S state, modules, SELinux
 scripts/stool.sh status
 
 # 1. kallsyms hides addresses until kptr_restrict is 0; then read them
@@ -139,8 +139,8 @@ M8s can share one `backup/` directory without getting mixed up. `restore`
 prints the current serial, model, MID and S state first, and refuses an image
 whose name carries another phone's serial.
 
-The txt holds exactly what `status` prints: the `== state ==` block, the
-`== parameters ==` block, then `modules` and `selinux`. Both come from the same
+The txt holds exactly what `status` prints: the `== state ==` block, which
+carries `modules` and `selinux` too, then the `== parameters ==` block. Both come from the same
 function (`status_show`), so the file and the screen cannot drift apart. It ends
 with `== restore ==`, one line per image that actually landed, ready to copy:
 
@@ -792,7 +792,8 @@ target: m8  [htc_m8, hboot 3.19.*]
 Secure state: ON
 BL state: unlocked
 Software status: Official
-
+modules:     enabled
+selinux:     Enforcing
 == parameters ==
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
@@ -800,9 +801,6 @@ version     6.12.1540.4 misc @ 0xa0
 BL_magic    HTCU        pg1fs @ 0x8404
 secure_flag 3           pg1fs @ 0x8400
 tamper      0           pg2fs @ 0x511804
-
-modules     0
-selinux     Enforcing
 ```
 
 This is a phone that already runs 1540 with a changed CID/MID but is still
@@ -816,10 +814,10 @@ new section ([section 6](#6-parameter-offsets)). `soff` wants
 returns. `Secure state: unknown (no root ...)` means `su` does not work yet, and
 nothing below will either. `Software status` is the same line the bootloader
 prints, taken from the one `tamper` byte: `0` is `Official`, anything else is
-`Modified`. `modules` must be `0`; anything else and `insmod` is denied.
-`selinux Enforcing` is not fatal - `soff` warns and carries on, and whether the
-module loads depends on the domain `su` lands in. If it is denied,
-`setenforce 0` for this boot and rerun.
+`Modified`. `modules: enabled` is `modules_disabled=0` spelled as the capability
+it grants; `disabled` and `insmod` is refused. `selinux: Enforcing` is not fatal
+- `soff` warns and carries on, and whether the module loads depends on the domain
+`su` lands in. If it is denied, `setenforce 0` for this boot and rerun.
 
 ### `gen_addr.sh`
 

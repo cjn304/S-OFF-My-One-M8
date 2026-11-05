@@ -516,6 +516,17 @@ bl_state() { # "unlocked" | "locked"
 	esac
 }
 
+# kernel.modules_disabled is the inverse of what the reader wants to know: 1
+# means insmod is refused for the rest of this boot, which is why soff cannot
+# run.  Report the capability, not the raw flag.
+modules_state() { # "enabled" | "disabled"
+	case "$(devsh "cat /proc/sys/kernel/modules_disabled 2>/dev/null" | tr -d '\r')" in
+	0) printf enabled ;;
+	1) printf disabled ;;
+	*) printf unknown ;;
+	esac
+}
+
 print_state() {
 	case "$(device_mode)" in
 	android)
@@ -542,6 +553,13 @@ print_state() {
 		# The bootloader prints this line from the tamper byte: 0 is Official,
 		# anything else is Modified.  Reading the same byte keeps the two in step.
 		say "Software status: $(p_status)"
+		# Last two are the prerequisites soff checks: modules_disabled must be 0
+		# for insmod, and SELinux only warns.  Printed as the state they mean,
+		# not as the raw sysctl value.
+		printf '%-12s %s\n' "modules:" "$(modules_state)"
+		se=$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')
+		[ -n "$se" ] || se=unknown
+		printf '%-12s %s\n' "selinux:" "$se"
 		;;
 	fastboot)
 		sf=$("$FB" oem readsecureflag 2>&1 | sed -n 's/.*secure_flag: //p' | tr -d '\r')
@@ -710,7 +728,6 @@ status_show() {
 	# print_state already explained why it could not read anything
 	detect_root && detect_dev || return 0
 	require_android ro
-	say ""
 	say "== parameters =="
 	printf '%-11s %-11s %s @ 0x%x\n' CID      "$(p_cid)"     "$PART_CID"     "$((OFF_CID))"
 	printf '%-11s %-11s %s @ 0x%x\n' MID      "$(p_mid)"     "$PART_MID"     "$((OFF_MID))"
@@ -718,9 +735,6 @@ status_show() {
 	printf '%-11s %-11s %s @ 0x%x\n' BL_magic "$(p_bl)"      "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
 	printf '%-11s %-11s %s @ 0x%x\n' secure_flag "$(p_secure)" "$PART_SECURE" "$((OFF_SECURE))"
 	printf '%-11s %-11s %s @ 0x%x\n' tamper   "$(p_tamper)"  "$PART_TAMPER"  "$((OFF_TAMPER))"
-	say ""
-	printf '%-11s %s\n' modules "$(devsh "cat /proc/sys/kernel/modules_disabled 2>/dev/null" | tr -d '\r')"
-	printf '%-11s %s\n' selinux "$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')"
 }
 
 cmd_status() {
