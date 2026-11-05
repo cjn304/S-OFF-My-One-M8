@@ -104,10 +104,10 @@ taken while S-ON puts the phone back to S-ON. The only dumps taken without
 asking are the ones `nowarn` and `splash` make of the single partition they
 are about to overwrite; that dump is their undo path, nothing else.
 
-`set tamper` takes any decimal 0..255, but only `0` and `4` mean anything.
-That byte is the only input to hboot's `Software status:` line: `04` prints
-`*** Software status: Modified ***`, `00` prints
-`*** Software status: Official ***`.
+`set tamper` takes any decimal 0..255, standard values are `0` and `4`.
+That byte is the only input to hboot's `Software status:` line: `00` prints
+`*** Software status: Official ***`, otherwise prints
+`*** Software status: Modified ***`.
 
 `set secure` is the write from the last stage of `soff`, on its own: `00` or
 `03` at `0x8400`, then a read-back - no power cycle and no reboot. `00` while
