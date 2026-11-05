@@ -788,7 +788,7 @@ worked, and the failure that belongs to it.
 
 ```
 == state ==
-target: m8  [htc_m8, hboot 3.19.*]
+target: m8_ul  [htc_m8, hboot 3.19.*]
 Secure state: ON
 BL state: unlocked
 hboot: 3.19.0.0000
@@ -807,8 +807,9 @@ tamper      0           pg2fs @ 0x511804
 This is a phone that already runs 1540 with a changed CID/MID but is still
 S-ON, which is exactly the state `soff` wants.
 
-`target` is the `targets.conf` section that matched, and it is the first thing
-to look at: `unknown - no targets.conf section matches` means the table has no
+`target` is the `targets.conf` section that matched - the section name is what
+`fastboot getvar product` prints, `m8_ul` on this phone - and it is the first
+thing to look at: `unknown - no targets.conf section matches` means the table has no
 entry for this layout, and the `observed:` line under it is what to paste into a
 new section ([section 6](#6-parameter-offsets)). The `hboot 3.19.*` inside the
 brackets is the wildcard `targets.conf` matched on; the `hboot:` line below it

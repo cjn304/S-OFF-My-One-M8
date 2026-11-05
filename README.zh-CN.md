@@ -508,7 +508,7 @@ adb shell 'dd if=/data/local/tmp/x.bin of=/dev/block/bootdevice/by-name/pg1fs bs
 
 ```
 == state ==
-target: m8  [htc_m8, hboot 3.19.*]
+target: m8_ul  [htc_m8, hboot 3.19.*]
 Secure state: ON
 BL state: unlocked
 hboot: 3.19.0.0000
@@ -526,7 +526,7 @@ tamper      0           pg2fs @ 0x511804
 
 这是刷了 1540、改过 CID/MID、但仍是 S-ON 的机器，`soff` 要的就是这个状态。
 
-`target` 是 `targets.conf` 里命中的那一项，也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。方括号里的 `hboot 3.19.*` 是 `targets.conf` 拿来匹配的通配串，下面 `hboot:` 那行才是设备实际报告的构建号。`soff` 要的是 `Secure state: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Secure state: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper` 一个字节决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
+`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。方括号里的 `hboot 3.19.*` 是 `targets.conf` 拿来匹配的通配串，下面 `hboot:` 那行才是设备实际报告的构建号。`soff` 要的是 `Secure state: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Secure state: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper` 一个字节决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `gen_addr.sh`
 
