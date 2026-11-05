@@ -118,14 +118,16 @@ FAILED (status read failed (Too many links))
 
 ### 开机红字
 
-红字是 hboot 在**启动镜像签名校验失败**时画出来的。校验不只针对 boot：只刷 TWRP、boot 保持官方签名，正常开机同样会画，说明 recovery 的签名也在判断里。触发它的不是 S-OFF，也不是 `pg1fs 0x8404` 里的 `HTCU`：那个四字节只让 bootloader 界面显示 `*** UNLOCKED ***` / `*** RELOCKED ***` / `*** LOCKED ***`。
+红字是 hboot 在校验 **recovery 分区签名**失败时画出来的。正常启动就会校验 recovery：只刷 TWRP、boot 保持官方签名，开机同样会画。校验函数按 boot mode 选分区，正常启动走的是 recovery 这一支；boot 的校验在另一支上，不是这里的触发点。
+
+触发它的不是 S-OFF，也不是 `pg1fs 0x8404` 里的 `HTCU`：那个四字节只让 bootloader 界面显示 `*** UNLOCKED ***` / `*** RELOCKED ***` / `*** LOCKED ***`。
 
 在 6.12.1540.4 的 hboot 里，六行共用一个绘制函数（文件偏移 `0x18B64`），全镜像只有一个调用点（`0x147EA`）。调用点前面紧挨着签名校验（`0x147D4`）：校验返回 0 就直接启动，非 0 才进这个函数画红字、刷屏，然后继续启动。4.18 的 `3aa067db` 是同一结构（函数 `0x18258`，调用点 `0x142AE`，校验 `0x14298`）。
 
 所以：
 
 - TWRP 写的是 `recovery` 分区，不碰 `boot`；但 `recovery` 不是 HTC 签名，红字照样出现。
-- 回锁（`0x8404` 写回 0）只改变界面上的字样，不改变镜像内容，不会让红字消失；把官方 `boot` 和 `recovery` 刷回去才会。
+- 回锁（`0x8404` 写回 0）只改变界面上的字样，不改变镜像内容，不会让红字消失；把官方 `recovery` 刷回去才会。
 - S-OFF 不是开关，它只让分区可写；红字取决于被校验的镜像能不能通过。
 - `Software status: Modified`（tamper）是 bootloader 界面上的另一行，由 tamper 值决定，不在启动画面上，也不属于这六行。
 - `Software status: Modified`（tamper）是 bootloader 界面上的另一行，由 tamper 值决定，不在启动画面上，也不属于这六行。
