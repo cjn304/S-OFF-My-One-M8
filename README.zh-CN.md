@@ -63,7 +63,7 @@ scripts/stool.sh set tamper <0|4>        # 0 = Official，4 = Modified
 scripts/stool.sh set secure <0|3>        # 0 = S-OFF，3 = S-ON
 scripts/stool.sh lock                    # BL magic -> 锁定
 scripts/stool.sh unlock                  # BL magic -> 解锁
-scripts/stool.sh nowarn               # 抹掉 hboot 里六行开发警告红字
+scripts/stool.sh nowarn                  # 抹掉 hboot 里六行开发警告红字
 scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 targets.conf
 ```
 
@@ -77,7 +77,7 @@ scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 tar
 
 `lock` / `unlock` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不需要在官网申请的解锁码了；也不走 `fastboot oem lock`：那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
 
-`backup` 写出这些文件：
+M8 的 `backup` 写出这些文件：
 
 | 文件 | 内容 | 大小 |
 |---|---|---|
@@ -96,45 +96,30 @@ MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Ed
 
 #### 从 4.18 刷 6.12 的 RUU
 
-港版 4.18.708.12（hboot `3aa067db`）直接跑 6.12.1540.4 的 RUU，界面在点 Start 后立刻报 Error 155，日志里真正的错误是：
+港版 4.18.708.12（hboot `3aa067db`）直接跑 6.12.1540.4 的 RUU，界面在点 Start 后立刻报 Error 155，日志里的错误是：
 
 ```text
 (bootloader) zip info parsing...
 FAILED (status read failed (Too many links))
 ```
 
-这不是 MID 或 CID 不匹配。RUU 日志（`C:\RUU_log\RUU_*.log`）显示它只读了 `boot-mode`、`battery-status`、`version-main`，随后进入 RUU 模式发送 zip，失败点在 hboot 解析 zip 的位置。把 CID 从 `11111111` 改成包里的 `BS_US001` 后，同一个位置仍然失败。
+这不是 MID 或 CID 不匹配。RUU 日志（`C:\RUU_log\RUU_*.log`）显示它只读了 `boot-mode`、`battery-status`、`version-main`，随后进入 RUU 模式发送 zip，失败点在 hboot 解析 zip 的位置。
 
 原因是 RUU exe 里的 `rom.zip` 是 HTC 的 large-zip 容器，htc_fastboot 发送前会打印 `found large-zip header`。4.18 这块 hboot 只认普通 zip，读到分块结构后直接重置 USB 端点，主机端看到的就是 `Too many links`。
 
-解法是先刷同版本的普通固件包（`0P6BIMG`，或 `DevEdition_6.12.1540.4_...zip`，约 53 MB，含 hboot、radio、sbl1、tz），把 hboot 换到 `76df2b54`。实测旧 hboot 能完整刷入这个包，刷完 `commitno` 变成 `76df2b54`、`version-main` 变成 `6.12.1540.4`、radio 变成 `1.29.214500021.24_2G`，同一个 `rom.zip` 随后一次通过。刷完 RUU 再把 CID 改回 `11111111`。
+解法是先刷底包（`DevEdition_6.12.1540.4_+StockRecovery+boot.img_0p6bimg.zip`，约 53 MB，含 hboot），把 hboot 换到 `76df2b54`。
 
-两个看起来像失败、其实不是的地方：
-
-- `fastboot flash hboot hboot_signedbyaa.img` 会被 hboot 拒绝，报 `FAILED (remote: not allowed)`，FASTBOOT 和 RUU 模式下都一样。hboot 分区只接受 zip 流程，不接受裸写镜像。
-- 刷完固件包后旧 `/system` 通常起不来：boot 和 radio 已经是 6.12 的，system 还是 4.18 的。这是预期结果，接着跑 RUU 把 system 补上即可。
+`fastboot flash hboot hboot_signedbyaa.img` 会被 hboot 拒绝，报 `FAILED (remote: not allowed)`，FASTBOOT 和 RUU 模式下都一样。hboot 分区只接受 zip 流程，不接受裸写镜像。
 
 刷固件包会写 sbl1 和 tz，中断会砖。刷之前确认电量，刷的过程中不要动线。`backup hboot` 只在 hboot 还能进 bootloader 时有用，完全黑屏时它救不了。
 
-### 开机红字
+### 警告红字
 
-红字是 hboot 在**启动镜像签名校验失败**时画出来的，校验覆盖 `boot` 和 `recovery` 两个分区，任一不符都会画。实测两种情况：只刷 TWRP、`boot` 保持官方，会画；把 `recovery` 刷回官方、`boot` 仍是 Magisk 补丁，也照画。
-
-触发它的不是 S-OFF，也不是 `pg1fs 0x8404` 里的 `HTCU`：那个四字节只让 bootloader 界面显示 `*** UNLOCKED ***` / `*** RELOCKED ***` / `*** LOCKED ***`。
+六行开发警告红字是 hboot 在启动镜像签名校验失败时画出来的，校验覆盖 `boot` 和 `recovery` 两个分区，任一不符都会画。
 
 在 6.12.1540.4 的 hboot 里，六行共用一个绘制函数（文件偏移 `0x18B64`），全镜像只有一条 `bl` 指令进入它（`0x147EA`）。这条指令位于按分区校验的函数里，而该函数有六个入口：两个把 mode 设为 `9` 或 `0x0F`，读 `boot`；四个设为 `3`，读 `recovery`。任一入口校验失败，都会执行同一条 `bl 0x18B64`。其中两个 recovery 入口在 fastboot 命令处理函数里，调用前刚给主机回过 `OKAY`。
 
-mode 只决定**这一次校验读哪个分区**，不等于当前要启动的目标。正常启动流程里也会用 mode 3 校验 recovery，所以只刷 TWRP、boot 不动，开机同样画。
-
 调用点前面紧挨着签名校验（`0x147D4`）：校验返回 0 就直接启动，非 0 才进这个函数画红字、刷屏，然后继续启动。4.18 的 `3aa067db` 是同一结构（函数 `0x18258`，调用点 `0x142AE`，校验 `0x14298`）。
-
-所以：
-
-- TWRP 写的是 `recovery` 分区，不碰 `boot`；但 `recovery` 不是 HTC 签名，红字照样出现。
-- `boot` 被 Magisk、SuperSU 或第三方内核改过，同样会画；只把 `recovery` 刷回官方消不掉。
-- 回锁（`0x8404` 写回 0）只改变界面上的字样，不改变镜像内容，不会让红字消失；`boot` 和 `recovery` 都回到官方签名才会。
-- S-OFF 不是开关，它只让分区可写；红字取决于被校验的镜像能不能通过。
-- `Software status: Modified`（tamper）是 bootloader 界面上的另一行，由 tamper 值决定，不在启动画面上，也不属于这六行。
 
 `nowarn` 是按内容找那六行，不是写死偏移。它先把整个 4 MB 的 `hboot` 分区 dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回，再逐字节读回校验。偏移在不同构建之间是变动的（6.12.1540.4 上是 `0x8C340`，6.31.1402.1 的 dump 上是 `0x8C3F8`，更老的 m8_ul 镜像上是 `0x899CE`），所以必须动态找。
 

@@ -85,7 +85,7 @@ scripts/stool.sh set tamper <0|4>        # 0 = Official, 4 = Modified
 scripts/stool.sh set secure <0|3>        # 0 = S-OFF, 3 = S-ON
 scripts/stool.sh lock                    # BL magic -> locked
 scripts/stool.sh unlock                  # BL magic -> unlocked
-scripts/stool.sh nowarn               # blank the six dev-warning lines in hboot
+scripts/stool.sh nowarn                  # blank the six dev-warning lines in hboot
 scripts/stool.sh splash photo.png        # first boot screen, size from targets.conf
 ```
 
@@ -122,7 +122,7 @@ code is needed. `fastboot oem lock` is not used either — it only produces
 `RELOCKED`, and hboot 3.19 has no `oem unlock` command at all
 (`[ERR] Command error`).
 
-What a backup holds:
+What a M8's backup holds:
 
 | file | content | size |
 |---|---|---|
@@ -157,7 +157,7 @@ expects is listed in this
 
 A Hong Kong 4.18.708.12 phone (hboot `3aa067db`) running the 6.12.1540.4 RUU
 stops the moment Start is pressed, with Error 155. The RUU log
-(`C:\RUU_log\RUU_*.log`) shows what actually happened:
+(`C:\RUU_log\RUU_*.log`) shows what happened:
 
 ```text
 (bootloader) zip info parsing...
@@ -166,75 +166,43 @@ FAILED (status read failed (Too many links))
 
 This is not a MID or CID mismatch. The log shows the tool read `boot-mode`,
 `battery-status` and `version-main`, rebooted into RUU mode, sent the zip, and
-died where hboot parses it. Changing CID from `11111111` to `BS_US001`, one of
-the values the package lists, failed at the same point.
+died where hboot parses it.
 
 The `rom.zip` inside the RUU exe is an HTC large-zip container; htc_fastboot
 prints `found large-zip header` before sending. The 4.18 hboot only understands
 plain zips, resets the USB endpoint when it meets the chunked structure, and the
 host sees `Too many links`.
 
-The way through is to flash a plain firmware zip of the same version first
-(`0P6BIMG`, or `DevEdition_6.12.1540.4_...zip`, about 53 MB, holding hboot,
-radio, sbl1 and tz). The old hboot accepts it; afterwards `commitno` reads
-`76df2b54`, `version-main` reads `6.12.1540.4` and the radio reads
-`1.29.214500021.24_2G`. The same `rom.zip` then completes in one pass. Put CID
-back to `11111111` after the RUU finishes.
+The way through is to flash a base firmware first (
+`DevEdition_6.12.1540.4_+StockRecovery+boot.img_0p6bimg.zip`, about 53 MB,
+holding hboot). Switch the hboot to `76df2b54`.
 
-Two things that look like failures but are not:
-
-- `fastboot flash hboot hboot_signedbyaa.img` is refused with
-  `FAILED (remote: not allowed)`, in FASTBOOT and RUU mode alike. The hboot
-  partition only accepts the zip path, never a raw image.
-- After the firmware zip the old `/system` usually will not boot: boot and radio
-  are 6.12 while system is still 4.18. That is expected; run the RUU to put
-  system in place.
+`fastboot flash hboot hboot_signedbyaa.img` is refused with
+`FAILED (remote: not allowed)`, in FASTBOOT and RUU mode alike. The hboot
+partition only accepts the zip path, never a raw image.
 
 The firmware zip writes sbl1 and tz, so an interrupted flash bricks the phone.
 Check the battery and leave the cable alone. `backup hboot` only helps while
 hboot still reaches the bootloader; it cannot recover a phone that shows
 nothing at all.
 
-### Red text at boot
+### Warning text
 
-The red text is drawn by hboot when a **boot image fails its signature check**.
-Both `boot` and `recovery` are checked, and either one failing paints the six
-lines.  Measured both ways: only TWRP flashed, with `boot` at the HTC image,
-draws them; `recovery` restored to the official image while `boot` still carries
-a Magisk patch also draws them.
-
-Neither S-OFF nor the `HTCU` at `pg1fs 0x8404` triggers it - that four-byte
-value only decides whether the bootloader screen says `*** UNLOCKED ***`,
-`*** RELOCKED ***` or `*** LOCKED ***`.
+The six dev-warning lines is drawn by hboot when a boot image fails its
+signature check. Both `boot` and `recovery` are checked, and either one failing
+paints the six lines.
 
 On the 6.12.1540.4 hboot the six lines share one draw function at file offset
 `0x18B64`, reached by exactly one `bl` instruction, `0x147EA`.  That instruction
 sits inside the per-partition check, and the check entry `0xF51490C` has six
 callers: two set mode `9` or `0x0F` and read `boot`, four set mode `3` and read
 `recovery`.  Either failure executes the same `bl 0x18B64`; two of the recovery
-entries are fastboot command handlers that answer `OKAY` first.  The mode only
-selects which partition this check reads - it is not the current boot target.
-Normal boot also runs a mode-3 check on recovery, which is why TWRP alone, with
-`boot` untouched, still paints the lines.  The instruction
-right before it is the image signature check at `0x147D4`: a zero return boots
-straight on, a non-zero return enters the function, paints the six lines,
-flushes the screen and then carries on booting.  The 4.18 `3aa067db` build has
-the same shape - function `0x18258`, call site `0x142AE`, check at `0x14298`.
+entries are fastboot command handlers that answer `OKAY` first.
 
-What follows from that:
-
-- TWRP writes the `recovery` partition and never touches `boot`; the recovery
-  image is not HTC-signed, so the lines still appear.
-- A `boot` image modified by Magisk, SuperSU or a custom kernel draws them too;
-  restoring only `recovery` does not help.
-- Relocking (`0x8404` back to 0) only changes the wording on the bootloader
-  screen; it does not change the images, so the lines stay until both `boot` and
-  `recovery` are back to HTC-signed images.
-- S-OFF is not the switch; it only makes partitions writable. Whether the
-  checked images pass is what decides.
-- `Software status: Modified` (tamper) is a different line on the bootloader
-  screen, driven by the tamper value, not part of this boot screen or these six
-  lines.
+The instruction right before it is the image signature check at `0x147D4`: a zero
+return boots straight on, a non-zero return enters the function, paints the six
+lines, flushes the screen and then carries on booting.  The 4.18 `3aa067db` build
+has the same shape - function `0x18258`, call site `0x142AE`, check at `0x14298`.
 
 `nowarn` finds the six lines by content, not by a hard-coded offset.  It
 dumps the whole 4 MB `hboot` partition, searches for the six strings, blanks
