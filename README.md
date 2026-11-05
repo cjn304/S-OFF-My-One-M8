@@ -197,29 +197,29 @@ nothing at all.
 
 ### Red text at boot
 
-The red text is drawn by hboot when the **boot partition fails its signature
-check**. Neither S-OFF nor the `HTCU` at `pg1fs 0x8404` triggers it - that
-four-byte value only decides whether the bootloader screen says
-`*** UNLOCKED ***`, `*** RELOCKED ***` or `*** LOCKED ***`.
+The red text is drawn by hboot when a **boot image fails its signature check**.
+The check is not limited to boot: flashing only TWRP, with boot left at the HTC
+image, already paints the lines at normal boot, so the recovery signature is
+part of the decision too. Neither S-OFF nor the `HTCU` at `pg1fs 0x8404`
+triggers it - that four-byte value only decides whether the bootloader screen
+says `*** UNLOCKED ***`, `*** RELOCKED ***` or `*** LOCKED ***`.
 
 On the 6.12.1540.4 hboot the six lines share one draw function at file offset
 `0x18B64`, and the whole image calls it from exactly one place, `0x147EA`.  The
-instruction right before is the boot signature check at `0x147D4`: a zero return
+instruction right before is the image signature check at `0x147D4`: a zero return
 boots straight on, a non-zero return enters the function, paints the six lines,
 flushes the screen and then carries on booting.  The 4.18 `3aa067db` build has
 the same shape - function `0x18258`, call site `0x142AE`, check at `0x14298`.
 
 What follows from that:
 
-- Once unlocked, hboot no longer treats the boot image as verified - the check
-  takes the failure branch - so an unlocked phone paints the lines on every
-  boot.  That is why they appear the moment HTCdev unlocks the phone.
+- TWRP writes the `recovery` partition and never touches `boot`; the recovery
+  image is not HTC-signed, so the lines still appear.
 - Relocking (`0x8404` back to 0) only changes the wording on the bootloader
-  screen; it does not make the check pass.  The lines go away only when the boot
-  image is HTC-signed again.  With a modified boot (root, custom kernel, an
-  S.Team ROM) they stay after relocking, and the phone may not boot at all.
-- S-OFF is not the switch; it only makes partitions writable. The boot image
-  passing or failing the check is what decides.
+  screen; it does not change the images, so the lines stay until official `boot`
+  and `recovery` images are flashed back.
+- S-OFF is not the switch; it only makes partitions writable. Whether the
+  checked images pass is what decides.
 - `Software status: Modified` (tamper) is a different line on the bootloader
   screen, driven by the tamper value, not part of this boot screen or these six
   lines.
