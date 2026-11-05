@@ -65,7 +65,6 @@ scripts/stool.sh lock                    # BL magic -> 锁定
 scripts/stool.sh unlock                  # BL magic -> 解锁
 scripts/stool.sh noredtext               # 抹掉 hboot 里六行开发警告红字
 scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 targets.conf
-scripts/stool.sh splash photo.png --size=1440x2560     # 覆盖默认尺寸，sp1 要装得下
 ```
 
 每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
@@ -128,7 +127,7 @@ FAILED (status read failed (Too many links))
 
 ### 第一屏
 
-`splash` 把 PNG 转成 `sp1` 分区真正的格式：小端 RGB565，尺寸取 `targets.conf` 里该机型那一项（M8 上是 1080x1920，4,147,200 字节），`--size=WxH` 可以改成其它尺寸；分区其余部分是填充。写之前会先拿帧大小和分区大小比一遍，装不下就直接停。M8 的 `sp1` 是 5,242,880 字节，1080x1920 刚好装下，1440x2560 的 7,372,800 字节会被拒绝，那个尺寸只适合分区更大的机型。
+`splash` 把 PNG 转成 `sp1` 分区真正的格式：小端 RGB565，尺寸取 `targets.conf` 里该机型那一项（M8 上是 1080x1920，4,147,200 字节），分区其余部分是填充。换机型时正确做法是给 `targets.conf` 加一项，把 `screen` 写成它的原生分辨率，之后直接 `splash photo.png` 就会用那个尺寸；`--size=WxH` 只是临时覆盖，不改配置时才用。写之前会先拿帧大小和分区大小比一遍，装不下就直接停。M8 的 `sp1` 是 5,242,880 字节，1080x1920 刚好装下，1440x2560 的 7,372,800 字节会被拒绝，那个尺寸只适合分区更大的机型。
 
 转换由 `scripts/png2rgb565.py` 完成，刻意只用标准库：精简的 Windows 环境里没有 ffmpeg、没有 PIL、没有 ImageMagick。支持非隔行 8 位 PNG 的灰度、灰度+alpha、RGB、RGBA 和调色板，缩放用双线性；其它格式会明确报错而不是生成一张错图（JPG 也一样，先另存成 PNG）。
 
