@@ -788,6 +788,7 @@ worked, and the failure that belongs to it.
 ```
 == state ==
 target: m8_ul
+serial: HT495WM00193
 Secure state: ON
 BL state: unlocked
 hboot: 3.19.0.0000

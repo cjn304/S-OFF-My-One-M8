@@ -547,6 +547,9 @@ print_state() {
 			return 0
 		fi
 		say "target: $TARGET"
+		sn=$(device_serial)
+		[ -n "$sn" ] || sn=unknown
+		say "serial: $sn"
 		case "$(secure_state)" in
 		off) say "Secure state: OFF" ;;
 		*)   say "Secure state: ON" ;;
@@ -569,6 +572,9 @@ print_state() {
 		say "selinux: $se"
 		;;
 	fastboot)
+		sn=$("$FB" getvar serialno 2>&1 | sed -n 's/.*serialno: //p' | tr -d '\r')
+		[ -n "$sn" ] || sn=unknown
+		say "serial: $sn"
 		sf=$("$FB" oem readsecureflag 2>&1 | sed -n 's/.*secure_flag: //p' | tr -d '\r')
 		case "$sf" in
 		0) say "Secure state: OFF" ;;
