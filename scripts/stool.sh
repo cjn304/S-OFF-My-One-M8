@@ -556,10 +556,10 @@ print_state() {
 		# Last two are the prerequisites soff checks: modules_disabled must be 0
 		# for insmod, and SELinux only warns.  Printed as the state they mean,
 		# not as the raw sysctl value.
-		printf '%-12s %s\n' "modules:" "$(modules_state)"
+		say "modules: $(modules_state)"
 		se=$("$ADB" shell getenforce 2>/dev/null | tr -d '\r')
 		[ -n "$se" ] || se=unknown
-		printf '%-12s %s\n' "selinux:" "$se"
+		say "selinux: $se"
 		;;
 	fastboot)
 		sf=$("$FB" oem readsecureflag 2>&1 | sed -n 's/.*secure_flag: //p' | tr -d '\r')
@@ -574,8 +574,6 @@ print_state() {
 		*"device locked"*)   say "BL state: locked" ;;
 		*) say "BL state: unknown" ;;
 		esac
-		# not exposed over fastboot: only hboot itself knows, from pg2fs
-		say "Software status: unknown"
 		;;
 	*)
 		die "no device found (adb or fastboot)"
@@ -710,7 +708,6 @@ status_show() {
 	print_state
 	mode=$(device_mode)
 	if [ "$mode" = fastboot ]; then
-		say ""
 		say "== parameters (bootloader view) =="
 		printf '%-11s %s\n' CID     "$("$FB" getvar cidnum 2>&1 | sed -n 's/.*cidnum: //p' | tr -d '\r')"
 		printf '%-11s %s\n' MID     "$("$FB" getvar modelid 2>&1 | sed -n 's/.*modelid: //p' | tr -d '\r')"

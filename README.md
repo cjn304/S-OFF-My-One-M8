@@ -792,8 +792,8 @@ target: m8  [htc_m8, hboot 3.19.*]
 Secure state: ON
 BL state: unlocked
 Software status: Official
-modules:     enabled
-selinux:     Enforcing
+modules: enabled
+selinux: Enforcing
 == parameters ==
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
