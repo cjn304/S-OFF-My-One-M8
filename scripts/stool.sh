@@ -16,7 +16,7 @@
 #   stool.sh splash <image.png> [--size=WxH] [--fit=...]   first boot screen
 #
 #   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
-#           tamper <0-255> | secure <0|3>
+#           tamper_flag <0-255> | secure_flag <0|3>
 #
 # Every command reads the current S state first, and every command that writes
 # is refused while S-ON.  Nothing is backed up automatically: `backup` writes
@@ -31,8 +31,8 @@
 #   CID       board_info (p3)  @ 0x0014   8 chars, ASCII
 #   MID       mfg        (p5)  @ 0x4000   9 chars, UTF-16LE
 #   version   misc       (p24) @ 0x00A0   ASCII
-#   tamper    pg2fs      (p6)  @ 0x511804 u32 LE
-#   secure    pg1fs      (p2)  @ 0x8400   u32 LE  (0 = S-OFF, 3 = S-ON)
+#   tamper_flag pg2fs    (p6)  @ 0x511804 u32 LE
+#   secure_flag pg1fs    (p2)  @ 0x8400   u32 LE  (0 = S-OFF, 3 = S-ON)
 #   bl lock   pg1fs      (p2)  @ 0x8404   4 chars ("HTCU" = unlocked, 00000000 = locked)
 #
 # Two commands touch partitions that are not part of that layout:
@@ -142,7 +142,7 @@ conf_dump() { # every line as section|key|value; comments and blanks dropped
 	/^[ \t]*#/ { next }
 	/^[ \t]*$/ { next }
 	# trailing comment after a value: a "#" that follows whitespace is never
-	# part of a value here, and single-field keys like blpart would otherwise
+	# part of a value here, and single-field keys like bl_part would otherwise
 	# swallow it whole
 	{ sub(/[ \t]+#.*$/, "") }
 	/^\[/ {
@@ -212,19 +212,19 @@ EOF
 	IFS=: read -r PART_VER OFF_VER LEN_VER _ <<EOF
 $FV
 EOF
-	field_req tamper
+	field_req tamper_flag
 	IFS=: read -r PART_TAMPER OFF_TAMPER LEN_TAMPER _ <<EOF
 $FV
 EOF
-	field_req secure
+	field_req secure_flag
 	IFS=: read -r PART_SECURE OFF_SECURE LEN_SECURE _ <<EOF
 $FV
 EOF
-	field_req blmagic
+	field_req bl_magic
 	IFS=: read -r PART_BLMAGIC OFF_BLMAGIC LEN_BLMAGIC _ <<EOF
 $FV
 EOF
-	field_req blpart
+	field_req bl_part
 	IFS=: read -r PART_HBOOT _ _ _ <<EOF
 $FV
 EOF
@@ -312,7 +312,7 @@ in_recovery() { # 0 if adbd is a recovery ramdisk rather than Android
 #   (unset)  writes, so S-OFF is required
 #   ro       never writes; no target_check either
 #   any      works off the on-device table, so targets.conf is not needed
-#   s-on     may run while S-ON: soff, son and `set secure 0`
+#   s-on     may run while S-ON: soff, son and `set secure_flag 0`
 require_android() {
 	case "$(device_mode)" in
 	android) ;;
@@ -334,7 +334,7 @@ require_android() {
 	detect_dev || die "no by-name directory${PART_SECURE:+ holding $PART_SECURE} on this device"
 	# Commands that write are gated here, before any dump or write, so an S-ON
 	# phone is refused up front instead of after a backup or a refused dd.
-	# soff, son and `set secure 0` opt out: they are how S-ON gets turned off.
+	# soff, son and `set secure_flag 0` opt out: they are how S-ON gets turned off.
 	case "${1:-}" in
 	ro | any) return 0 ;;
 	s-on) target_check ;;
@@ -342,7 +342,7 @@ require_android() {
 		target_check
 		[ "$(secure_state)" = off ] ||
 			die "this device is S-ON - the eMMC write protection is still armed.
-  Run 'stool.sh soff' first, or 'stool.sh set secure 0' on an old hboot that
+  Run 'stool.sh soff' first, or 'stool.sh set secure_flag 0' on an old hboot that
   never armed it.  Nothing was written."
 		;;
 	esac
@@ -495,14 +495,14 @@ check_param() { # param value - dies on a value that could never be written
 		[ -n "$2" ] || die "version must not be empty"
 		[ ${#2} -le 15 ] || die "version too long (max 15 chars)"
 		;;
-	tamper)
+	tamper_flag)
 		case "$2" in
-		'' | *[!0-9]*) die "tamper takes a decimal number (0-255)" ;;
+		'' | *[!0-9]*) die "tamper_flag takes a decimal number (0-255)" ;;
 		esac
-		[ "$2" -le 255 ] || die "tamper out of range"
+		[ "$2" -le 255 ] || die "tamper_flag out of range"
 		;;
-	secure)
-		case "$2" in 0 | 3) ;; *) die "secure takes 0 (S-OFF) or 3 (S-ON)" ;; esac
+	secure_flag)
+		case "$2" in 0 | 3) ;; *) die "secure_flag takes 0 (S-OFF) or 3 (S-ON)" ;; esac
 		;;
 	esac
 }
@@ -738,7 +738,7 @@ status_show() {
 		say "== parameters =="
 		printf '%-11s %s\n' CID     "$("$FB" getvar cidnum 2>&1 | sed -n 's/.*cidnum: //p' | tr -d '\r')"
 		printf '%-11s %s\n' MID     "$("$FB" getvar modelid 2>&1 | sed -n 's/.*modelid: //p' | tr -d '\r')"
-		printf '%-11s %s\n' version "$("$FB" getvar version-main 2>&1 | sed -n 's/.*version-main: //p' | tr -d '\r')"
+		printf '%-11s %s\n' OS      "$("$FB" getvar version-main 2>&1 | sed -n 's/.*version-main: //p' | tr -d '\r')"
 		return 0
 	fi
 	# print_state already explained why it could not read anything
@@ -747,7 +747,7 @@ status_show() {
 	say "== parameters =="
 	printf '%-11s %-11s %s @ 0x%x\n' CID      "$(p_cid)"     "$PART_CID"     "$((OFF_CID))"
 	printf '%-11s %-11s %s @ 0x%x\n' MID      "$(p_mid)"     "$PART_MID"     "$((OFF_MID))"
-	printf '%-11s %-11s %s @ 0x%x\n' version  "$(p_version)" "$PART_VER"     "$((OFF_VER))"
+	printf '%-11s %-11s %s @ 0x%x\n' OS       "$(p_version)" "$PART_VER"     "$((OFF_VER))"
 	printf '%-11s %-11s %s @ 0x%x\n' "BL magic"    "$(p_bl)"     "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
 	printf '%-11s %-11s %s @ 0x%x\n' "secure flag" "$(p_secure)" "$PART_SECURE"  "$((OFF_SECURE))"
 	printf '%-11s %-11s %s @ 0x%x\n' "tamper flag" "$(p_tamper)" "$PART_TAMPER" "$((OFF_TAMPER))"
@@ -761,14 +761,14 @@ cmd_status() {
 
 cmd_set() {
 	param=${1:-}; val=${2:-}
-	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|version|tamper|secure> [value]"
+	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|version|tamper_flag|secure_flag> [value]"
 
 	case "$param" in
-	cid|mid|version|tamper)
+	cid|mid|version|tamper_flag)
 		check_param "$param" "$val"
 		require_android
 		;;
-	secure)
+	secure_flag)
 		check_param "$param" "$val"
 		# 0 is the old-hboot escape hatch: allowed while S-ON, wp_probe decides
 		if [ "$val" = 0 ]; then require_android s-on; else require_android; fi
@@ -806,14 +806,14 @@ cmd_set() {
 		verify_hex "$PART_VER" "$OFF_VER" "$hx"
 		say "ok"
 		;;
-	tamper)
+	tamper_flag)
 		hx=$(u32hex "$val")
-		say "tamper: $(p_tamper) -> $val"
+		say "tamper_flag: $(p_tamper) -> $val"
 		write_hex "$PART_TAMPER" "$OFF_TAMPER" "$hx"
 		verify_hex "$PART_TAMPER" "$OFF_TAMPER" "$hx"
 		say "ok"
 		;;
-	secure)
+	secure_flag)
 		if [ "$val" = 0 ] && [ "$(secure_state)" != off ]; then
 			# Not fatal by itself: an old hboot may never have armed the
 			# protection, and then a plain write works (Porting, case A).
@@ -821,7 +821,7 @@ cmd_set() {
 				die "writing 0 while S-ON needs the write protection cleared - run 'stool.sh soff'"
 		fi
 		hx=$(u32hex "$val")
-		say "secure: $(p_secure) -> $val"
+		say "secure_flag: $(p_secure) -> $val"
 		write_hex "$PART_SECURE" "$OFF_SECURE" "$hx"
 		verify_hex "$PART_SECURE" "$OFF_SECURE" "$hx"
 		say "ok"
@@ -1262,8 +1262,8 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh set cid <8 chars>
   stool.sh set mid <9 chars>
   stool.sh set version <x.y.z.w>
-  stool.sh set tamper <0-255>
-  stool.sh set secure <0|3>
+  stool.sh set tamper_flag <0-255>
+  stool.sh set secure_flag <0|3>
   stool.sh lock                    write the BL magic = locked
   stool.sh unlock                  write the BL magic = unlocked
   stool.sh nowarn                  blank the six "This build is for ..." lines

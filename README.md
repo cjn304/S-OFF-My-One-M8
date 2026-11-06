@@ -69,7 +69,7 @@ scripts/stool.sh restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 write (`set`, `lock`, `unlock`, `nowarn`, `splash`) check for Security state
 before they dump or write anything, and stop with nothing written if S-ON.
 `status` and `backup` only read, `restore` takes the partition from its
-argument, and `soff`, `son` and `set secure 0` are how the Security state
+argument, and `soff`, `son` and `set secure_flag 0` are how the Security state
 itself is changed, so none of those need S-OFF up front.
 
 ```sh
@@ -81,8 +81,8 @@ scripts/stool.sh restore <partition> <file.img>   # e.g. restore pg2fs HT495WM00
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
-scripts/stool.sh set tamper <0|4>        # 0 = Official, 4 = Modified
-scripts/stool.sh set secure <0|3>        # 0 = S-OFF, 3 = S-ON
+scripts/stool.sh set tamper_flag <0|4>  # 0 = Official, 4 = Modified
+scripts/stool.sh set secure_flag <0|3>  # 0 = S-OFF, 3 = S-ON
 scripts/stool.sh lock                    # BL magic -> locked
 scripts/stool.sh unlock                  # BL magic -> unlocked
 scripts/stool.sh nowarn                  # blank the six dev-warning lines in hboot
@@ -104,14 +104,14 @@ taken while S-ON puts the phone back to S-ON. The only dumps taken without
 asking are the ones `nowarn` and `splash` make of the single partition they
 are about to overwrite; that dump is their undo path, nothing else.
 
-`set tamper` takes any decimal 0..255, standard values are `0` and `4`.
+`set tamper_flag` takes any decimal 0..255, standard values are `0` and `4`.
 That byte is the only input to hboot's `Software status:` line: `00` prints
 `*** Software status: Official ***`, otherwise prints
 `*** Software status: Modified ***`. The bootloader can read the same byte
 back: `fastboot oem get_tamper_flag` answers `Tamper_Flag: 0x0`. It is not in
 `getvar all`, only in the `oem ?` list.
 
-`set secure` is the write from the last stage of `soff`, on its own: `00` or
+`set secure_flag` is the write from the last stage of `soff`, on its own: `00` or
 `03` at `0x8400`, then a read-back - no power cycle and no reboot. `00` while
 S-ON is refused unless `mmc_cmd wp` reports no write protection, which is the
 old-hboot case in [Porting](#8-porting); there it is the plain write that sets
@@ -430,14 +430,14 @@ The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 | CID | `cid` | `board_info` p3 | 0x14, 8 chars ASCII | the `cidnum` string `fastboot getvar all` prints |
 | MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE | UTF-16LE encoding of the `modelid` string, 2 bytes per char |
 | OS | `version` | `misc` p24 | 0xA0, 16 bytes ASCII | the `version-main` string `fastboot getvar all` prints |
-| tamper flag | `tamper` | `pg2fs` p6 | 0x511804, u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
-| secure flag | `secure` | `pg1fs` p2 | 0x8400, u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
-| BL magic | `blmagic` | `pg1fs` p2 | 0x8404, 4 chars | right after the secure flag: `HTCU` unlocked, `00000000` locked |
-| warning | `blpart` | `hboot` p26 | run time | six known banner strings, searched per image |
+| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804, u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
+| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400, u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
+| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404, 4 chars | right after the secure flag: `HTCU` unlocked, `00000000` locked |
+| warning | `bl_part` | `hboot` p26 | run time | six known banner strings, searched per image |
 | first screen | `splash` | `sp1` p12 | 0 | the frame starts at 0: W x H x 2 bytes |
 
 `screen` is the only key without an offset: it sets the default WxH `splash`
-converts to, and `blpart` names the partition `nowarn` rewrites - `hboot`
+converts to, and `bl_part` names the partition `nowarn` rewrites - `hboot`
 here, `aboot` on other models - and its size is what bounds the image.
 
 Two rules when repeating this on another build:
@@ -528,7 +528,7 @@ have had few system updates. They may not set write protection at all: run
 plain write is enough then, with neither the module nor the power cycle: derive
 the partition, the offset and the record shape as in
 [section 6](#6-parameter-offsets), put them in a `targets.conf` section, and
-`stool.sh set secure 0` is that write - it probes the bitmap first and refuses
+`stool.sh set secure_flag 0` is that write - it probes the bitmap first and refuses
 only if protection is really armed. One caveat there: the four bytes after
 `03 00 00 00` read `HTCU` only while the bootloader is unlocked, so a dump from
 a locked phone shows `00000000` and the pair is not a reliable anchor. Confirm
@@ -800,7 +800,7 @@ selinux: Enforcing
 == parameters ==
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
-version     6.12.1540.4 misc @ 0xa0
+OS          6.12.1540.4 misc @ 0xa0
 BL magic    HTCU        pg1fs @ 0x8404
 secure flag 3           pg1fs @ 0x8400
 tamper flag 0           pg2fs @ 0x511804
@@ -818,7 +818,7 @@ the bootloader build the phone actually reports. `soff` wants
 `Security: ON`; on an already S-OFF phone it prints `already S-OFF` and
 returns. `Security: unknown (no root ...)` means `su` does not work yet, and
 nothing below will either. `Software status` is the same line the bootloader
-prints, taken from the one `tamper` byte: `0` is `Official`, anything else is
+prints, taken from the one `tamper_flag` byte: `0` is `Official`, anything else is
 `Modified`. `modules: enabled` is `modules_disabled=0` spelled as the capability
 it grants; `disabled` and `insmod` is refused. `selinux: Enforcing` is not fatal
 - `soff` warns and carries on, and whether the module loads depends on the domain
