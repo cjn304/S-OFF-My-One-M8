@@ -431,7 +431,7 @@ The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 | MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE | UTF-16LE encoding of the `modelid` string, 2 bytes per char |
 | version | `version` | `misc` p24 | 0xA0, 16 bytes ASCII | the `version-main` string |
 | tamper_flag | `tamper` | `pg2fs` p6 | 0x511804, u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
-| secure | `secure` | `pg1fs` p2 | 0x8400, u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
+| secure_flag | `secure` | `pg1fs` p2 | 0x8400, u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
 | BL_magic | `blmagic` | `pg1fs` p2 | 0x8404, 4 chars | right after the flag: `HTCU` unlocked, `00000000` locked |
 | warning | `blpart` | `hboot` p26 | run time | six known banner strings, searched per image |
 | first screen | `splash` | `sp1` p12 | 0 | the frame starts at 0: W x H x 2 bytes |
