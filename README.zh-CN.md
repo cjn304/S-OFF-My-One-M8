@@ -59,10 +59,10 @@ scripts/stool.sh restore <partition> <file.img>   # 如 restore pg2fs HT495WM001
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 = 字段长-1（M8 是 15）
-scripts/stool.sh set tamper_flag <0|4>  # 0 = Official，4 = Modified
-scripts/stool.sh set secure_flag <0|3>  # 0 = S-OFF，3 = S-ON
-scripts/stool.sh lock                    # BL magic -> 锁定
-scripts/stool.sh unlock                  # BL magic -> 解锁
+scripts/stool.sh set tamper_flag <0|4>   # 0 = Official，4 = Modified
+scripts/stool.sh set secure_flag <0|3>   # 0 = S-OFF，3 = S-ON
+scripts/stool.sh lock                    # BL magic -> HTCU
+scripts/stool.sh unlock                  # BL magic -> 00000000
 scripts/stool.sh nowarn                  # 抹掉 hboot 里六行开发警告红字
 scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 targets.conf
 ```
