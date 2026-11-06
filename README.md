@@ -134,7 +134,7 @@ What a M8's backup holds:
 | `<serial>-<timestamp>.board_info.img` | p3 — CID, IMEI, board data lives here | 16 KB |
 | `<serial>-<timestamp>.mfg.img` | p5 — MID lives here | 256 KB |
 | `<serial>-<timestamp>.pg2fs.img` | p6 — the tamper flag lives here | 24 MB |
-| `<serial>-<timestamp>.misc.img` | p24 — version-main lives here | 1 MB |
+| `<serial>-<timestamp>.misc.img` | p24 — OS version lives here | 1 MB |
 
 Names start with the serial (`ro.serialno`) and end with the timestamp, so two
 M8s can share one `backup/` directory without getting mixed up. `restore`

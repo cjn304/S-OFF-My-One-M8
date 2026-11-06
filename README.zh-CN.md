@@ -86,7 +86,7 @@ M8 的 `backup` 写出这些文件：
 | `<serial>-<timestamp>.board_info.img` | p3，CID、IMEI、板级数据在这里 | 16 KB |
 | `<serial>-<timestamp>.mfg.img` | p5，MID 在这里 | 256 KB |
 | `<serial>-<timestamp>.pg2fs.img` | p6，tamper flag 在这里 | 24 MB |
-| `<serial>-<timestamp>.misc.img` | p24，version-main 在这里 | 1 MB |
+| `<serial>-<timestamp>.misc.img` | p24，系统版本在这里 | 1 MB |
 
 文件名以序列号（`ro.serialno`）开头，后接时间戳，两台 M8 的备份放在同一个 `backup/` 里也不会混。`restore` 只比对文件名里的序列号：和当前机器不一致时直接拒绝，一个字节都不写。
 
@@ -271,7 +271,7 @@ done
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14，8 字节 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
 | MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `fastboot getvar all` 里的 `modelid` 字符串，每字符 2 字节 |
-| OS version | `version-main` | `misc` p24 | 0xA0，16 字节 ASCII | `fastboot getvar all` 里的 `version-main` 字符串 |
+| 系统版本 | `version-main` | `misc` p24 | 0xA0，16 字节 ASCII | `fastboot getvar all` 里的 `version-main` 字符串 |
 | tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，4 字节 u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
 | secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，4 字节 u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
 | BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字节 ASCII | secure flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
