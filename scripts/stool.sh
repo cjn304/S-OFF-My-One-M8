@@ -750,7 +750,7 @@ status_show() {
 	printf '%-11s %-11s %s @ 0x%x\n' version  "$(p_version)" "$PART_VER"     "$((OFF_VER))"
 	printf '%-11s %-11s %s @ 0x%x\n' BL_magic    "$(p_bl)"     "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
 	printf '%-11s %-11s %s @ 0x%x\n' secure_flag "$(p_secure)" "$PART_SECURE"  "$((OFF_SECURE))"
-	printf '%-11s %-11s %s @ 0x%x\n' tamper   "$(p_tamper)"  "$PART_TAMPER"  "$((OFF_TAMPER))"
+	printf '%-11s %-11s %s @ 0x%x\n' tamper_flag "$(p_tamper)" "$PART_TAMPER" "$((OFF_TAMPER))"
 }
 
 cmd_status() {
