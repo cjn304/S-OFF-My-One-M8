@@ -520,8 +520,8 @@ selinux: Enforcing
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
 version     6.12.1540.4 misc @ 0xa0
-BL_magic    HTCU        pg1fs @ 0x8404
-secure_flag 3           pg1fs @ 0x8400
+BLmagic     HTCU        pg1fs @ 0x8404
+secure      3           pg1fs @ 0x8400
 tamper      0           pg2fs @ 0x511804
 ```
 

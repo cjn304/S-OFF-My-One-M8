@@ -724,7 +724,7 @@ status_show() {
 	print_state
 	mode=$(device_mode)
 	if [ "$mode" = fastboot ]; then
-		# Only the three hboot can answer for.  BL_magic and secure_flag are
+		# Only the three hboot can answer for.  BLmagic and secure are
 		# readable here too, but they are storage offsets, and this mode has no
 		# partition-table match, so the block stays to the getvar values.
 		say "== parameters =="
@@ -740,8 +740,8 @@ status_show() {
 	printf '%-11s %-11s %s @ 0x%x\n' CID      "$(p_cid)"     "$PART_CID"     "$((OFF_CID))"
 	printf '%-11s %-11s %s @ 0x%x\n' MID      "$(p_mid)"     "$PART_MID"     "$((OFF_MID))"
 	printf '%-11s %-11s %s @ 0x%x\n' version  "$(p_version)" "$PART_VER"     "$((OFF_VER))"
-	printf '%-11s %-11s %s @ 0x%x\n' BL_magic "$(p_bl)"      "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
-	printf '%-11s %-11s %s @ 0x%x\n' secure_flag "$(p_secure)" "$PART_SECURE" "$((OFF_SECURE))"
+	printf '%-11s %-11s %s @ 0x%x\n' BLmagic "$(p_bl)"      "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
+	printf '%-11s %-11s %s @ 0x%x\n' secure  "$(p_secure)"   "$PART_SECURE"  "$((OFF_SECURE))"
 	printf '%-11s %-11s %s @ 0x%x\n' tamper   "$(p_tamper)"  "$PART_TAMPER"  "$((OFF_TAMPER))"
 }
 
