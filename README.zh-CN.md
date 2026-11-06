@@ -55,7 +55,7 @@ scripts/stool.sh status                  # Security 状态 + 全部参数（Andr
 scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup [partition]      # 五个整分区 + 参数，或只备一个
-scripts/stool.sh restore <partition> <file.img>   # 如 restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
+scripts/stool.sh restore <partition> <file.img>   # 如 restore pg2fs *.img
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 = 字段长-1（M8 是 15）

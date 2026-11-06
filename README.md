@@ -77,7 +77,7 @@ scripts/stool.sh status                  # Security state + every parameter (And
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup [partition]      # all five + parameters, or just one
-scripts/stool.sh restore <partition> <file.img>   # e.g. restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
+scripts/stool.sh restore <partition> <file.img>   # e.g. restore pg2fs *.img
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max = field-1 (15 here)
