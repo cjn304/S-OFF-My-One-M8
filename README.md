@@ -429,7 +429,7 @@ The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14, 8 chars ASCII | the `cidnum` string `fastboot getvar all` prints |
 | MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE | UTF-16LE encoding of the `modelid` string, 2 bytes per char |
-| version | `version` | `misc` p24 | 0xA0, 16 bytes ASCII | the `version-main` string |
+| OS | `version` | `misc` p24 | 0xA0, 16 bytes ASCII | the `version-main` string `fastboot getvar all` prints |
 | tamper flag | `tamper` | `pg2fs` p6 | 0x511804, u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
 | secure flag | `secure` | `pg1fs` p2 | 0x8400, u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
 | BL magic | `blmagic` | `pg1fs` p2 | 0x8404, 4 chars | right after the secure flag: `HTCU` unlocked, `00000000` locked |
