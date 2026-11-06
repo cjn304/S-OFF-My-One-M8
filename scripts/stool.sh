@@ -28,12 +28,12 @@
 # device reports in /sys/class/block/*/uevent; no match means no run, rather than
 # writing at the M8 offsets on a phone that is not an M8.  The M8 section:
 #
-#   CID       board_info (p3)  @ 0x0014   8 chars, ASCII
-#   MID       mfg        (p5)  @ 0x4000   9 chars, UTF-16LE
-#   version   misc       (p24) @ 0x00A0   ASCII
-#   tamper_flag pg2fs    (p6)  @ 0x511804 u32 LE
-#   secure_flag pg1fs    (p2)  @ 0x8400   u32 LE  (0 = S-OFF, 3 = S-ON)
-#   bl lock   pg1fs      (p2)  @ 0x8404   4 chars ("HTCU" = unlocked, 00000000 = locked)
+#   CID          board_info (p3)  @ 0x0014   8 chars, ASCII
+#   MID          mfg        (p5)  @ 0x4000   9 chars, UTF-16LE
+#   OS version   misc       (p24) @ 0x00A0   ASCII
+#   tamper flag  pg2fs      (p6)  @ 0x511804 u32 LE
+#   secure flag  pg1fs      (p2)  @ 0x8400   u32 LE  (0 = S-OFF, 3 = S-ON)
+#   BL magic     pg1fs      (p2)  @ 0x8404   4 chars ("HTCU" = unlocked, 00000000 = locked)
 #
 # Two commands touch partitions that are not part of that layout:
 #
@@ -142,8 +142,8 @@ conf_dump() { # every line as section|key|value; comments and blanks dropped
 	/^[ \t]*#/ { next }
 	/^[ \t]*$/ { next }
 	# trailing comment after a value: a "#" that follows whitespace is never
-	# part of a value here, and single-field keys like bl_part would otherwise
-	# swallow it whole
+	# part of a value here, and a single-field key like bl-partition would
+	# otherwise swallow it whole
 	{ sub(/[ \t]+#.*$/, "") }
 	/^\[/ {
 		s = $0
@@ -208,7 +208,7 @@ EOF
 	IFS=: read -r PART_MID OFF_MID LEN_MID _ <<EOF
 $FV
 EOF
-	field_req version
+	field_req version-main
 	IFS=: read -r PART_VER OFF_VER LEN_VER _ <<EOF
 $FV
 EOF
@@ -224,7 +224,7 @@ EOF
 	IFS=: read -r PART_BLMAGIC OFF_BLMAGIC LEN_BLMAGIC _ <<EOF
 $FV
 EOF
-	field_req bl_part
+	field_req bl-partition
 	IFS=: read -r PART_HBOOT _ _ _ <<EOF
 $FV
 EOF
@@ -737,21 +737,21 @@ status_show() {
 		# readable here too, but they are storage offsets, and this mode has no
 		# partition-table match, so the block stays to the getvar values.
 		say "== parameters =="
-		printf '%-11s %s\n' CID     "$("$FB" getvar cidnum 2>&1 | sed -n 's/.*cidnum: //p' | tr -d '\r')"
-		printf '%-11s %s\n' MID     "$("$FB" getvar modelid 2>&1 | sed -n 's/.*modelid: //p' | tr -d '\r')"
-		printf '%-11s %s\n' OS      "$("$FB" getvar version-main 2>&1 | sed -n 's/.*version-main: //p' | tr -d '\r')"
+		printf '%-11s %s\n' CID          "$("$FB" getvar cidnum 2>&1 | sed -n 's/.*cidnum: //p' | tr -d '\r')"
+		printf '%-11s %s\n' MID          "$("$FB" getvar modelid 2>&1 | sed -n 's/.*modelid: //p' | tr -d '\r')"
+		printf '%-11s %s\n' "OS version" "$("$FB" getvar version-main 2>&1 | sed -n 's/.*version-main: //p' | tr -d '\r')"
 		return 0
 	fi
 	# print_state already explained why it could not read anything
 	detect_root && detect_dev || return 0
 	require_android ro
 	say "== parameters =="
-	printf '%-11s %-11s %s @ 0x%x\n' CID      "$(p_cid)"     "$PART_CID"     "$((OFF_CID))"
-	printf '%-11s %-11s %s @ 0x%x\n' MID      "$(p_mid)"     "$PART_MID"     "$((OFF_MID))"
-	printf '%-11s %-11s %s @ 0x%x\n' OS       "$(p_version)" "$PART_VER"     "$((OFF_VER))"
-	printf '%-11s %-11s %s @ 0x%x\n' "BL magic"    "$(p_bl)"     "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
-	printf '%-11s %-11s %s @ 0x%x\n' "secure flag" "$(p_secure)" "$PART_SECURE"  "$((OFF_SECURE))"
-	printf '%-11s %-11s %s @ 0x%x\n' "tamper flag" "$(p_tamper)" "$PART_TAMPER" "$((OFF_TAMPER))"
+	printf '%-11s %-11s %s @ 0x%x\n' CID           "$(p_cid)"     "$PART_CID"      "$((OFF_CID))"
+	printf '%-11s %-11s %s @ 0x%x\n' MID           "$(p_mid)"     "$PART_MID"      "$((OFF_MID))"
+	printf '%-11s %-11s %s @ 0x%x\n' "OS version"  "$(p_version)" "$PART_VER"      "$((OFF_VER))"
+	printf '%-11s %-11s %s @ 0x%x\n' "BL magic"    "$(p_bl)"      "$PART_BLMAGIC"  "$((OFF_BLMAGIC))"
+	printf '%-11s %-11s %s @ 0x%x\n' "secure flag" "$(p_secure)"  "$PART_SECURE"   "$((OFF_SECURE))"
+	printf '%-11s %-11s %s @ 0x%x\n' "tamper flag" "$(p_tamper)"  "$PART_TAMPER"   "$((OFF_TAMPER))"
 }
 
 cmd_status() {

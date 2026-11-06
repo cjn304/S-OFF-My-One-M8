@@ -271,14 +271,14 @@ done
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14，8 字节 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
 | MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE（9 字符 × 2） | `modelid` 字符串的 UTF-16LE 编码，每字符 2 字节 |
-| OS | `version` | `misc` p24 | 0xA0，16 字节 ASCII | `fastboot getvar all` 里的 `version-main` 字符串 |
+| OS version | `version-main` | `misc` p24 | 0xA0，16 字节 ASCII | `fastboot getvar all` 里的 `version-main` 字符串 |
 | tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，4 字节 u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
 | secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，4 字节 u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
 | BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字节 ASCII | secure flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
-| 警告 | `bl_part` | `hboot` p26 | 运行期，无固定偏移 | 六段已知横幅字符串，按镜像搜 |
+| 警告 | `bl-partition` | `hboot` p26 | 运行期，无固定偏移 | 六段已知横幅字符串，按镜像搜 |
 | 第一屏 | `splash` | `sp1` p12 | 0，W×H×2 字节 | 画面从 0 开始 |
 
-`screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl_part` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
+`screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl-partition` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
 
 换构建时重复这套流程，有两条规矩：
 
@@ -519,7 +519,7 @@ selinux: Enforcing
 == parameters ==
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
-OS          6.12.1540.4 misc @ 0xa0
+OS version  6.12.1540.4 misc @ 0xa0
 BL magic    HTCU        pg1fs @ 0x8404
 secure flag 3           pg1fs @ 0x8400
 tamper flag 0           pg2fs @ 0x511804
