@@ -15,7 +15,7 @@ hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规�
 * [解锁 BL](http://www.htcdev.com/bootloader/) 并 root，或刷入自带 root 的固件。内核要能加载模块：M8 的 LineageOS 17.1 就不行。像 Sunshine 一样临时 root 就不用解锁 BL，S-OFF 之后随便解锁。
 * 与固件接近的内核源码，HTC 官方的在 [htcdev.com](https://www.htcdev.com/devcenter/downloads) 发布。
 * 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows](#windows)）。
-* 数据备份（见[风险](#风险)）和[构建](#构建)。
+* 数据备份和[构建](#构建)。
 
 ---
 
@@ -24,7 +24,7 @@ hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规�
 下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反：重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。每个 `stool.sh` 命令都会自己探测 root（Magisk 的 `su`、adb root 或 userdebug 固件）；`gen_addr.sh` 不需要，`kptr_restrict` 归零后 `/proc/kallsyms` 对所有人可读。[期望输出与故障处理](#期望输出与故障处理)。
 
 ```sh
-# 0. 检查 root、S 状态、modules、SELinux
+# 0. 检查 Security 状态、modules、SELinux
 scripts/stool.sh status
 
 # 1. kptr_restrict 归零，kallsyms 才显示地址，然后读地址
@@ -48,10 +48,10 @@ scripts/stool.sh restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 
 ## stool.sh
 
-`scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 S 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure 0` 本来就是改 S 状态本身，这几条不预先要求 S-OFF；`set secure 0` 仍会先探测写保护，真还有保护就拒绝。
+`scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 Security 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure 0` 本来就是改 Security 状态本身，这几条不预先要求 S-OFF；`set secure 0` 仍会先探测写保护，真还有保护就拒绝。
 
 ```sh
-scripts/stool.sh status                  # S 状态 + 全部参数（Android 或 fastboot 都行）
+scripts/stool.sh status                  # Security 状态 + 全部参数（Android 或 fastboot 都行）
 scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup [partition]      # 五个整分区 + 参数，或只备一个
@@ -67,9 +67,9 @@ scripts/stool.sh nowarn                  # 抹掉 hboot 里六行开发警告红
 scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 targets.conf
 ```
 
-每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一个布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
+每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一种布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[6. 参数偏移](#6-参数偏移)。
 
-每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<序列号>-<时间戳>.{txt,img}`（五个整分区，外加一份等于 `status` 输出、末尾附还原命令的 txt），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
+没有整份备份是自动做的：`backup` 写出 `backup/<序列号>-<时间戳>.{txt,img}`（五个整分区，外加一份等于 `status` 输出、末尾附还原命令的 txt），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
 `set tamper` 接受 0..255 的十进制，标准取值是 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`00` 显示 `*** Software status: Official ***`，其他显示 `*** Software status: Modified ***`。bootloader 侧也能读同一个字节：`fastboot oem get_tamper_flag` 返回 `Tamper_Flag: 0x0`，这条命令不在 `getvar all` 里，只在 `oem ?` 的列表里。
 
@@ -85,7 +85,7 @@ M8 的 `backup` 写出这些文件：
 | `<serial>-<timestamp>.pg1fs.img` | p2，secure flag、BL magic 在这里 | 119 MB |
 | `<serial>-<timestamp>.board_info.img` | p3，CID、IMEI、板级数据在这里 | 16 KB |
 | `<serial>-<timestamp>.mfg.img` | p5，MID 在这里 | 256 KB |
-| `<serial>-<timestamp>.pg2fs.img` | p6，status flag 在这里 | 24 MB |
+| `<serial>-<timestamp>.pg2fs.img` | p6，tamper flag 在这里 | 24 MB |
 | `<serial>-<timestamp>.misc.img` | p24，version-main 在这里 | 1 MB |
 
 文件名以序列号（`ro.serialno`）开头，后接时间戳，两台 M8 的备份放在同一个 `backup/` 里也不会混。`restore` 只比对文件名里的序列号：和当前机器不一致时直接拒绝，一个字节都不写。
@@ -272,9 +272,9 @@ done
 | CID | `cid` | `board_info` p3 | 0x14，8 字符 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
 | MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `modelid` 字符串的 UTF-16LE 编码，每字符 2 字节 |
 | version | `version` | `misc` p24 | 0xA0，16 字节 ASCII | `version-main` 字符串 |
-| tamper_flag | `tamper` | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
-| secure_flag | `secure` | `pg1fs` p2 | 0x8400，u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
-| BL_magic | `blmagic` | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
+| tamper flag | `tamper` | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
+| secure flag | `secure` | `pg1fs` p2 | 0x8400，u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
+| BL magic | `blmagic` | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
 | 警告 | `blpart` | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
 | 第一屏 | `splash` | `sp1` p12 | 0 | 画面从 0 开始：W x H x 2 字节 |
 
@@ -382,7 +382,7 @@ S-OFF 状态就是 `pg1fs` 里的一个字节：
 
 `fastboot oem readsecureflag` 读的就是这个值，`getvar all` 里的 `version-misc: PVT SHIP S-ON/S-OFF` 和 `security: on/off` 也都是从它推出来的。
 
-`0x8404` 那 4 个字节是另一个字段：bootloader 的锁状态，`HTCU` 解锁、`00000000` 锁定。它不跟 S 状态走，S-ON 的机器可以是解锁的；`lock` / `unlock` 也只动这 4 个字节。
+`0x8404` 那 4 个字节是另一个字段：bootloader 的锁状态，`HTCU` 解锁、`00000000` 锁定。它不跟 Security 状态走，S-ON 的机器可以是解锁的；`lock` / `unlock` 也只动这 4 个字节。
 
 以 root 身份写这个字节会失败，原因既不是 SELinux 也不是文件系统：hboot 每次开机都给固件分区加上 eMMC 的 **power-on 写保护**。`CMD31`（SEND_WRITE_PROT_TYPE）按每 2 bit 一组报告类型：
 
@@ -520,9 +520,9 @@ selinux: Enforcing
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
 version     6.12.1540.4 misc @ 0xa0
-BL_magic    HTCU        pg1fs @ 0x8404
-secure_flag 3           pg1fs @ 0x8400
-tamper_flag 0           pg2fs @ 0x511804
+BL magic    HTCU        pg1fs @ 0x8404
+secure flag 3           pg1fs @ 0x8400
+tamper flag 0           pg2fs @ 0x511804
 ```
 
 这是刷了 1540、改过 CID/MID、但仍是 S-ON 的机器，`soff` 要的就是这个状态。

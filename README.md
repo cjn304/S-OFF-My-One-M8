@@ -25,7 +25,7 @@ followed by writing the flag byte.
   ones on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
   (see [Windows](#windows)).
-* Data backup (see [Warnings](#warnings)) and [Building](#building).
+* Data backup and [Building](#building).
 
 ---
 
@@ -41,7 +41,7 @@ inside the su command, or the non-root shell performs it first and fails with
 [Expected output and troubleshooting](#expected-output-and-troubleshooting).
 
 ```sh
-# 0. check root, S state, modules, SELinux
+# 0. check root, Security state, modules, SELinux
 scripts/stool.sh status
 
 # 1. kallsyms hides addresses until kptr_restrict is 0; then read them
@@ -66,14 +66,14 @@ scripts/stool.sh restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 ## stool.sh
 
 `scripts/stool.sh` is the entry point for every command below. Commands that
-write (`set`, `lock`, `unlock`, `nowarn`, `splash`) check for S-OFF before
-they dump or write anything, and stop with nothing written. `status` and
-`backup` only read, `restore` takes the partition from its argument, and
-`soff`, `son` and `set secure 0` are how the S state itself is changed, so none
-of those need S-OFF up front.
+write (`set`, `lock`, `unlock`, `nowarn`, `splash`) check for Security state
+before they dump or write anything, and stop with nothing written if S-ON.
+`status` and `backup` only read, `restore` takes the partition from its
+argument, and `soff`, `son` and `set secure 0` are how the Security state
+itself is changed, so none of those need S-OFF up front.
 
 ```sh
-scripts/stool.sh status                  # S state + every parameter (Android or fastboot)
+scripts/stool.sh status                  # Security state + every parameter (Android or fastboot)
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup [partition]      # all five + parameters, or just one
@@ -95,7 +95,7 @@ device reports in `/sys/class/block/*/uevent`. A phone whose layout has no
 section is refused before anything is written - see
 [section 6](#6-parameter-offsets) to add one.
 
-Every command reads the S state first. Nothing is backed up automatically:
+Nothing is backed up automatically:
 `backup` writes `backup/<serial>-<timestamp>.{txt,img}` - five whole partitions
 plus a txt that reproduces `status` and ends with one restore command per image
 - and `restore` writes those images
@@ -133,7 +133,7 @@ What a M8's backup holds:
 | `<serial>-<timestamp>.pg1fs.img` | p2 — the secure flag, BL magic lives here | 119 MB |
 | `<serial>-<timestamp>.board_info.img` | p3 — CID, IMEI, board data lives here | 16 KB |
 | `<serial>-<timestamp>.mfg.img` | p5 — MID lives here | 256 KB |
-| `<serial>-<timestamp>.pg2fs.img` | p6 — the status flag lives here | 24 MB |
+| `<serial>-<timestamp>.pg2fs.img` | p6 — the tamper flag lives here | 24 MB |
 | `<serial>-<timestamp>.misc.img` | p24 — version-main lives here | 1 MB |
 
 Names start with the serial (`ro.serialno`) and end with the timestamp, so two
@@ -430,9 +430,9 @@ The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 | CID | `cid` | `board_info` p3 | 0x14, 8 chars ASCII | the `cidnum` string `fastboot getvar all` prints |
 | MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE | UTF-16LE encoding of the `modelid` string, 2 bytes per char |
 | version | `version` | `misc` p24 | 0xA0, 16 bytes ASCII | the `version-main` string |
-| tamper_flag | `tamper` | `pg2fs` p6 | 0x511804, u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
-| secure_flag | `secure` | `pg1fs` p2 | 0x8400, u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
-| BL_magic | `blmagic` | `pg1fs` p2 | 0x8404, 4 chars | right after the flag: `HTCU` unlocked, `00000000` locked |
+| tamper flag | `tamper` | `pg2fs` p6 | 0x511804, u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
+| secure flag | `secure` | `pg1fs` p2 | 0x8400, u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
+| BL magic | `blmagic` | `pg1fs` p2 | 0x8404, 4 chars | right after the flag: `HTCU` unlocked, `00000000` locked |
 | warning | `blpart` | `hboot` p26 | run time | six known banner strings, searched per image |
 | first screen | `splash` | `sp1` p12 | 0 | the frame starts at 0: W x H x 2 bytes |
 
@@ -604,8 +604,8 @@ The S-OFF state is one byte in the `pg1fs` partition:
 `version-misc: PVT SHIP S-ON/S-OFF` and `security: on/off` from it.
 
 The 4 bytes at `0x8404` are a separate field - the bootloader lock state, `HTCU`
-unlocked or `00000000` locked. It does not follow the S state: an S-ON phone can
-be unlocked, and `lock`/`unlock` change nothing else.
+unlocked or `00000000` locked. It does not follow the Security state: an S-ON
+phone can be unlocked, and `lock`/`unlock` change nothing else.
 
 Writing it as root fails, and the reason is neither SELinux nor the filesystem:
 at every boot hboot sets the eMMC's **power-on write protection** on the
@@ -801,9 +801,9 @@ selinux: Enforcing
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
 version     6.12.1540.4 misc @ 0xa0
-BL_magic    HTCU        pg1fs @ 0x8404
-secure_flag 3           pg1fs @ 0x8400
-tamper_flag 0           pg2fs @ 0x511804
+BL magic    HTCU        pg1fs @ 0x8404
+secure flag 3           pg1fs @ 0x8400
+tamper flag 0           pg2fs @ 0x511804
 ```
 
 This is a phone that already runs 1540 with a changed CID/MID but is still
