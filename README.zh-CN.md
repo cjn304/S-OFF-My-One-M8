@@ -71,7 +71,7 @@ scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 tar
 
 每个命令都会先读 S 状态。没有整份备份是自动做的：`backup` 写出 `backup/<序列号>-<时间戳>.{txt,img}`（五个整分区，外加一份等于 `status` 输出、末尾附还原命令的 txt），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
-`set tamper` 接受 0..255 的十进制，标准取值是 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`00` 显示 `*** Software status: Official ***`，其他显示 `*** Software status: Modified ***`。
+`set tamper` 接受 0..255 的十进制，标准取值是 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`00` 显示 `*** Software status: Official ***`，其他显示 `*** Software status: Modified ***`。bootloader 侧也能读同一个字节：`fastboot oem get_tamper_flag` 返回 `Tamper_Flag: 0x0`，这条命令不在 `getvar all` 里，只在 `oem ?` 的列表里。
 
 `set secure` 就是 `soff` 最后一步的那次写入，单独跑：写 `0x8400`，再回读，不断电也不重启。S-ON 时写 `0` 会先探测 `mmc_cmd wp`：只有真的还有写保护才拒绝；位图全零（[移植](#8-移植) A 档那种旧 hboot）就照写。已 S-OFF 的机器上，还原了一份 S-ON 时期拍的 `pg1fs.img` 之后，也用它把 `00` 写回去。
 
@@ -274,7 +274,7 @@ done
 | version | `version` | `misc` p24 | 0xA0，16 字节 ASCII | `version-main` 字符串 |
 | tamper | `tamper` | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
 | secure | `secure` | `pg1fs` p2 | 0x8400，u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
-| BLmagic | `blmagic` | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
+| BL_magic | `blmagic` | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
 | 警告 | `blpart` | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
 | 第一屏 | `splash` | `sp1` p12 | 0 | 画面从 0 开始：W x H x 2 字节 |
 
@@ -511,7 +511,7 @@ adb shell 'dd if=/data/local/tmp/x.bin of=/dev/block/bootdevice/by-name/pg1fs bs
 target: m8_ul
 serial: HT495WM00193
 hboot: 3.19.0.0000
-Secure state: ON
+Security: ON
 BL state: unlocked
 Software status: Official
 modules: enabled
@@ -520,14 +520,14 @@ selinux: Enforcing
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
 version     6.12.1540.4 misc @ 0xa0
-BLmagic     HTCU        pg1fs @ 0x8404
-secure      3           pg1fs @ 0x8400
+BL_magic    HTCU        pg1fs @ 0x8404
+secure_flag 3           pg1fs @ 0x8400
 tamper      0           pg2fs @ 0x511804
 ```
 
 这是刷了 1540、改过 CID/MID、但仍是 S-ON 的机器，`soff` 要的就是这个状态。
 
-`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Secure state: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Secure state: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper` 一个字节决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
+`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Security: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Security: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper` 一个字节决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `gen_addr.sh`
 
@@ -584,7 +584,7 @@ scripts/stool.sh backup misc
 
 ### `soff`
 
-`== state before ==` 先打印 `status` 开头那四行（`target`、`Secure state`、`BL state`、`Software status`）。之后各阶段按实际顺序排列，每一段都跟着会让它停下的故障。
+`== state before ==` 先打印 `status` 开头那四行（`target`、`Security`、`BL state`、`Software status`）。之后各阶段按实际顺序排列，每一段都跟着会让它停下的故障。
 
 #### 诊断
 

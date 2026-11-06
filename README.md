@@ -107,7 +107,9 @@ are about to overwrite; that dump is their undo path, nothing else.
 `set tamper` takes any decimal 0..255, standard values are `0` and `4`.
 That byte is the only input to hboot's `Software status:` line: `00` prints
 `*** Software status: Official ***`, otherwise prints
-`*** Software status: Modified ***`.
+`*** Software status: Modified ***`. The bootloader can read the same byte
+back: `fastboot oem get_tamper_flag` answers `Tamper_Flag: 0x0`. It is not in
+`getvar all`, only in the `oem ?` list.
 
 `set secure` is the write from the last stage of `soff`, on its own: `00` or
 `03` at `0x8400`, then a read-back - no power cycle and no reboot. `00` while
@@ -430,7 +432,7 @@ The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 | version | `version` | `misc` p24 | 0xA0, 16 bytes ASCII | the `version-main` string |
 | tamper | `tamper` | `pg2fs` p6 | 0x511804, u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
 | secure | `secure` | `pg1fs` p2 | 0x8400, u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
-| BLmagic | `blmagic` | `pg1fs` p2 | 0x8404, 4 chars | right after the flag: `HTCU` unlocked, `00000000` locked |
+| BL_magic | `blmagic` | `pg1fs` p2 | 0x8404, 4 chars | right after the flag: `HTCU` unlocked, `00000000` locked |
 | warning | `blpart` | `hboot` p26 | run time | six known banner strings, searched per image |
 | first screen | `splash` | `sp1` p12 | 0 | the frame starts at 0: W x H x 2 bytes |
 
@@ -790,7 +792,7 @@ worked, and the failure that belongs to it.
 target: m8_ul
 serial: HT495WM00193
 hboot: 3.19.0.0000
-Secure state: ON
+Security: ON
 BL state: unlocked
 Software status: Official
 modules: enabled
@@ -799,8 +801,8 @@ selinux: Enforcing
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
 version     6.12.1540.4 misc @ 0xa0
-BLmagic     HTCU        pg1fs @ 0x8404
-secure      3           pg1fs @ 0x8400
+BL_magic    HTCU        pg1fs @ 0x8404
+secure_flag 3           pg1fs @ 0x8400
 tamper      0           pg2fs @ 0x511804
 ```
 
@@ -813,8 +815,8 @@ thing to look at: `unknown - no targets.conf section matches` means the table ha
 entry for this layout, and the `observed:` line under it is what to paste into a
 new section ([section 6](#6-parameter-offsets)). The `hboot:` line below it is
 the bootloader build the phone actually reports. `soff` wants
-`Secure state: ON`; on an already S-OFF phone it prints `already S-OFF` and
-returns. `Secure state: unknown (no root ...)` means `su` does not work yet, and
+`Security: ON`; on an already S-OFF phone it prints `already S-OFF` and
+returns. `Security: unknown (no root ...)` means `su` does not work yet, and
 nothing below will either. `Software status` is the same line the bootloader
 prints, taken from the one `tamper` byte: `0` is `Official`, anything else is
 `Modified`. `modules: enabled` is `modules_disabled=0` spelled as the capability
@@ -896,7 +898,7 @@ about to change.
 ### `soff`
 
 `== state before ==` repeats the first four lines of `status` (`target`,
-`Secure state`, `BL state`, `Software status`). The stages follow in the
+`Security`, `BL state`, `Software status`). The stages follow in the
 order they print, each with the failure that stops it.
 
 #### Diagnostic

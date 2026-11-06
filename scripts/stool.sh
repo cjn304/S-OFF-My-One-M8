@@ -534,7 +534,7 @@ print_state() {
 	android)
 		if ! detect_root; then
 			say "target: unknown"
-			say "Secure state: unknown (no root - TWRP, adb root or Magisk su needed)"
+			say "Security: unknown (no root - TWRP, adb root or Magisk su needed)"
 			return 0
 		fi
 		if ! target_find; then
@@ -556,8 +556,8 @@ print_state() {
 		[ -n "$hb" ] || hb=unknown
 		say "hboot: $hb"
 		case "$(secure_state)" in
-		off) say "Secure state: OFF" ;;
-		*)   say "Secure state: ON" ;;
+		off) say "Security: OFF" ;;
+		*)   say "Security: ON" ;;
 		esac
 		say "BL state: $(bl_state)"
 		# The bootloader prints this line from the tamper byte: 0 is Official,
@@ -580,15 +580,23 @@ print_state() {
 		say "hboot: $hb"
 		sf=$("$FB" oem readsecureflag 2>&1 | sed -n 's/.*secure_flag: //p' | tr -d '\r')
 		case "$sf" in
-		0) say "Secure state: OFF" ;;
-		"") say "Secure state: unknown (could not read secure_flag)" ;;
-		*) say "Secure state: ON" ;;
+		0) say "Security: OFF" ;;
+		"") say "Security: unknown (could not read secure_flag)" ;;
+		*) say "Security: ON" ;;
 		esac
 		bl=$("$FB" oem refurbish unlockstatus 2>&1 | tr -d '\r')
 		case "$bl" in
 		*"device unlocked"*) say "BL state: unlocked" ;;
 		*"device locked"*)   say "BL state: locked" ;;
 		*) say "BL state: unknown" ;;
+		esac
+		# hboot can read the same byte; the command is listed in `oem ?` but
+		# not in `getvar all`.  Older builds without it print nothing here.
+		tf=$("$FB" oem get_tamper_flag 2>&1 | sed -n 's/.*Tamper_Flag: //p' | tr -d '\r')
+		case "$tf" in
+		"") ;;
+		0x0 | 0X0 | 0) say "Software status: Official" ;;
+		*) say "Software status: Modified" ;;
 		esac
 		;;
 	*)
@@ -724,7 +732,7 @@ status_show() {
 	print_state
 	mode=$(device_mode)
 	if [ "$mode" = fastboot ]; then
-		# Only the three hboot can answer for.  BLmagic and secure are
+		# Only the three hboot can answer for.  BL_magic and secure_flag are
 		# readable here too, but they are storage offsets, and this mode has no
 		# partition-table match, so the block stays to the getvar values.
 		say "== parameters =="
@@ -740,8 +748,8 @@ status_show() {
 	printf '%-11s %-11s %s @ 0x%x\n' CID      "$(p_cid)"     "$PART_CID"     "$((OFF_CID))"
 	printf '%-11s %-11s %s @ 0x%x\n' MID      "$(p_mid)"     "$PART_MID"     "$((OFF_MID))"
 	printf '%-11s %-11s %s @ 0x%x\n' version  "$(p_version)" "$PART_VER"     "$((OFF_VER))"
-	printf '%-11s %-11s %s @ 0x%x\n' BLmagic "$(p_bl)"      "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
-	printf '%-11s %-11s %s @ 0x%x\n' secure  "$(p_secure)"   "$PART_SECURE"  "$((OFF_SECURE))"
+	printf '%-11s %-11s %s @ 0x%x\n' BL_magic    "$(p_bl)"     "$PART_BLMAGIC" "$((OFF_BLMAGIC))"
+	printf '%-11s %-11s %s @ 0x%x\n' secure_flag "$(p_secure)" "$PART_SECURE"  "$((OFF_SECURE))"
 	printf '%-11s %-11s %s @ 0x%x\n' tamper   "$(p_tamper)"  "$PART_TAMPER"  "$((OFF_TAMPER))"
 }
 
