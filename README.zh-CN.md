@@ -274,7 +274,7 @@ done
 | version | `version` | `misc` p24 | 0xA0，16 字节 ASCII | `version-main` 字符串 |
 | tamper flag | `tamper` | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
 | secure flag | `secure` | `pg1fs` p2 | 0x8400，u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
-| BL magic | `blmagic` | `pg1fs` p2 | 0x8404，4 字符 | flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
+| BL magic | `blmagic` | `pg1fs` p2 | 0x8404，4 字符 | secure flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
 | 警告 | `blpart` | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
 | 第一屏 | `splash` | `sp1` p12 | 0 | 画面从 0 开始：W x H x 2 字节 |
 
