@@ -51,7 +51,7 @@ scripts/stool.sh restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 `scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 Security 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure_flag 0` 本来就是改 Security 状态本身，这几条不预先要求 S-OFF；`set secure_flag 0` 仍会先探测写保护，真还有保护就拒绝。
 
 ```sh
-scripts/stool.sh status                  # Security 状态 + 全部参数（Android 或 fastboot 都行）
+scripts/stool.sh status                  # Security 状态 + 其他参数（Android 或 fastboot 都行）
 scripts/stool.sh soff                    # 完整 S-OFF：诊断、断电上电、写入、验证
 scripts/stool.sh son                     # 回到 S-ON
 scripts/stool.sh backup [partition]      # 五个整分区 + 参数，或只备一个
@@ -270,7 +270,7 @@ done
 | 字段 | 键 | M8 上的位置 | M8 上的偏移与宽度 | 怎么定位的 |
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14，8 字节 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
-| MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE（9 字符 × 2） | `modelid` 字符串的 UTF-16LE 编码，每字符 2 字节 |
+| MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `fastboot getvar all` 里的 `modelid` 字符串，每字符 2 字节 |
 | OS version | `version-main` | `misc` p24 | 0xA0，16 字节 ASCII | `fastboot getvar all` 里的 `version-main` 字符串 |
 | tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，4 字节 u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
 | secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，4 字节 u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |

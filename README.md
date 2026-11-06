@@ -73,7 +73,7 @@ argument, and `soff`, `son` and `set secure_flag 0` are how the Security state
 itself is changed, so none of those need S-OFF up front.
 
 ```sh
-scripts/stool.sh status                  # Security state + every parameter (Android or fastboot)
+scripts/stool.sh status                  # Security state + other parameters (Android or fastboot)
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
 scripts/stool.sh backup [partition]      # all five + parameters, or just one
@@ -428,7 +428,7 @@ The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 | field | key | location on the M8 | offset and width on the M8 | how it was located |
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14, 8 bytes ASCII | the `cidnum` string `fastboot getvar all` prints |
-| MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE (9 chars x 2) | UTF-16LE encoding of the `modelid` string, 2 bytes per char |
+| MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE | the `modelid` string `fastboot getvar all` prints, 2 bytes per char |
 | OS version | `version-main` | `misc` p24 | 0xA0, 16 bytes ASCII | the `version-main` string `fastboot getvar all` prints |
 | tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804, 4 bytes u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
 | secure flag | `secure_flag` | `pg1fs` p2 | 0x8400, 4 bytes u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
