@@ -105,7 +105,7 @@ asking are the ones `nowarn` and `splash` make of the single partition they
 are about to overwrite; that dump is their undo path, nothing else.
 
 `set tamper_flag` takes any decimal 0..255, standard values are `0` and `4`.
-That byte is the only input to hboot's `Software status:` line: `00` prints
+That u32 (four bytes, only the lowest non-zero) is the only input to hboot's `Software status:` line: `00` prints
 `*** Software status: Official ***`, otherwise prints
 `*** Software status: Modified ***`. The bootloader can read the same byte
 back: `fastboot oem get_tamper_flag` answers `Tamper_Flag: 0x0`. It is not in
@@ -594,7 +594,7 @@ does not exist on those phones regardless of how much of the rest is ported.
 
 ### 1. The wall
 
-The S-OFF state is one byte in the `pg1fs` partition:
+The S-OFF state is a 4-byte little-endian u32 at `pg1fs 0x8400`:
 
 | offset | meaning | S-ON | S-OFF |
 |---|---|---|---|
@@ -723,18 +723,20 @@ rebooting.  The 32 GB phone with an 8 s cut does not take that path: the host
 reports `runtime_error -110` first and the nodes appear a minute or two later,
 see [Power cycle](#power-cycle).
 
-### 4. The write
+### 4. Writing the flag
 
 ```sh
 dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 ```
 
-`33792` is `0x8400`. Only the lowest byte changes (`03` -> `00`); the upper
-three are already zero. The 4-byte magic at `0x8404` is the bootloader lock
-state, not part of the flag - `HTCU` unlocked, `00000000` locked - and writing
-the flag leaves it as it was. The read-back and the `drop_caches` that makes it
-trustworthy are in [write flag](#write-flag); what matters here is that exactly
-one byte moves.
+`33792` is `0x8400`. The field is four bytes, but it only ever holds `0` or
+`3`, so the top three are always zero and going from S-ON to S-OFF changes just
+the lowest one, `03` -> `00`; that `dd` writes only that single byte. The tool
+writes all four (`set secure_flag 0` reports `4+0 records`), which also clears
+any stale high byte. The 4-byte magic at `0x8404` is the bootloader lock state,
+not part of the flag - `HTCU` unlocked, `00000000` locked - and writing the flag
+leaves it as it was. The read-back and the `drop_caches` that makes it
+trustworthy are in [write flag](#write-flag).
 
 There is a second 4-byte field at `pg1fs + 0x424` that the old
 Firewater/Sunshine payload also writes. On this device it is **not** required:
@@ -818,7 +820,7 @@ the bootloader build the phone actually reports. `soff` wants
 `Security: ON`; on an already S-OFF phone it prints `already S-OFF` and
 returns. `Security: unknown (no root ...)` means `su` does not work yet, and
 nothing below will either. `Software status` is the same line the bootloader
-prints, taken from the one `tamper_flag` byte: `0` is `Official`, anything else is
+prints, taken from the `tamper_flag` u32: `0` is `Official`, anything else is
 `Modified`. `modules: enabled` is `modules_disabled=0` spelled as the capability
 it grants; `disabled` and `insmod` is refused. `selinux: Enforcing` is not fatal
 - `soff` warns and carries on, and whether the module loads depends on the domain
@@ -1184,8 +1186,8 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   before (backup)
 f22ff5ac41ac26e1a3ecd2997ba6ca3a   after
 ```
 
-Identical, including the device-specific 4-byte field at `0x424`. Only `0x8400`
-changed — which is why this tool writes exactly one byte.
+Identical, including the device-specific 4-byte field at `0x424`. Only the four
+bytes at `0x8400` differ, and of those only the lowest one (`03` -> `00`).
 
 ---
 

@@ -71,7 +71,7 @@ scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 tar
 
 没有整份备份是自动做的：`backup` 写出 `backup/<序列号>-<时间戳>.{txt,img}`（五个整分区，外加一份等于 `status` 输出、末尾附还原命令的 txt），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
-`set tamper_flag` 接受 0..255 的十进制，标准取值是 `0` 和 `4`。这一个字节就是 hboot `Software status:` 那行的唯一来源：`00` 显示 `*** Software status: Official ***`，其他显示 `*** Software status: Modified ***`。bootloader 侧也能读同一个字节：`fastboot oem get_tamper_flag` 返回 `Tamper_Flag: 0x0`，这条命令不在 `getvar all` 里，只在 `oem ?` 的列表里。
+`set tamper_flag` 接受 0..255 的十进制，标准取值是 `0` 和 `4`。这个 u32（4 字节，只有最低字节非零）就是 hboot `Software status:` 那行的唯一来源：`00` 显示 `*** Software status: Official ***`，其他显示 `*** Software status: Modified ***`。bootloader 侧也能读同一个值：`fastboot oem get_tamper_flag` 返回 `Tamper_Flag: 0x0`，这条命令不在 `getvar all` 里，只在 `oem ?` 的列表里。
 
 `set secure_flag` 就是 `soff` 最后一步的那次写入，单独跑：写 `0x8400`，再回读，不断电也不重启。S-ON 时写 `0` 会先探测 `mmc_cmd wp`：只有真的还有写保护才拒绝；位图全零（[移植](#8-移植) A 档那种旧 hboot）就照写。已 S-OFF 的机器上，还原了一份 S-ON 时期拍的 `pg1fs.img` 之后，也用它把 `00` 写回去。
 
@@ -374,7 +374,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 ### 1. 那堵墙
 
-S-OFF 状态就是 `pg1fs` 里的一个字节：
+S-OFF 状态是 `pg1fs` 0x8400 处的一个小端 u32，占 4 字节：
 
 | 偏移 | 含义 | S-ON | S-OFF |
 |---|---|---|---|
@@ -463,13 +463,13 @@ eMMC 消失了，`mmcblk0*` 全没了，除了重启没有回头路。这就是�
 
 它打出来的日志在[诊断](#诊断)里；这里真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行：它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：参考构建上 eMMC 就是这样回来的，分区都在，手机没重启。32 GB 机器断电 8 秒时不走这条路，host 先报 `runtime_error -110`，节点要一两分钟才回来，见[断电上电](#断电上电)。
 
-### 4. 写哪一个字节
+### 4. 写这个 flag
 
 ```sh
 dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
 ```
 
-`33792` 就是 `0x8400`。只有最低字节变（`03` -> `00`），上面三个本来就是 0。`0x8404` 那 4 个字节是 bootloader 的锁状态，不属于 flag（`HTCU` 解锁、`00000000` 锁定），只写 0x8400 时它原样不动。回读和之后为什么要 `drop_caches`，见[写 flag](#写-flag)；这里要说清的是：只有一个字节变。
+`33792` 就是 `0x8400`。字段是 4 字节，但值只有 `0` 和 `3`，高三个字节恒为 0，所以从 S-ON 改 S-OFF 时只有最低字节从 `03` 变 `00`；上面这条 `dd` 就是只写这 1 个字节。工具走的是写满 4 字节（`set secure_flag 0` 的输出里是 `4+0 records`），高字节里万一有残留也会一并清掉。`0x8404` 那 4 个字节是 bootloader 的锁状态，不属于 flag（`HTCU` 解锁、`00000000` 锁定），只写 0x8400 时它原样不动。回读和之后为什么要 `drop_caches`，见[写 flag](#写-flag)。
 
 `pg1fs + 0x424` 还有 4 个字节，老版 Firewater/Sunshine 的配方会一起写。**这台机器上不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，手机正常启动。不要动它。
 
@@ -527,7 +527,7 @@ tamper flag 0           pg2fs @ 0x511804
 
 这是刷了 1540、改过 CID/MID、但仍是 S-ON 的机器，`soff` 要的就是这个状态。
 
-`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Security: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Security: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper_flag` 一个字节决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
+`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[6. 参数偏移](#6-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Security: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Security: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper_flag` 那个 u32 决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `gen_addr.sh`
 
@@ -771,7 +771,7 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动前（备份）
 f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 ```
 
-完全一致，包括 `0x424` 那 4 个设备相关字节。只有 `0x8400` 变了，这就是本工具只写一个字节的原因。
+完全一致，包括 `0x424` 那 4 个设备相关字节。只有 `0x8400` 那 4 字节变了，其中实际变化的只有最低字节（`03` → `00`）。
 
 ---
 
