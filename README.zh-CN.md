@@ -267,16 +267,16 @@ done
 
 `su -c` 是按 Magisk 环境写的；`adb shell` 本身就是 root 时去掉它。
 
-| 字段 | 键 | M8 上的位置 | M8 上的值 | 怎么定位的 |
+| 字段 | 键 | M8 上的位置 | M8 上的偏移与宽度 | 怎么定位的 |
 |---|---|---|---|---|
-| CID | `cid` | `board_info` p3 | 0x14，8 字符 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
-| MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `modelid` 字符串的 UTF-16LE 编码，每字符 2 字节 |
+| CID | `cid` | `board_info` p3 | 0x14，8 字节 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
+| MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE（9 字符 × 2） | `modelid` 字符串的 UTF-16LE 编码，每字符 2 字节 |
 | OS | `version` | `misc` p24 | 0xA0，16 字节 ASCII | `fastboot getvar all` 里的 `version-main` 字符串 |
-| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
-| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
-| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字符 | secure flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
-| 警告 | `bl_part` | `hboot` p26 | 运行期 | 六段已知横幅字符串，按镜像搜 |
-| 第一屏 | `splash` | `sp1` p12 | 0 | 画面从 0 开始：W x H x 2 字节 |
+| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，4 字节 u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
+| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，4 字节 u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
+| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字节 ASCII | secure flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
+| 警告 | `bl_part` | `hboot` p26 | 运行期，无固定偏移 | 六段已知横幅字符串，按镜像搜 |
+| 第一屏 | `splash` | `sp1` p12 | 0，W×H×2 字节 | 画面从 0 开始 |
 
 `screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl_part` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
 

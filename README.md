@@ -425,16 +425,16 @@ done
 
 The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 
-| field | key | location on the M8 | value on the M8 | how it was located |
+| field | key | location on the M8 | offset and width on the M8 | how it was located |
 |---|---|---|---|---|
-| CID | `cid` | `board_info` p3 | 0x14, 8 chars ASCII | the `cidnum` string `fastboot getvar all` prints |
-| MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE | UTF-16LE encoding of the `modelid` string, 2 bytes per char |
+| CID | `cid` | `board_info` p3 | 0x14, 8 bytes ASCII | the `cidnum` string `fastboot getvar all` prints |
+| MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE (9 chars x 2) | UTF-16LE encoding of the `modelid` string, 2 bytes per char |
 | OS | `version` | `misc` p24 | 0xA0, 16 bytes ASCII | the `version-main` string `fastboot getvar all` prints |
-| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804, u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
-| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400, u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
-| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404, 4 chars | right after the secure flag: `HTCU` unlocked, `00000000` locked |
-| warning | `bl_part` | `hboot` p26 | run time | six known banner strings, searched per image |
-| first screen | `splash` | `sp1` p12 | 0 | the frame starts at 0: W x H x 2 bytes |
+| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804, 4 bytes u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
+| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400, 4 bytes u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
+| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404, 4 bytes ASCII | right after the secure flag: `HTCU` unlocked, `00000000` locked |
+| warning | `bl_part` | `hboot` p26 | run time, no fixed offset | six known banner strings, searched per image |
+| first screen | `splash` | `sp1` p12 | 0, W x H x 2 bytes | the frame starts at 0 |
 
 `screen` is the only key without an offset: it sets the default WxH `splash`
 converts to, and `bl_part` names the partition `nowarn` rewrites - `hboot`
