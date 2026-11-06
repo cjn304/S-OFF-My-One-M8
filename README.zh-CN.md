@@ -58,7 +58,7 @@ scripts/stool.sh backup [partition]      # 五个整分区 + 参数，或只备�
 scripts/stool.sh restore <partition> <file.img>   # 如 restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
-scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 15
+scripts/stool.sh set version <version>   # 例如 6.12.1540.4，最长 = 字段长-1（M8 是 15）
 scripts/stool.sh set tamper_flag <0|4>  # 0 = Official，4 = Modified
 scripts/stool.sh set secure_flag <0|3>  # 0 = S-OFF，3 = S-ON
 scripts/stool.sh lock                    # BL magic -> 锁定

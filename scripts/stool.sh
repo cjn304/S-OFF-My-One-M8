@@ -492,8 +492,9 @@ check_param() { # param value - dies on a value that could never be written
 		[ ${#2} -eq 9 ] || die "MID must be exactly 9 characters (got '$2')"
 		;;
 	version)
+		# only emptiness is checked here; the length limit needs LEN_VER from
+		# targets.conf, so cmd_set checks it once the layout is loaded
 		[ -n "$2" ] || die "version must not be empty"
-		[ ${#2} -le 15 ] || die "version too long (max 15 chars)"
 		;;
 	tamper_flag)
 		case "$2" in
@@ -777,6 +778,16 @@ cmd_set() {
 		die "unknown parameter: $param"
 		;;
 	esac
+
+	# The field is LEN_VER bytes and hboot reads it as a C string, so the last
+	# byte has to stay NUL.  Both numbers come from targets.conf, which is why
+	# this runs after require_android instead of in check_param.
+	if [ "$param" = version ]; then
+		[ -n "$LEN_VER" ] ||
+			die "targets.conf: [$TARGET] has no version length - nothing was written"
+		[ ${#val} -le $((LEN_VER - 1)) ] ||
+			die "version too long: the $LEN_VER-byte field keeps one byte for the terminator, so at most $((LEN_VER - 1)) characters"
+	fi
 
 	say "== state before =="
 	print_state

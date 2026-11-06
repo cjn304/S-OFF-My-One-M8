@@ -80,7 +80,7 @@ scripts/stool.sh backup [partition]      # all five + parameters, or just one
 scripts/stool.sh restore <partition> <file.img>   # e.g. restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
-scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max 15
+scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max = field-1 (15 here)
 scripts/stool.sh set tamper_flag <0|4>  # 0 = Official, 4 = Modified
 scripts/stool.sh set secure_flag <0|3>  # 0 = S-OFF, 3 = S-ON
 scripts/stool.sh lock                    # BL magic -> locked
