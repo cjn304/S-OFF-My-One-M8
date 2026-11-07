@@ -15,7 +15,7 @@
 #   stool.sh nowarn                blank the six "This build is for ..." lines in hboot
 #   stool.sh splash <image.png> [--size=WxH] [--fit=...]   first boot screen
 #
-#   params: cid <8 chars> | mid <9 chars> | version <x.y.z.w> |
+#   params: cid <8 chars> | mid <9 chars> |
 #           tamper_flag <0-255> | secure_flag <0|3>
 #
 # Every command reads the current S state first, and every command that writes
@@ -30,7 +30,6 @@
 #
 #   CID          board_info (p3)  @ 0x0014   8 chars, ASCII
 #   MID          mfg        (p5)  @ 0x4000   9 chars, UTF-16LE
-#   OS version   misc       (p24) @ 0x00A0   ASCII
 #   tamper flag  pg2fs      (p6)  @ 0x511804 u32 LE
 #   secure flag  pg1fs      (p2)  @ 0x8400   u32 LE  (0 = S-OFF, 3 = S-ON)
 #   BL magic     pg1fs      (p2)  @ 0x8404   4 chars ("HTCU" = unlocked, 00000000 = locked)
@@ -59,10 +58,10 @@ STOOL_TMP=$ROOT/.stool.tmp
 # dd from an empty partition name and fail loudly instead of writing at the M8
 # offsets on a phone that is not an M8.
 TARGET= LAYOUT_MAP= OBSERVED_LAYOUT=
-PART_CID= PART_MID= PART_VER= PART_TAMPER= PART_SECURE= PART_BLMAGIC=
+PART_CID= PART_MID= PART_TAMPER= PART_SECURE= PART_BLMAGIC=
 PART_HBOOT= PART_SPLASH=
-OFF_CID= OFF_MID= OFF_VER= OFF_TAMPER= OFF_SECURE= OFF_BLMAGIC= OFF_SPLASH=
-LEN_CID= LEN_MID= LEN_VER= LEN_TAMPER= LEN_SECURE= LEN_BLMAGIC=
+OFF_CID= OFF_MID= OFF_TAMPER= OFF_SECURE= OFF_BLMAGIC= OFF_SPLASH=
+LEN_CID= LEN_MID= LEN_TAMPER= LEN_SECURE= LEN_BLMAGIC=
 HB_BYTES=0 SCREEN=1080x1920 DUMP= FV=
 
 say()  { printf '%s\n' "$*"; }
@@ -206,10 +205,6 @@ $FV
 EOF
 	field_req mid
 	IFS=: read -r PART_MID OFF_MID LEN_MID _ <<EOF
-$FV
-EOF
-	field_req version-main
-	IFS=: read -r PART_VER OFF_VER LEN_VER _ <<EOF
 $FV
 EOF
 	field_req tamper_flag
@@ -467,7 +462,6 @@ dump_part() { # part dest-file  (whole partition, pulled to the PC)
 
 p_cid()     { hex2str   "$(hex_at "$PART_CID"    "$OFF_CID"    "$LEN_CID")"; }
 p_mid()     { hex2utf16 "$(hex_at "$PART_MID"    "$OFF_MID"    "$LEN_MID")"; }
-p_version() { hex2str   "$(hex_at "$PART_VER"    "$OFF_VER"    "$LEN_VER")"; }
 p_tamper()  { le32      "$(hex_at "$PART_TAMPER" "$OFF_TAMPER" "$LEN_TAMPER")"; }
 p_status()  { # what hboot prints after "Software status:", from that byte
 	case "$(p_tamper)" in
@@ -490,11 +484,6 @@ check_param() { # param value - dies on a value that could never be written
 		;;
 	mid)
 		[ ${#2} -eq 9 ] || die "MID must be exactly 9 characters (got '$2')"
-		;;
-	version)
-		# only emptiness is checked here; the length limit needs LEN_VER from
-		# targets.conf, so cmd_set checks it once the layout is loaded
-		[ -n "$2" ] || die "version must not be empty"
 		;;
 	tamper_flag)
 		case "$2" in
@@ -657,7 +646,9 @@ refuse_fs_part() { # name - Android's filesystems are not firmware to dump or wr
 }
 
 target_parts() { # partitions a backup covers, deduped (pg1fs carries two fields)
-	printf '%s\n' "$PART_SECURE" "$PART_CID" "$PART_MID" "$PART_TAMPER" "$PART_VER" |
+	# misc is not in the list: its only field was version-main, and this tool no
+	# longer reads or writes that, so dumping 1 MB of it said nothing
+	printf '%s\n' "$PART_SECURE" "$PART_CID" "$PART_MID" "$PART_TAMPER" |
 		awk 'NF && !seen[$0]++'
 }
 
@@ -733,13 +724,12 @@ status_show() {
 	print_state
 	mode=$(device_mode)
 	if [ "$mode" = fastboot ]; then
-		# Only the three hboot can answer for.  BL magic and secure flag are
-		# readable here too, but they are storage offsets, and this mode has no
+		# CID and MID are what hboot answers here; BL magic and secure flag are
+		# readable too, but they are storage offsets, and this mode has no
 		# partition-table match, so the block stays to the getvar values.
 		say "== parameters =="
 		printf '%-11s %s\n' CID          "$("$FB" getvar cidnum 2>&1 | sed -n 's/.*cidnum: //p' | tr -d '\r')"
 		printf '%-11s %s\n' MID          "$("$FB" getvar modelid 2>&1 | sed -n 's/.*modelid: //p' | tr -d '\r')"
-		printf '%-11s %s\n' "OS version" "$("$FB" getvar version-main 2>&1 | sed -n 's/.*version-main: //p' | tr -d '\r')"
 		return 0
 	fi
 	# print_state already explained why it could not read anything
@@ -748,7 +738,11 @@ status_show() {
 	say "== parameters =="
 	printf '%-11s %-11s %s @ 0x%x\n' CID           "$(p_cid)"     "$PART_CID"      "$((OFF_CID))"
 	printf '%-11s %-11s %s @ 0x%x\n' MID           "$(p_mid)"     "$PART_MID"      "$((OFF_MID))"
-	printf '%-11s %-11s %s @ 0x%x\n' "OS version"  "$(p_version)" "$PART_VER"      "$((OFF_VER))"
+	# OS is the running ROM's version, not a partition field: it comes from
+	# build.prop, so the last column names the property instead of an offset.
+	os=$("$ADB" shell getprop ro.build.version.release 2>/dev/null | tr -d '\r')
+	[ -n "$os" ] || os=unknown
+	printf '%-11s %-11s %s\n' OS "$os" ro.build.version.release
 	printf '%-11s %-11s %s @ 0x%x\n' "BL magic"    "$(p_bl)"      "$PART_BLMAGIC"  "$((OFF_BLMAGIC))"
 	printf '%-11s %-11s %s @ 0x%x\n' "secure flag" "$(p_secure)"  "$PART_SECURE"   "$((OFF_SECURE))"
 	printf '%-11s %-11s %s @ 0x%x\n' "tamper flag" "$(p_tamper)"  "$PART_TAMPER"   "$((OFF_TAMPER))"
@@ -762,10 +756,10 @@ cmd_status() {
 
 cmd_set() {
 	param=${1:-}; val=${2:-}
-	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|version|tamper_flag|secure_flag> [value]"
+	[ -n "$param" ] || die "usage: stool.sh set <cid|mid|tamper_flag|secure_flag> [value]"
 
 	case "$param" in
-	cid|mid|version|tamper_flag)
+	cid|mid|tamper_flag)
 		check_param "$param" "$val"
 		require_android
 		;;
@@ -778,16 +772,6 @@ cmd_set() {
 		die "unknown parameter: $param"
 		;;
 	esac
-
-	# The field is LEN_VER bytes and hboot reads it as a C string, so the last
-	# byte has to stay NUL.  Both numbers come from targets.conf, which is why
-	# this runs after require_android instead of in check_param.
-	if [ "$param" = version ]; then
-		[ -n "$LEN_VER" ] ||
-			die "targets.conf: [$TARGET] has no version length - nothing was written"
-		[ ${#val} -le $((LEN_VER - 1)) ] ||
-			die "version too long: the $LEN_VER-byte field keeps one byte for the terminator, so at most $((LEN_VER - 1)) characters"
-	fi
 
 	say "== state before =="
 	print_state
@@ -807,14 +791,6 @@ cmd_set() {
 		say "MID: $(p_mid) -> $val"
 		write_hex "$PART_MID" "$OFF_MID" "$hx"
 		verify_hex "$PART_MID" "$OFF_MID" "$hx"
-		say "ok"
-		;;
-	version)
-		hx=$(str2hex "$val")
-		hx=$("$PY" -c 'import sys;h=sys.argv[1];print((h+"00"*16)[:32])' "$hx")
-		say "version: $(p_version) -> $val"
-		write_hex "$PART_VER" "$OFF_VER" "$hx"
-		verify_hex "$PART_VER" "$OFF_VER" "$hx"
 		say "ok"
 		;;
 	tamper_flag)
@@ -1272,7 +1248,6 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
                                    write one saved image back
   stool.sh set cid <8 chars>
   stool.sh set mid <9 chars>
-  stool.sh set version <x.y.z.w>
   stool.sh set tamper_flag <0-255>
   stool.sh set secure_flag <0|3>
   stool.sh lock                    write the BL magic = locked

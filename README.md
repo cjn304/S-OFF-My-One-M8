@@ -76,11 +76,10 @@ itself is changed, so none of those need S-OFF up front.
 scripts/stool.sh status                  # Security state + other parameters (Android or fastboot)
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify
 scripts/stool.sh son                     # back to S-ON
-scripts/stool.sh backup [partition]      # all five + parameters, or just one
+scripts/stool.sh backup [partition]      # all four + parameters, or just one
 scripts/stool.sh restore <partition> <file.img>   # e.g. restore pg2fs *.img
 scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
-scripts/stool.sh set version <version>   # e.g. 6.12.1540.4, max = field-1 (15 here)
 scripts/stool.sh set tamper_flag <0|4>   # 0 = Official, 4 = Modified
 scripts/stool.sh set secure_flag <0|3>   # 0 = S-OFF, 3 = S-ON
 scripts/stool.sh lock                    # BL magic -> HTCU
@@ -134,7 +133,6 @@ What a M8's backup holds:
 | `<serial>-<timestamp>.board_info.img` | p3 — CID, IMEI, board data lives here | 16 KB |
 | `<serial>-<timestamp>.mfg.img` | p5 — MID lives here | 256 KB |
 | `<serial>-<timestamp>.pg2fs.img` | p6 — the tamper flag lives here | 24 MB |
-| `<serial>-<timestamp>.misc.img` | p24 — OS version lives here | 1 MB |
 
 Names start with the serial (`ro.serialno`) and end with the timestamp, so two
 M8s can share one `backup/` directory without getting mixed up. `restore`
@@ -150,7 +148,6 @@ with `== restore ==`, one line per image that actually landed, ready to copy:
   stool.sh restore <partition> <file>   (bare filename = look in backup/)
   stool.sh restore pg1fs       HT495WM00193-20261105-215502.pg1fs.img
   stool.sh restore mfg         HT495WM00193-20261105-215502.mfg.img
-  stool.sh restore misc        HT495WM00193-20261105-215502.misc.img
 ```
 
 Only partitions whose dump succeeded are listed, so no line points at a missing
@@ -429,21 +426,25 @@ The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14, 8 bytes ASCII | the `cidnum` string `fastboot getvar all` prints |
 | MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE | the `modelid` string `fastboot getvar all` prints, 2 bytes per char |
-| OS version | `version-main` | `misc` p24 | 0xA0, 16 bytes ASCII | the `version-main` string `fastboot getvar all` prints |
 | tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804, 4 bytes u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
 | secure flag | `secure_flag` | `pg1fs` p2 | 0x8400, 4 bytes u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
 | BL magic | `bl_magic` | `pg1fs` p2 | 0x8404, 4 bytes ASCII | right after the secure flag: `HTCU` unlocked, `00000000` locked |
-| warning | `bl-partition` | `hboot` p26 | run time, no fixed offset | six known banner strings, searched per image |
+| warning | `bl_partition` | `hboot` p26 | run time, no fixed offset | six known banner strings, searched per image |
 | first screen | `splash` | `sp1` p12 | 0, W x H x 2 bytes | the frame starts at 0 |
 
+The `OS` row in `status` is not in this table: it reads the running ROM's
+`ro.build.version.release` (Android 6.0.1 here), so it has no partition offset
+and changes with the ROM. The firmware version (`version-main`) is neither read
+nor written by this tool.
+
 `screen` is the only key without an offset: it sets the default WxH `splash`
-converts to, and `bl-partition` names the partition `nowarn` rewrites - `hboot`
+converts to, and `bl_partition` names the partition `nowarn` rewrites - `hboot`
 here, `aboot` on other models - and its size is what bounds the image.
 
 Two rules when repeating this on another build:
 
 - search for something the device already tells you (`cidnum`, `modelid`,
-  `version-main`, the hboot status line) instead of guessing at offsets; the
+  the hboot status line) instead of guessing at offsets; the
   same value then confirms what you found.
 - after every write, `sync` + `drop_caches` before reading back. A write that
   "succeeds" against a write-protected partition only updates the page cache -
@@ -802,7 +803,7 @@ selinux: Enforcing
 == parameters ==
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
-OS version  6.12.1540.4 misc @ 0xa0
+OS          6.0.1       ro.build.version.release
 BL magic    HTCU        pg1fs @ 0x8404
 secure flag 3           pg1fs @ 0x8400
 tamper flag 0           pg2fs @ 0x511804
@@ -870,26 +871,25 @@ whether the power cycle worked.
   board_info       16384 bytes
   mfg             262144 bytes
   pg2fs         24837120 bytes
-  misc           1048576 bytes
 /path/to/repo/backup/HT495WM00193-20261104-031826.txt
 ```
 
 One line per partition on stderr, the txt path on stdout. The txt is written
-after all five dumps and holds the `status` output plus a `== restore ==` block
+after all four dumps and holds the `status` output plus a `== restore ==` block
 listing only the partitions that landed. The whole set is
-about 144 MB and takes roughly a minute over USB. A partition that cannot be
+about 143 MB and takes roughly a minute over USB. A partition that cannot be
 read gives `warning: could not dump <part>` and the run continues; a short image
 gives `<part>: expected N bytes, got M`.
 
 Name a partition and you get that one image instead, with no txt:
 
 ```sh
-scripts/stool.sh backup misc
-  misc           1048576 bytes
-/path/to/repo/backup/HT495WM00193-20261104-072924.misc.img
+scripts/stool.sh backup hboot
+  hboot         4194304 bytes
+/path/to/repo/backup/HT495WM00193-20261104-072924.hboot.img
 ```
 
-Any firmware partition can be dumped this way, not just the five. `system`,
+Any firmware partition can be dumped this way, not just the four. `system`,
 `cache` and `userdata` are refused up front: those are Android's filesystems,
 not firmware this tool touches. It needs no S-OFF - reading a partition never
 does - and no `targets.conf` section either: the name and the size both come
@@ -1035,7 +1035,7 @@ One partition, one file, and the partition is always named:
 scripts/stool.sh restore mfg HT495WM00193-20261104-045201.mfg.img
 ```
 
-Any firmware partition on the phone works, not only the seven this tool writes.
+Any firmware partition on the phone works, not only the six this tool writes.
 `system`, `cache` and `userdata` are refused up front: those are Android's
 filesystems, not firmware this tool touches. Before writing, it prints the
 When the filename starts with a serial, that serial has to match the phone,
