@@ -253,7 +253,7 @@ error: no section in targets.conf matches this device.
   observed: hboot:8192 sp1:10240 pg1fs:243646 board_info:32 ...
 ```
 
-把这一行贴进新的 `[name]` 项，再补偏移；偏移仍然只能人工推导。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
+把 `observed:` 后面那串（从 `hboot:8192` 开始）填进新 `[name]` 项的 `layout =`，再补偏移；偏移仍然只能人工推导。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
 
 ```sh
 for p in board_info mfg pg1fs pg2fs hboot sp1; do

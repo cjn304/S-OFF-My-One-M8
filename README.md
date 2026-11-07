@@ -409,8 +409,9 @@ error: no section in targets.conf matches this device.
   observed: hboot:8192 sp1:10240 pg1fs:243646 board_info:32 ...
 ```
 
-Paste that under a new `[name]` section, then fill in the offsets - those still
-have to be derived by hand. Dump the small partitions and search for a value the
+Paste the part after `observed:` - starting at `hboot:8192` - as `layout =`
+in a new `[name]` section, then fill in the offsets; those still have to be
+derived by hand. Dump the small partitions and search for a value the
 bootloader already reports:
 
 ```sh
