@@ -161,7 +161,7 @@ FAILED (status read failed (Too many links))
 
 ### 1. 拿源码
 
-HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)（Kernel Source Code）发布。6.0.1 这一版的包是 `m8ul-3.4.0-perf-ga6393e1.zip`，内含 `kernel570.tar.gz`（`kernel/`）和 `platform.tar.gz`（其余源码树）。只有 `kernel/` 有用。
+HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)（Kernel Source Code）发布。包名就是 `m8ul-<uname -r>.zip`，例如 `m8ul-3.4.0-perf-ga6393e1.zip`；手机报哪一串就找哪一个。包内有 `kernel570.tar.gz`（`kernel/`）和 `platform.tar.gz`（其余源码树），只有 `kernel/` 有用。
 
 Windows 上要注意 NTFS 大小写不敏感，而这棵树里有只差大小写的文件（`net/netfilter/xt_DSCP.c` 与 `xt_dscp.c`）。要么给目录开大小写敏感（`fsutil file setCaseSensitiveInfo <dir> enable`，需要管理员），要么解包时排除这些路径，它们是 netfilter 驱动，与本项目无关。
 
@@ -194,12 +194,16 @@ test -s m8.config &&
 - 内核不是 gzip（`CONFIG_KERNEL_LZ4` / `XZ` / `LZO`）时第二步会停，按实际格式换解压方式。
 - 这台机器 `CONFIG_IKCONFIG_PROC` 是关的，手机上没有 `/proc/config.gz`，只能从镜像里取。
 
-`UTS_RELEASE` 设成目标机 `uname -r` 的后半段，同时关掉 `LOCALVERSION_AUTO`——打过补丁的树否则可能被追加 `-dirty`。它**不是加载条件**（原因见第 3 节），只是让 `.ko` 里的字符串和手机一致、便于核对；这台是 `-perf-g708019f`，另一台是 `-perf-ga6393e1`，按目标机写：
+`UTS_RELEASE` 设成手机自己报的串，同时关掉 `LOCALVERSION_AUTO`——打过补丁的树否则可能被追加 `-dirty`。每个固件版本的串都不同，别照抄本文，从手机上取：
 
 ```sh
-sed -i -e 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="-perf-g708019f"|' \
+rel=$(adb shell uname -r | tr -d '\r')     # 形如 3.4.0-perf-gXXXXXXX
+suffix=${rel#3.4.0}                         # 得到 -perf-gXXXXXXX
+sed -i -e "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"$suffix\"|" \
        -e 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' m8.config
 ```
+
+它**不是加载条件**（原因见第 3 节），只是让 `.ko` 里的字符串和手机一致、便于核对。
 
 ### 3. 准备内核树
 
@@ -209,17 +213,67 @@ yes "" | make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- oldconf
 make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- modules_prepare
 ```
 
-`yes ""` 是给 `oldconfig` 的新符号取默认值：树和 `m8.config` 版本不完全一致时它会逐个提问，脚本会卡在那里。
+`yes ""` 是给 `oldconfig` 的新符号取默认值：树和 `m8.config` 差一个版本时它会逐个提问，无人值守的构建会卡在那里。
 
-检查 `kernel/include/generated/utsrelease.h` 里的串和手机 `uname -r` 一致：
+#### 源码和手机内核不是同一次构建
 
-```c
-#define UTS_RELEASE "3.4.0-perf-g708019f"
+这是常态：HTC 每个固件版本对应一个源码包，手机内核串里那截 `gXXXXXXX` 就是源码包的 git 提交。能不能用，**不看版本号，看三件事**：
+
+| 必须一致 | 由谁决定 | 不一致的后果 |
+|---|---|---|
+| vermagic 标志位（`SMP preempt mod_unload modversions ARMv7`） | 树的 `.config` | `insmod` 直接拒 |
+| `struct device` / `sdhci_host` / `mmc_host` 的字段偏移 | 树的头文件 + `.config` | 装得进去，解引用错位 |
+| 五个地址 + `module_layout` crc | 手机的 `addr.h` | 与树无关，换哪版树都一样 |
+
+按顺序做，任何一步不过就换树：
+
+**1. 先找同名源码包。** `uname -r` 里的 `gXXXXXXX` 就是源码包的 git 提交，HTC 下载页的 `m8ul-3.4.0-perf-gXXXXXXX.zip` 与之一一对应。压缩包里没有 `.git`，解包后无法再核对提交，所以下载时就把包名记下来。能拿到同名包，后面几步只是复核。
+
+```sh
+adb shell uname -r
+head -5 kernel/Makefile        # 只能确认大版本是 3.4.x，提交号在这里看不出来
 ```
 
-`UTS_RELEASE` 对齐之后，`uname -r` 和 `.ko` 里的字符串一致，读起来方便核对。但它不是加载条件：模块带 `__versions` 节时，内核跳过第一个空格之前的内容，只比对后面的标志位（`SMP preempt mod_unload modversions ARMv7`）和 `module_layout` 的 crc。真正必须一致的是这些标志位，它们来自 `m8.config` 里的 `CONFIG_SMP`、`CONFIG_PREEMPT`、`CONFIG_MODULE_UNLOAD`、`CONFIG_MODVERSIONS`。
+**2. 用手机的配置覆盖树。** 结构体布局跟着 `.config` 走，这一步比换源码更关键：
 
-内核树在这里只做两件事：提供编译用的结构体布局（`struct device`、`sdhci_host`、`mmc_host` 的字段偏移随 `CONFIG_PM_*`、`CONFIG_MMC_*` 变），以及上面那几个标志位。所以树不必正好是手机那次构建的源码，但 `.config` 要接近；换一棵树之后，先让诊断模块跑一遍再信任它去做断电。
+```sh
+cp m8.config kernel/.config
+yes "" | make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- oldconfig
+```
+
+`oldconfig` 如果刷出一大片 `NEW` 符号，说明两边差得远；这个数量就是“相近”的量化指标，越多越不可信。
+
+**3. 对 vermagic 的标志位。** 拿手机上的原厂模块当参照物：
+
+```sh
+adb pull //system/lib/modules/ansi_cprng.ko stock.ko
+python - stock.ko <<'EOF'
+import re, sys
+d = open(sys.argv[1], 'rb').read()
+print(re.search(rb'vermagic=([^\x00\n]+)', d).group(1).decode())
+EOF
+```
+
+编完再对自己的 `.ko` 跑一遍。两个串**第一个空格之后**必须逐字相同。前面那段内核版本内核不看：模块带 `__versions` 时 `same_magic()` 跳过它，只比对标志位和 `module_layout` 的 crc（该 crc 由 `addr.h` 提供，与树无关）。
+
+**4. 用诊断模块验收布局。** 这是唯一能证明结构体偏移对得上的办法：
+
+```sh
+adb push kmod/pwrsq_diag.ko //data/local/tmp/
+adb shell 'su -c "dmesg -c >/dev/null; insmod /data/local/tmp/pwrsq_diag.ko; sleep 1; dmesg | grep pwrsq"'
+adb shell 'su -c "rmmod pwrsq_diag"'
+```
+
+看到 `name=8941_l20` 才算过。它一次用上五个地址，以及 `r->rdev`、`rdev->desc->ops`、`consumer_list`、`d->kobj.name`、`drvdata`、`sh->mmc` 这些偏移。被 SELinux 拒的话先 `setenforce 0` 再试一次，只影响这次开机。
+
+**5. 失败就换树，不要凑合。** 树差得远时 `oldconfig` 会给新符号塞默认值，编出来的结构体可能少字段；这种错 `insmod` 阶段看不出来，要到 `regulator_get` 或写 `ops` 时才崩。诊断模块是断电前最后一次便宜的检查。
+
+`.ko` 编完后，`UTS_RELEASE` 只要和手机对得上即可，对不上也不影响加载：
+
+```sh
+grep UTS_RELEASE kernel/include/generated/utsrelease.h
+adb shell uname -r
+```
 
 ### 4. 工具链的五个坑
 

@@ -288,9 +288,10 @@ look good - that is on you.
 ### 1. Get the source
 
 HTC publishes it on [htcdev.com](https://www.htcdev.com/devcenter/downloads)
-(Kernel Source Code). For the 6.0.1 M8 build the download is
-`m8ul-3.4.0-perf-ga6393e1.zip`, containing `kernel570.tar.gz` (`kernel/`) and
-`platform.tar.gz` (the rest of the tree). Only `kernel/` matters.
+(Kernel Source Code). The package is named `m8ul-<uname -r>.zip` - for instance
+`m8ul-3.4.0-perf-ga6393e1.zip`; take the one matching what your phone reports.
+It contains `kernel570.tar.gz` (`kernel/`) and `platform.tar.gz` (the rest of the
+tree). Only `kernel/` matters.
 
 On Windows, NTFS is case-insensitive and the tree contains files that differ
 only in case (`net/netfilter/xt_DSCP.c` vs `xt_dscp.c`). Either enable
@@ -334,16 +335,19 @@ device, so no `targets.conf` and no S-OFF, and the script finds root itself
 - `CONFIG_IKCONFIG_PROC` is off on this phone, so there is no `/proc/config.gz`
   and this is the only way in.
 
-Set `UTS_RELEASE` to the tail of the phone's `uname -r`, and turn
-`LOCALVERSION_AUTO` off - a patched tree would otherwise pick up a `-dirty`
-suffix. It is **not** a load condition (section 3 explains why), only a way to
-make the string inside the `.ko` match the phone when you read it. This unit
-reports `-perf-g708019f`, the other one `-perf-ga6393e1`; use the target's:
+Set `UTS_RELEASE` to whatever the phone reports, and turn `LOCALVERSION_AUTO`
+off - a patched tree would otherwise pick up a `-dirty` suffix. Every firmware
+build has its own string, so take it from the phone instead of copying one:
 
 ```sh
-sed -i -e 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="-perf-g708019f"|' \
+rel=$(adb shell uname -r | tr -d '\r')     # e.g. 3.4.0-perf-gXXXXXXX
+suffix=${rel#3.4.0}                         # gives -perf-gXXXXXXX
+sed -i -e "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"$suffix\"|" \
        -e 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' m8.config
 ```
+
+It is **not** a load condition (section 3 explains why), only a way to make the
+string inside the `.ko` match the phone when you read it.
 
 ### 3. Prepare the tree
 
@@ -354,29 +358,89 @@ make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- modules_prepare
 ```
 
 `yes ""` feeds defaults to `oldconfig`: when the tree and `m8.config` come from
-slightly different releases it asks about every new symbol and a scripted run
-would sit there waiting.
+different releases it asks about every new symbol, and an unattended build would
+sit there waiting.
 
-Check that the string in `kernel/include/generated/utsrelease.h` matches the
-phone's `uname -r`:
+#### When the tree is not the build the phone runs
 
-```c
-#define UTS_RELEASE "3.4.0-perf-g708019f"
+That is the normal case: HTC ships one source package per firmware, and the
+`gXXXXXXX` in the phone's kernel string is that package's git commit. Whether a
+tree can be used does **not** depend on the version string; three things have to
+line up:
+
+| must match | decided by | what happens otherwise |
+|---|---|---|
+| the vermagic flags (`SMP preempt mod_unload modversions ARMv7`) | the tree's `.config` | `insmod` refuses the module |
+| field offsets in `struct device` / `sdhci_host` / `mmc_host` | the tree's headers + `.config` | it loads, then reads the wrong bytes |
+| the five addresses and the `module_layout` crc | the phone's `addr.h` | nothing - they do not come from the tree |
+
+Work through these in order; if one fails, change the tree.
+
+**1. Look for the package with the same commit.** The `gXXXXXXX` in `uname -r`
+is that package's git commit, and HTC's `m8ul-3.4.0-perf-gXXXXXXX.zip` matches it
+one to one. The tarball carries no `.git`, so the commit cannot be checked after
+unpacking - write the name down when you download it. With the matching package,
+the rest is a check.
+
+```sh
+adb shell uname -r
+head -5 kernel/Makefile        # only confirms 3.4.x; the commit is not in here
 ```
 
-Aligning `UTS_RELEASE` makes `uname -r` and the string inside the `.ko` agree,
-which helps when you read them. It is not a load condition: with a `__versions`
-section the kernel skips everything before the first space and compares the
-flags after it (`SMP preempt mod_unload modversions ARMv7`) plus the
-`module_layout` crc. What must match is those flags - `CONFIG_SMP`,
-`CONFIG_PREEMPT`, `CONFIG_MODULE_UNLOAD` and `CONFIG_MODVERSIONS` in `m8.config`.
+**2. Put the phone's config over the tree.** Struct layouts follow `.config`, so
+this matters more than the source itself:
 
-The tree does two jobs here: it supplies the struct layouts the module compiles
-against (`struct device`, `sdhci_host` and `mmc_host` move fields around when
-`CONFIG_PM_*` and `CONFIG_MMC_*` change) and those flags. So the tree need not
-be the exact source the phone was built from, but its `.config` has to be close
-- and a new tree earns a diagnostic run before it is trusted with a power
-cycle.
+```sh
+cp m8.config kernel/.config
+yes "" | make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- oldconfig
+```
+
+A wall of `NEW` symbols from `oldconfig` means the two are far apart; that count
+is the measurable form of "close enough", and more is worse.
+
+**3. Compare the vermagic flags.** Use a stock module from the phone as the
+reference:
+
+```sh
+adb pull //system/lib/modules/ansi_cprng.ko stock.ko
+python - stock.ko <<'EOF'
+import re, sys
+d = open(sys.argv[1], 'rb').read()
+print(re.search(rb'vermagic=([^\x00\n]+)', d).group(1).decode())
+EOF
+```
+
+Run the same on your own `.ko` afterwards. Everything **after the first space**
+has to match exactly. The version in front is ignored: with a `__versions`
+section `same_magic()` skips it and compares only the flags and the
+`module_layout` crc, which `addr.h` supplies - the tree has no say in that value.
+
+**4. Accept the layout with the diagnostic module.** This is the only cheap
+proof that the offsets are right:
+
+```sh
+adb push kmod/pwrsq_diag.ko //data/local/tmp/
+adb shell 'su -c "dmesg -c >/dev/null; insmod /data/local/tmp/pwrsq_diag.ko; sleep 1; dmesg | grep pwrsq"'
+adb shell 'su -c "rmmod pwrsq_diag"'
+```
+
+Only `name=8941_l20` counts as a pass. That one call exercises all five addresses
+plus `r->rdev`, `rdev->desc->ops`, `consumer_list`, `d->kobj.name`, `drvdata` and
+`sh->mmc`. If SELinux denies the load, `setenforce 0` for this boot and retry.
+
+**5. If it fails, change the tree - do not push it.** A tree that is too far off
+gets defaults for the new symbols from `oldconfig`, and the structs it compiles
+can be missing fields. That failure is invisible at `insmod` and surfaces at
+`regulator_get` or when writing through `ops`. The diagnostic run is the last
+cheap check before the power cycle.
+
+After the `.ko` builds, `UTS_RELEASE` only has to line up for reading; a mismatch
+does not stop the load:
+
+```sh
+grep UTS_RELEASE kernel/include/generated/utsrelease.h
+adb shell uname -r
+```
 
 ### 4. Toolchain workarounds
 
