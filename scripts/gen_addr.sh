@@ -33,7 +33,7 @@ done
 [ -n "$PY" ] || { echo "python3 not found" >&2; exit 1; }
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+trap 'rm -rf "$TMP" 2>/dev/null || true' EXIT
 
 $ADB shell 'cat /proc/kallsyms' | tr -d '\r' > "$TMP/kallsyms"
 [ -s "$TMP/kallsyms" ] || { echo "could not read /proc/kallsyms" >&2; exit 1; }

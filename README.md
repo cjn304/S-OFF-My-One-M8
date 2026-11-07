@@ -11,7 +11,7 @@ kernel context with a small module that calls the PMIC regulator ops directly,
 followed by writing the flag byte.
 
 [Tested](#field-evidence) on the HTC One M8, hboot 3.19.0.0000
-(other devices: see [Porting](#8-porting)).
+(other devices: see [Porting](#6-porting)).
 
 ---
 
@@ -35,18 +35,17 @@ The commands below assume `adb shell` is root: a userdebug or eng ROM, where
 `adb root` works, or a rooted stock ROM, where every `adb shell ...` becomes
 `adb shell 'su -c "..."'`. The quoting matters - the redirection has to sit
 inside the su command, or the non-root shell performs it first and fails with
-`Permission denied`. Every `stool.sh` command finds root on its own (Magisk
-`su`, adb root, or a userdebug build); `gen_addr.sh` needs none: once
-`kptr_restrict` is 0, `/proc/kallsyms` is world-readable.
+`Permission denied`. Every `stool.sh` command and `prepare.sh` finds root on its own
+(Magisk `su`, adb root, or a userdebug build).
 [Expected output and troubleshooting](#expected-output-and-troubleshooting).
 
 ```sh
 # 0. check root, Security state, modules, SELinux
 scripts/stool.sh status
 
-# 1. kallsyms hides addresses until kptr_restrict is 0; then read them
-adb shell 'echo 0 > /proc/sys/kernel/kptr_restrict'
-scripts/gen_addr.sh
+# 1. phone config and addresses into the tree: m8.config, kmod/addr.h, and the
+#    tree configured to match
+scripts/prepare.sh /path/to/kernel-tree
 
 # 2. build the three modules and the mmc_cmd helper
 scripts/build.sh /path/to/kernel-tree
@@ -92,7 +91,7 @@ Where each parameter lives, and which partitions get dumped, comes from
 `targets.conf`: one section per partition layout, matched against the sizes the
 device reports in `/sys/class/block/*/uevent`. A phone whose layout has no
 section is refused before anything is written - see
-[section 6](#6-parameter-offsets) to add one.
+[section 4](#4-parameter-offsets) to add one.
 
 Nothing is backed up automatically:
 `backup` writes `backup/<serial>-<timestamp>.{txt,img}` - five whole partitions
@@ -113,7 +112,7 @@ back: `fastboot oem get_tamper_flag` answers `Tamper_Flag: 0x0`. It is not in
 `set secure_flag` is the write from the last stage of `soff`, on its own: `00` or
 `03` at `0x8400`, then a read-back - no power cycle and no reboot. `00` while
 S-ON is refused unless `mmc_cmd wp` reports no write protection, which is the
-old-hboot case in [Porting](#8-porting); there it is the plain write that sets
+old-hboot case in [Porting](#6-porting); there it is the plain write that sets
 the flag. On an S-OFF phone it is also what puts `00` back after restoring a
 `pg1fs.img` that was taken while S-ON.
 
@@ -299,67 +298,50 @@ per-directory case sensitivity (`fsutil file setCaseSensitiveInfo <dir> enable`,
 needs admin) or extract with those paths excluded — they are netfilter drivers
 and irrelevant here.
 
-### 2. Get the exact config
-
-Do **not** trust `arch/arm/configs/m8_defconfig`; HTC ships many variants from
-one tree. The phone carries its own config inside the kernel image
-(`CONFIG_IKCONFIG=y`, `CONFIG_IKCONFIG_PROC` off):
+### 2. Phone to tree
 
 ```sh
-img=$(scripts/stool.sh backup boot)   # backup/HC44JWM02237-...-boot.img
-
-python - "$img" <<'EOF'
-import struct, sys, zlib
-raw = open(sys.argv[1], 'rb').read()
-ks, ka, rs, ra, ss, sa, tags, page = struct.unpack('<8I', raw[8:40])
-k = raw[page:page+ks]
-i = k.find(b'\x1f\x8b\x08')
-if i < 0:
-    sys.exit('kernel payload is not gzip - check CONFIG_KERNEL_* first')
-open('vmlinux.bin','wb').write(zlib.decompressobj(31).decompress(k[i:]))
-EOF
-
-sh kernel/scripts/extract-ikconfig vmlinux.bin > m8.config
-test -s m8.config &&
-	grep -E 'CONFIG_(IKCONFIG|MODULES|MODVERSIONS|SMP|PREEMPT|MODULE_UNLOAD|LOCALVERSION)' m8.config
+scripts/prepare.sh /d/kernel-src/kernel
 ```
 
-`backup` needs only the partition name: the name and the size both come from the
-device, so no `targets.conf` and no S-OFF, and the script finds root itself
-(`python3` works too, whichever your host has). Three things to watch:
+One command, six steps, each one printed:
 
-- you cannot use the RUU's `boot_signed.img`: it carries a 256-byte signature
-  header in front, so `raw[8:40]` reads garbage. Take a partition dump.
-- if the kernel is not gzip (`CONFIG_KERNEL_LZ4` / `XZ` / `LZO`) the second step
-  stops; decompress with the format the config names.
-- `CONFIG_IKCONFIG_PROC` is off on this phone, so there is no `/proc/config.gz`
-  and this is the only way in.
+| step | what it does | what stopping here means |
+|---|---|---|
+| 1 | `stool.sh backup boot` takes the boot partition | adb or root is not working, or the phone is in recovery |
+| 2 | digs the compiled-in `.config` out of the image | the kernel was built without `CONFIG_IKCONFIG`, so the image holds none |
+| 3 | writes the five addresses and the `module_layout` crc into `kmod/addr.h` | `kptr_restrict` is not 0, so kallsyms reads as zeros |
+| 4 | computes the vermagic flags from the config and compares them with a stock module | the config is not from this phone's kernel |
+| 5 | overwrites `kernel/.config`, runs `oldconfig`, counts new symbols | the tree is too far from this build (over 20 needs `--force`) |
+| 6 | `modules_prepare`, then checks `utsrelease.h` | the toolchain - see the next section |
 
-Set `UTS_RELEASE` to whatever the phone reports, and turn `LOCALVERSION_AUTO`
-off - a patched tree would otherwise pick up a `-dirty` suffix. Every firmware
-build has its own string, so take it from the phone instead of copying one:
+Things that are easy to get wrong:
 
-```sh
-rel=$(adb shell uname -r | tr -d '\r')     # e.g. 3.4.0-perf-gXXXXXXX
-suffix=${rel#3.4.0}                         # gives -perf-gXXXXXXX
-sed -i -e "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"$suffix\"|" \
-       -e 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' m8.config
-```
+- The config is not in `arch/arm/configs/m8_defconfig`: HTC ships many variants
+  from one tree. The device's own config sits inside the kernel image
+  (`CONFIG_IKCONFIG=y`, `CONFIG_IKCONFIG_PROC` off, so the phone has no
+  `/proc/config.gz`). Step 2 unpacks the gzip stream behind the `IKCFG_ST`
+  marker.
+- Do not use the RUU's `boot_signed.img`: it carries a 256-byte signature header
+  in front, so the boot header is read from the wrong offset. A partition dump is
+  what you want, and `backup boot` is exactly that.
+- In a zImage the compressed body is preceded by a self-decompressing stub, so
+  gzip is not at offset 0. `extract_config.py` walks the magic instead, and names
+  lz4/lzo/lzma when it finds one of those.
+- `CONFIG_LOCALVERSION` is derived from `uname -r`: everything from the first
+  dash onwards goes in, and `LOCALVERSION_AUTO` is turned off - a patched tree would otherwise pick
+  up a `-dirty` suffix. It is not a load condition (next subsection), only a way
+  to make the string inside the `.ko` match the phone when you read it.
+- `addr.h` has nothing to do with the tree: it describes the kernel the phone is
+  running right now, so it is re-read from the device whichever tree you use.
+  That is why it happens here instead of by hand before the build.
+- Run it while the phone boots normally. If boot was flashed after the last
+  boot, the config you get and the symbols you read belong to different kernels.
 
-It is **not** a load condition (section 3 explains why), only a way to make the
-string inside the `.ko` match the phone when you read it.
-
-### 3. Prepare the tree
-
-```sh
-cp m8.config kernel/.config
-yes "" | make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- oldconfig
-make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- modules_prepare
-```
-
-`yes ""` feeds defaults to `oldconfig`: when the tree and `m8.config` come from
-different releases it asks about every new symbol, and an unattended build would
-sit there waiting.
+`--force` only relaxes the step 5 threshold. The `ADB`, `CROSS` and `MAKE`
+environment variables pick adb, the toolchain prefix and the make program. On
+MSYS2 apply the two patches from section 3 first: `oldconfig` builds `fixdep`
+before it does anything else.
 
 #### When the tree is not the build the phone runs
 
@@ -374,51 +356,29 @@ line up:
 | field offsets in `struct device` / `sdhci_host` / `mmc_host` | the tree's headers + `.config` | it loads, then reads the wrong bytes |
 | the five addresses and the `module_layout` crc | the phone's `addr.h` | nothing - they do not come from the tree |
 
-Work through these in order; if one fails, change the tree.
+The first row is now a comparison that happens before you build: step 4 derives
+the flag string from `.config` and checks it against a stock module from the
+phone, character for character. If it does not match, the script stops instead of
+letting you wait twenty minutes to find out `insmod` refuses. The reason is that
+`same_magic()` compares only that half: when the module carries `__versions`,
+everything before the first space - `UTS_RELEASE` - is skipped.
 
-**1. Look for the package with the same commit.** The `gXXXXXXX` in `uname -r`
-is that package's git commit, and HTC's `m8ul-3.4.0-perf-gXXXXXXX.zip` matches it
-one to one. The tarball carries no `.git`, so the commit cannot be checked after
-unpacking - write the name down when you download it. With the matching package,
-the rest is a check.
+The second row only gets an indirect signal: the `(NEW)` count from step 5. Zero
+means the two symbol tables agree, so the structs probably do too; a wall of them
+means the tree is far off, and over 20 the script wants `--force` before it
+continues.
 
-```sh
-adb shell uname -r
-head -5 kernel/Makefile        # only confirms 3.4.x; the commit is not in here
-```
+The third row is re-read every run, so it always describes the current kernel -
+`addr.h` is in `.gitignore` and should never travel between devices.
+`A_MODULE_LAYOUT_CRC` comes out of `__versions` of a stock module
+(`scripts/get_module_layout_crc.py`): the crc genksyms computed for
+`module_layout` when that kernel was built, which cannot be guessed.
 
-**2. Put the phone's config over the tree.** Struct layouts follow `.config`, so
-this matters more than the source itself:
-
-```sh
-cp m8.config kernel/.config
-yes "" | make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- oldconfig
-```
-
-A wall of `NEW` symbols from `oldconfig` means the two are far apart; that count
-is the measurable form of "close enough", and more is worse.
-
-**3. Compare the vermagic flags.** Use a stock module from the phone as the
-reference:
+The real acceptance test for the second row needs a built module, and it is the
+only cheap proof that the offsets are right:
 
 ```sh
-adb pull //system/lib/modules/ansi_cprng.ko stock.ko
-python - stock.ko <<'EOF'
-import re, sys
-d = open(sys.argv[1], 'rb').read()
-print(re.search(rb'vermagic=([^\x00\n]+)', d).group(1).decode())
-EOF
-```
-
-Run the same on your own `.ko` afterwards. Everything **after the first space**
-has to match exactly. The version in front is ignored: with a `__versions`
-section `same_magic()` skips it and compares only the flags and the
-`module_layout` crc, which `addr.h` supplies - the tree has no say in that value.
-
-**4. Accept the layout with the diagnostic module.** This is the only cheap
-proof that the offsets are right:
-
-```sh
+scripts/build.sh /path/to/kernel-tree
 adb push kmod/pwrsq_diag.ko //data/local/tmp/
 adb shell 'su -c "dmesg -c >/dev/null; insmod /data/local/tmp/pwrsq_diag.ko; sleep 1; dmesg | grep pwrsq"'
 adb shell 'su -c "rmmod pwrsq_diag"'
@@ -428,21 +388,17 @@ Only `name=8941_l20` counts as a pass. That one call exercises all five addresse
 plus `r->rdev`, `rdev->desc->ops`, `consumer_list`, `d->kobj.name`, `drvdata` and
 `sh->mmc`. If SELinux denies the load, `setenforce 0` for this boot and retry.
 
-**5. If it fails, change the tree - do not push it.** A tree that is too far off
-gets defaults for the new symbols from `oldconfig`, and the structs it compiles
-can be missing fields. That failure is invisible at `insmod` and surfaces at
+If it fails, change the tree - do not push it. A tree that is too far off gets
+defaults for the new symbols from `oldconfig`, and the structs it compiles can be
+missing fields. That failure is invisible at `insmod` and surfaces at
 `regulator_get` or when writing through `ops`. The diagnostic run is the last
 cheap check before the power cycle.
 
-After the `.ko` builds, `UTS_RELEASE` only has to line up for reading; a mismatch
-does not stop the load:
+Step 6 also prints whether `UTS_RELEASE` lines up with `uname -r`. A mismatch
+does not stop the load (that half is skipped, as above), but it means
+`CONFIG_LOCALVERSION` never made it into the config.
 
-```sh
-grep UTS_RELEASE kernel/include/generated/utsrelease.h
-adb shell uname -r
-```
-
-### 4. Toolchain workarounds
+### 3. Toolchain workarounds
 
 A 2016 kernel built with a modern toolchain on MSYS2 hits five things. All of
 them are in `kernel-patches/`.
@@ -453,37 +409,23 @@ them are in `kernel-patches/`.
 | `fatal error: linux/compiler-gcc13.h: No such file` | copy `compiler-gcc4.h` to `compiler-gcc13.h` |
 | `fixdep: error opening config file:` and random parse errors | MinGW gcc writes `.d` files with CRLF; patch fixdep to skip `\r` |
 | `fixdep` segfaults on MSYS2 | replace its `mmap()` with `malloc()+read()` |
-| `multiple definition of 'yylloc'` building dtc | `HOSTCFLAGS=-fcommon` |
+| `multiple definition of 'yylloc'` building dtc | `HOSTCFLAGS=-fcommon`; `prepare.sh` already passes it |
 
 ```sh
 cd kernel
-git apply ../kernel-patches/0001-fixdep-crlf-and-no-mmap.patch
+patch -p1 < ../kernel-patches/0001-fixdep-crlf-and-no-mmap.patch
 cp ../kernel-patches/compiler-gcc13.h include/linux/
 ```
+
+HTC ships a tarball, not a git tree, so this is `patch -p1` rather than
+`git apply`.
 
 The wrapper is only used because the top Makefile sets
 `CC = $(srctree)/scripts/gcc-wrapper.py $(REAL_CC)`; passing `CC=<cross>gcc` on
 the command line overrides it. On Linux with an old toolchain none of this is
 needed — the fixdep patch is still harmless.
 
-### 5. Addresses and the module_layout crc
-
-The module imports no symbols, so it needs no `Module.symvers`. Instead it needs
-five addresses and one crc, all properties of the exact kernel build:
-
-```sh
-scripts/gen_addr.sh                 # reads /proc/kallsyms + a stock .ko; prints the file
-cat kmod/addr.h                     # same content, for when you want to look again
-```
-
-* the five addresses are plain text symbols, visible even with
-  `CONFIG_KALLSYMS_ALL=n` (make sure `kptr_restrict` is 0);
-* `A_MODULE_LAYOUT_CRC` is read out of `__versions` of a stock module shipped on
-  the device (`scripts/get_module_layout_crc.py`). It is the crc genksyms
-  computed for `module_layout` when the kernel was built, so it cannot be
-  guessed.
-
-### 6. Parameter offsets
+### 4. Parameter offsets
 
 `kmod/addr.h` covers the kernel symbols; the parameter offsets are generated by
 nothing either. They follow the partition layout, so they live in
@@ -548,7 +490,7 @@ Two rules when repeating this on another build:
   "succeeds" against a write-protected partition only updates the page cache -
   which is why `write_hex` verifies instead of trusting `dd`.
 
-### 7. Build
+### 5. Build
 
 ```sh
 scripts/build.sh /path/to/kernel-tree
@@ -594,7 +536,7 @@ the eMMC is still up. Without it `soff` stops
 before touching the phone: the write-protection check is the only thing that
 proves the power cycle worked.
 
-### 8. Porting
+### 6. Porting
 
 The reference build is:
 
@@ -626,7 +568,7 @@ have had few system updates. They may not set write protection at all: run
 `mmc_cmd wp` while S-ON, and an all-zero bitmap means hboot never armed it. A
 plain write is enough then, with neither the module nor the power cycle: derive
 the partition, the offset and the record shape as in
-[section 6](#6-parameter-offsets), put them in a `targets.conf` section, and
+[section 4](#4-parameter-offsets), put them in a `targets.conf` section, and
 `stool.sh set secure_flag 0` is that write - it probes the bitmap first and refuses
 only if protection is really armed. One caveat there: the four bytes after
 `03 00 00 00` read `HTCU` only while the bootloader is unlocked, so a dump from
@@ -913,7 +855,7 @@ S-ON, which is exactly the state `soff` wants.
 `fastboot getvar product` prints, `m8_ul` on this phone - and it is the first
 thing to look at: `unknown - no targets.conf section matches` means the table has no
 entry for this layout, and the `observed:` line under it is what to paste into a
-new section ([section 6](#6-parameter-offsets)). The `hboot:` line below it is
+new section ([section 4](#4-parameter-offsets)). The `hboot:` line below it is
 the bootloader build the phone actually reports. `soff` wants
 `Security: ON`; on an already S-OFF phone it prints `already S-OFF` and
 returns. `Security: unknown (no root ...)` means `su` does not work yet, and
@@ -956,8 +898,8 @@ pwrsq_on: (no undefined symbols)
 ```
 
 The three modules import nothing: every kernel function is reached through
-`addr.h`. `build.sh` stops if `addr.h` is missing - `scripts/gen_addr.sh` is
-the only thing that writes it. `make -C tools` leaves `tools/mmc_cmd` behind, and
+`addr.h`. `build.sh` stops if `addr.h` is missing - nothing else writes it
+except `gen_addr.sh`, which `prepare.sh` runs. `make -C tools` leaves `tools/mmc_cmd` behind, and
 `soff` refuses to start without it - that binary is the only way to tell
 whether the power cycle worked.
 
@@ -1215,9 +1157,9 @@ Four things bite on Windows:
    Bash does not bundle `make`; install MSYS2 or add it to `PATH`.
 
 Toolchain actually used here: Git Bash, GNU Make 4.4.1 from MSYS2, Python 3.13,
-adb 1.0.41, `arm-none-linux-gnueabihf-gcc` 13.3.1 (MinGW host build). The steps
-in this README were executed as the equivalent raw commands;
-`scripts/gen_addr.sh` was additionally run end-to-end.
+adb 1.0.41, `arm-none-linux-gnueabihf-gcc` 13.3.1 (MinGW host build). `scripts/prepare.sh` ran end to
+end on this phone (all six steps); it wrote both `kmod/addr.h` and
+`kernel/.config`.
 
 ---
 
