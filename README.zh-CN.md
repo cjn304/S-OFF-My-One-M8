@@ -170,42 +170,51 @@ Windows 上要注意 NTFS 大小写不敏感，而这棵树里有只差大小写
 不要相信 `arch/arm/configs/m8_defconfig`：HTC 用一棵树出很多变体。设备自己的配置就压在 kernel 镜像里（`CONFIG_IKCONFIG=y`，`CONFIG_IKCONFIG_PROC` 关闭）：
 
 ```sh
-adb shell dd if=/dev/block/bootdevice/by-name/boot of=/sdcard/boot.img bs=4096
-adb pull /sdcard/boot.img
+img=$(scripts/stool.sh backup boot)   # 形如 backup/HC44JWM02237-...-boot.img
 
-python3 - <<'EOF'
-import struct, zlib
-raw = open('boot.img','rb').read()
+python - "$img" <<'EOF'
+import struct, sys, zlib
+raw = open(sys.argv[1], 'rb').read()
 ks, ka, rs, ra, ss, sa, tags, page = struct.unpack('<8I', raw[8:40])
 k = raw[page:page+ks]
 i = k.find(b'\x1f\x8b\x08')
+if i < 0:
+    sys.exit('kernel payload is not gzip - check CONFIG_KERNEL_* first')
 open('vmlinux.bin','wb').write(zlib.decompressobj(31).decompress(k[i:]))
 EOF
 
 sh kernel/scripts/extract-ikconfig vmlinux.bin > m8.config
-grep -E 'CONFIG_MODULES|CONFIG_MODVERSIONS|CONFIG_LOCALVERSION' m8.config
+test -s m8.config &&
+	grep -E 'CONFIG_(IKCONFIG|MODULES|MODVERSIONS|SMP|PREEMPT|MODULE_UNLOAD|LOCALVERSION)' m8.config
 ```
 
-`dd` 需要 root：官方 ROM 上写成 `adb shell 'su -c "dd …"'`；这个块里其余命令都在主机上跑。
+`backup` 只要分区名：名字和长度都来自设备，不需要 `targets.conf`，也不需要 S-OFF，root 由脚本自己找（`python3` 也行，看你机器上装的是哪个）。三处细节：
 
-`UTS_RELEASE` 最后必须正好是 `3.4.0-perf-ga6393e1`。因为压缩包里没有 git 历史，`setlocalversion` 补不出 `-ga6393e1` 后缀，直接写进配置：
+- 不能用 RUU 里的 `boot_signed.img`：它前面多 256 字节签名头，`raw[8:40]` 会读成乱的。要的是分区 dump。
+- 内核不是 gzip（`CONFIG_KERNEL_LZ4` / `XZ` / `LZO`）时第二步会停，按实际格式换解压方式。
+- 这台机器 `CONFIG_IKCONFIG_PROC` 是关的，手机上没有 `/proc/config.gz`，只能从镜像里取。
+
+`UTS_RELEASE` 设成目标机 `uname -r` 的后半段，同时关掉 `LOCALVERSION_AUTO`——打过补丁的树否则可能被追加 `-dirty`。它**不是加载条件**（原因见第 3 节），只是让 `.ko` 里的字符串和手机一致、便于核对；这台是 `-perf-g708019f`，另一台是 `-perf-ga6393e1`，按目标机写：
 
 ```sh
-sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-perf-ga6393e1"/' m8.config
+sed -i -e 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="-perf-g708019f"|' \
+       -e 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' m8.config
 ```
 
 ### 3. 准备内核树
 
 ```sh
 cp m8.config kernel/.config
-make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- oldconfig
+yes "" | make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- oldconfig
 make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- modules_prepare
 ```
 
-检查 `kernel/include/generated/utsrelease.h`：
+`yes ""` 是给 `oldconfig` 的新符号取默认值：树和 `m8.config` 版本不完全一致时它会逐个提问，脚本会卡在那里。
+
+检查 `kernel/include/generated/utsrelease.h` 里的串和手机 `uname -r` 一致：
 
 ```c
-#define UTS_RELEASE "3.4.0-perf-ga6393e1"
+#define UTS_RELEASE "3.4.0-perf-g708019f"
 ```
 
 `UTS_RELEASE` 对齐之后，`uname -r` 和 `.ko` 里的字符串一致，读起来方便核对。但它不是加载条件：模块带 `__versions` 节时，内核跳过第一个空格之前的内容，只比对后面的标志位（`SMP preempt mod_unload modversions ARMv7`）和 `module_layout` 的 crc。真正必须一致的是这些标志位，它们来自 `m8.config` 里的 `CONFIG_SMP`、`CONFIG_PREEMPT`、`CONFIG_MODULE_UNLOAD`、`CONFIG_MODVERSIONS`。

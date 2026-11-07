@@ -305,45 +305,63 @@ one tree. The phone carries its own config inside the kernel image
 (`CONFIG_IKCONFIG=y`, `CONFIG_IKCONFIG_PROC` off):
 
 ```sh
-adb shell dd if=/dev/block/bootdevice/by-name/boot of=/sdcard/boot.img bs=4096
-adb pull /sdcard/boot.img
+img=$(scripts/stool.sh backup boot)   # backup/HC44JWM02237-...-boot.img
 
-python3 - <<'EOF'
-import struct, zlib
-raw = open('boot.img','rb').read()
+python - "$img" <<'EOF'
+import struct, sys, zlib
+raw = open(sys.argv[1], 'rb').read()
 ks, ka, rs, ra, ss, sa, tags, page = struct.unpack('<8I', raw[8:40])
 k = raw[page:page+ks]
 i = k.find(b'\x1f\x8b\x08')
+if i < 0:
+    sys.exit('kernel payload is not gzip - check CONFIG_KERNEL_* first')
 open('vmlinux.bin','wb').write(zlib.decompressobj(31).decompress(k[i:]))
 EOF
 
 sh kernel/scripts/extract-ikconfig vmlinux.bin > m8.config
-grep -E 'CONFIG_MODULES|CONFIG_MODVERSIONS|CONFIG_LOCALVERSION' m8.config
+test -s m8.config &&
+	grep -E 'CONFIG_(IKCONFIG|MODULES|MODVERSIONS|SMP|PREEMPT|MODULE_UNLOAD|LOCALVERSION)' m8.config
 ```
 
-The `dd` needs root: on a Magisk ROM write it as
-`adb shell 'su -c "dd …"'`. Everything else in this block runs on the host.
+`backup` needs only the partition name: the name and the size both come from the
+device, so no `targets.conf` and no S-OFF, and the script finds root itself
+(`python3` works too, whichever your host has). Three things to watch:
 
-`UTS_RELEASE` has to end up as `3.4.0-perf-ga6393e1`. Because the tarball has no
-git history, `setlocalversion` cannot append the `-ga6393e1` suffix, so put it
-in the config:
+- you cannot use the RUU's `boot_signed.img`: it carries a 256-byte signature
+  header in front, so `raw[8:40]` reads garbage. Take a partition dump.
+- if the kernel is not gzip (`CONFIG_KERNEL_LZ4` / `XZ` / `LZO`) the second step
+  stops; decompress with the format the config names.
+- `CONFIG_IKCONFIG_PROC` is off on this phone, so there is no `/proc/config.gz`
+  and this is the only way in.
+
+Set `UTS_RELEASE` to the tail of the phone's `uname -r`, and turn
+`LOCALVERSION_AUTO` off - a patched tree would otherwise pick up a `-dirty`
+suffix. It is **not** a load condition (section 3 explains why), only a way to
+make the string inside the `.ko` match the phone when you read it. This unit
+reports `-perf-g708019f`, the other one `-perf-ga6393e1`; use the target's:
 
 ```sh
-sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-perf-ga6393e1"/' m8.config
+sed -i -e 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="-perf-g708019f"|' \
+       -e 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' m8.config
 ```
 
 ### 3. Prepare the tree
 
 ```sh
 cp m8.config kernel/.config
-make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- oldconfig
+yes "" | make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- oldconfig
 make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- modules_prepare
 ```
 
-Check `kernel/include/generated/utsrelease.h`:
+`yes ""` feeds defaults to `oldconfig`: when the tree and `m8.config` come from
+slightly different releases it asks about every new symbol and a scripted run
+would sit there waiting.
+
+Check that the string in `kernel/include/generated/utsrelease.h` matches the
+phone's `uname -r`:
 
 ```c
-#define UTS_RELEASE "3.4.0-perf-ga6393e1"
+#define UTS_RELEASE "3.4.0-perf-g708019f"
 ```
 
 Aligning `UTS_RELEASE` makes `uname -r` and the string inside the `.ko` agree,
