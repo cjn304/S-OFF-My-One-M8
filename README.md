@@ -414,7 +414,7 @@ have to be derived by hand. Dump the small partitions and search for a value the
 bootloader already reports:
 
 ```sh
-for p in board_info mfg misc pg1fs pg2fs hboot sp1; do
+for p in board_info mfg pg1fs pg2fs hboot sp1; do
 	adb shell "su -c 'dd if=/dev/block/bootdevice/by-name/$p of=/sdcard/$p.img'"
 	adb pull /sdcard/$p.img
 done
@@ -432,10 +432,8 @@ The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
 | warning | `bl_partition` | `hboot` p26 | run time, no fixed offset | six known banner strings, searched per image |
 | first screen | `splash` | `sp1` p12 | 0, W x H x 2 bytes | the frame starts at 0 |
 
-The `OS` row in `status` is not in this table: it reads the running ROM's
-`ro.build.version.release` (Android 6.0.1 here), so it has no partition offset
-and changes with the ROM. The firmware version (`version-main`) is neither read
-nor written by this tool.
+There is no version row: this tool neither reads nor writes the firmware
+version (`version-main`), and it does not print the Android build either.
 
 `screen` is the only key without an offset: it sets the default WxH `splash`
 converts to, and `bl_partition` names the partition `nowarn` rewrites - `hboot`
@@ -803,7 +801,6 @@ selinux: Enforcing
 == parameters ==
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
-OS          6.0.1       ro.build.version.release
 BL magic    HTCU        pg1fs @ 0x8404
 secure flag 3           pg1fs @ 0x8400
 tamper flag 0           pg2fs @ 0x511804

@@ -738,11 +738,6 @@ status_show() {
 	say "== parameters =="
 	printf '%-11s %-11s %s @ 0x%x\n' CID           "$(p_cid)"     "$PART_CID"      "$((OFF_CID))"
 	printf '%-11s %-11s %s @ 0x%x\n' MID           "$(p_mid)"     "$PART_MID"      "$((OFF_MID))"
-	# OS is the running ROM's version, not a partition field: it comes from
-	# build.prop, so the last column names the property instead of an offset.
-	os=$("$ADB" shell getprop ro.build.version.release 2>/dev/null | tr -d '\r')
-	[ -n "$os" ] || os=unknown
-	printf '%-11s %-11s %s\n' OS "$os" ro.build.version.release
 	printf '%-11s %-11s %s @ 0x%x\n' "BL magic"    "$(p_bl)"      "$PART_BLMAGIC"  "$((OFF_BLMAGIC))"
 	printf '%-11s %-11s %s @ 0x%x\n' "secure flag" "$(p_secure)"  "$PART_SECURE"   "$((OFF_SECURE))"
 	printf '%-11s %-11s %s @ 0x%x\n' "tamper flag" "$(p_tamper)"  "$PART_TAMPER"   "$((OFF_TAMPER))"

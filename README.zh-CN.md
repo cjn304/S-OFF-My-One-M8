@@ -256,7 +256,7 @@ error: no section in targets.conf matches this device.
 把这一行贴进新的 `[name]` 项，再补偏移；偏移仍然只能人工推导。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
 
 ```sh
-for p in board_info mfg misc pg1fs pg2fs hboot sp1; do
+for p in board_info mfg pg1fs pg2fs hboot sp1; do
 	adb shell "su -c 'dd if=/dev/block/bootdevice/by-name/$p of=/sdcard/$p.img'"
 	adb pull /sdcard/$p.img
 done
@@ -274,7 +274,7 @@ done
 | 警告 | `bl_partition` | `hboot` p26 | 运行期，无固定偏移 | 六段已知横幅字符串，按镜像搜 |
 | 第一屏 | `splash` | `sp1` p12 | 0，W×H×2 字节 | 画面从 0 开始 |
 
-`status` 里的 `OS` 那行不在这张表里：它读的是当前 ROM 的 `ro.build.version.release`（Android 版本，这台是 6.0.1），没有分区偏移，换 ROM 就变。固件版本（`version-main`）本工具既不读也不写。
+`status` 里没有版本行：固件版本（`version-main`）本工具既不读也不写，Android 的系统版本也不显示。
 
 `screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl_partition` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
 
@@ -517,7 +517,6 @@ selinux: Enforcing
 == parameters ==
 CID         11111111    board_info @ 0x14
 MID         0P6B12000   mfg @ 0x4000
-OS          6.0.1       ro.build.version.release
 BL magic    HTCU        pg1fs @ 0x8404
 secure flag 3           pg1fs @ 0x8400
 tamper flag 0           pg2fs @ 0x511804
