@@ -141,7 +141,7 @@ conf_dump() { # every line as section|key|value; comments and blanks dropped
 	/^[ \t]*#/ { next }
 	/^[ \t]*$/ { next }
 	# trailing comment after a value: a "#" that follows whitespace is never
-	# part of a value here, and a single-field key like bl-partition would
+	# part of a value here, and a single-field key like bl_partition would
 	# otherwise swallow it whole
 	{ sub(/[ \t]+#.*$/, "") }
 	/^\[/ {
@@ -219,7 +219,7 @@ EOF
 	IFS=: read -r PART_BLMAGIC OFF_BLMAGIC LEN_BLMAGIC _ <<EOF
 $FV
 EOF
-	field_req bl-partition
+	field_req bl_partition
 	IFS=: read -r PART_HBOOT _ _ _ <<EOF
 $FV
 EOF
