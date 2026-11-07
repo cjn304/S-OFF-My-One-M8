@@ -379,8 +379,8 @@ The module imports no symbols, so it needs no `Module.symvers`. Instead it needs
 five addresses and one crc, all properties of the exact kernel build:
 
 ```sh
-scripts/gen_addr.sh                 # reads /proc/kallsyms + a stock .ko
-cat kmod/addr.h
+scripts/gen_addr.sh                 # reads /proc/kallsyms + a stock .ko; prints the file
+cat kmod/addr.h                     # same content, for when you want to look again
 ```
 
 * the five addresses are plain text symbols, visible even with

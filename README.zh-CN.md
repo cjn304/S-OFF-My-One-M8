@@ -235,8 +235,8 @@ wrapper 之所以会介入，是因为顶层 Makefile 写了 `CC = $(srctree)/sc
 模块不导入符号，所以不需要 `Module.symvers`；它需要五个地址和一个 crc，都是这次内核构建的属性：
 
 ```sh
-scripts/gen_addr.sh                 # 读 /proc/kallsyms + 一个原厂 .ko
-cat kmod/addr.h
+scripts/gen_addr.sh                 # 读 /proc/kallsyms + 一个原厂 .ko，结束时打印整个文件
+cat kmod/addr.h                     # 内容同上一步，只想再看一遍时用
 ```
 
 * 五个地址都是普通代码符号，`CONFIG_KALLSYMS_ALL=n` 也能在 `/proc/kallsyms` 里看到（前提是 `kptr_restrict` 为 0）；
