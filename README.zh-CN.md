@@ -553,7 +553,7 @@ pwrsq_off: (no undefined symbols)
 pwrsq_on: (no undefined symbols)
 ```
 
-三个模块一个符号都不导入：所有内核函数都走 `addr.h`。`build.sh` 会在 `addr.h` 缺失、或仍是 `0x00000000UL` 占位值时停下。`make -C tools` 产出 `tools/mmc_cmd`，没有它 `soff` 会拒绝启动：判断断电是否生效只有这一个依据。
+三个模块一个符号都不导入：所有内核函数都走 `addr.h`。`build.sh` 会在 `addr.h` 缺失时停下（它只有 `scripts/gen_addr.sh` 一个来源）。`make -C tools` 产出 `tools/mmc_cmd`，没有它 `soff` 会拒绝启动：判断断电是否生效只有这一个依据。
 
 ### `backup`
 

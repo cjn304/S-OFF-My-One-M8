@@ -863,8 +863,8 @@ pwrsq_on: (no undefined symbols)
 ```
 
 The three modules import nothing: every kernel function is reached through
-`addr.h`. `build.sh` stops if `addr.h` is missing or still holds the
-`0x00000000UL` placeholders. `make -C tools` leaves `tools/mmc_cmd` behind, and
+`addr.h`. `build.sh` stops if `addr.h` is missing - `scripts/gen_addr.sh` is
+the only thing that writes it. `make -C tools` leaves `tools/mmc_cmd` behind, and
 `soff` refuses to start without it - that binary is the only way to tell
 whether the power cycle worked.
 
