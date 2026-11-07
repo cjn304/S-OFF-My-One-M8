@@ -208,7 +208,9 @@ make -C kernel ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- modules_prepare
 #define UTS_RELEASE "3.4.0-perf-ga6393e1"
 ```
 
-如果不是这个字符串，模块会被 `version magic ... should be ...` 拒掉。
+`UTS_RELEASE` 对齐之后，`uname -r` 和 `.ko` 里的字符串一致，读起来方便核对。但它不是加载条件：模块带 `__versions` 节时，内核跳过第一个空格之前的内容，只比对后面的标志位（`SMP preempt mod_unload modversions ARMv7`）和 `module_layout` 的 crc。真正必须一致的是这些标志位，它们来自 `m8.config` 里的 `CONFIG_SMP`、`CONFIG_PREEMPT`、`CONFIG_MODULE_UNLOAD`、`CONFIG_MODVERSIONS`。
+
+内核树在这里只做两件事：提供编译用的结构体布局（`struct device`、`sdhci_host`、`mmc_host` 的字段偏移随 `CONFIG_PM_*`、`CONFIG_MMC_*` 变），以及上面那几个标志位。所以树不必正好是手机那次构建的源码，但 `.config` 要接近；换一棵树之后，先让诊断模块跑一遍再信任它去做断电。
 
 ### 4. 工具链的五个坑
 

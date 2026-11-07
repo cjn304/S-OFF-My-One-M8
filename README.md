@@ -346,8 +346,19 @@ Check `kernel/include/generated/utsrelease.h`:
 #define UTS_RELEASE "3.4.0-perf-ga6393e1"
 ```
 
-If it does not match the phone's `uname -r` exactly, the module is rejected with
-"version magic ... should be ...".
+Aligning `UTS_RELEASE` makes `uname -r` and the string inside the `.ko` agree,
+which helps when you read them. It is not a load condition: with a `__versions`
+section the kernel skips everything before the first space and compares the
+flags after it (`SMP preempt mod_unload modversions ARMv7`) plus the
+`module_layout` crc. What must match is those flags - `CONFIG_SMP`,
+`CONFIG_PREEMPT`, `CONFIG_MODULE_UNLOAD` and `CONFIG_MODVERSIONS` in `m8.config`.
+
+The tree does two jobs here: it supplies the struct layouts the module compiles
+against (`struct device`, `sdhci_host` and `mmc_host` move fields around when
+`CONFIG_PM_*` and `CONFIG_MMC_*` change) and those flags. So the tree need not
+be the exact source the phone was built from, but its `.config` has to be close
+- and a new tree earns a diagnostic run before it is trusted with a power
+cycle.
 
 ### 4. Toolchain workarounds
 
