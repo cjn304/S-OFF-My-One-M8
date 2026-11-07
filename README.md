@@ -415,12 +415,18 @@ bootloader already reports:
 
 ```sh
 for p in board_info mfg pg1fs pg2fs hboot sp1; do
-	adb shell "su -c 'dd if=/dev/block/bootdevice/by-name/$p of=/sdcard/$p.img'"
-	adb pull /sdcard/$p.img
+	scripts/stool.sh backup "$p"
 done
 ```
 
-The `su -c` assumes a Magisk ROM; drop it where `adb shell` is already root.
+`backup` needs only the partition name - the name and the size both come from
+the device, so it wants no `targets.conf` section, which is the point here:
+that section does not exist yet. Images land in
+`backup/<serial>-<timestamp>.<part>.img`, each checked against the length the
+phone reports. If the script cannot run on that phone, fall back to
+`adb shell 'su -c "dd if=/dev/block/bootdevice/by-name/<part> of=/sdcard/<part>.img"'`
+plus `adb pull`; the `su -c` assumes a Magisk ROM and can be dropped where
+`adb shell` is already root.
 
 | field | key | location on the M8 | offset and width on the M8 | how it was located |
 |---|---|---|---|---|

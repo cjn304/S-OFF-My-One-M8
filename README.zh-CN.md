@@ -257,12 +257,11 @@ error: no section in targets.conf matches this device.
 
 ```sh
 for p in board_info mfg pg1fs pg2fs hboot sp1; do
-	adb shell "su -c 'dd if=/dev/block/bootdevice/by-name/$p of=/sdcard/$p.img'"
-	adb pull /sdcard/$p.img
+	scripts/stool.sh backup "$p"
 done
 ```
 
-`su -c` 是按 Magisk 环境写的；`adb shell` 本身就是 root 时去掉它。
+`backup` 只要分区名：名字和长度都读自设备，不需要 `targets.conf` 里有对应的一节——这一节正是还没写出来的东西。镜像落在 `backup/<序列号>-<时间戳>.<分区>.img`，每个都按设备报的长度校验过。脚本在这台机器上跑不起来时，再退回手工：`adb shell 'su -c "dd if=/dev/block/bootdevice/by-name/<分区> of=/sdcard/<分区>.img"'` 加 `adb pull`；`su -c` 按 Magisk 环境写，`adb shell` 本身就是 root 时去掉。
 
 | 字段 | 键 | M8 上的位置 | M8 上的偏移与宽度 | 怎么定位的 |
 |---|---|---|---|---|
