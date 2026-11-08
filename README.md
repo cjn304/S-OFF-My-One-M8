@@ -67,13 +67,14 @@ before they dump or write anything, and stop with nothing written if S-ON.
 argument, and `soff`, `son` and `set secure_flag 0` are how the Security state
 itself is changed, so none of those need S-OFF up front.
 
-`write` is the other way round: it does not check Security state at all. That is
-the command for locating `secure_flag` and `tamper_flag` on a phone that is still
-S-ON, so gating it on S-OFF would defeat its purpose. It does not need a
-`targets.conf` section either - a model being ported to has none - because the
-partition and the offset are its arguments. The read-back is the gate: with the
-protection still armed nothing lands and the command fails instead of reporting
-success.
+`write` is the other way round: it does not check Security state at all. An hboot
+older than 3.19 never arms the protection, and between the power cut inside `soff`
+and the secure-flag write the phone is still S-ON with the protection already
+gone - both are moments when a write lands, and a gate on Security state would
+refuse exactly those. It does not need a `targets.conf` section either, because
+the partition and the offset are its arguments. With the protection still armed
+nothing lands and the read-back fails; that is the intended signal, not a wrong
+offset.
 
 ```sh
 scripts/stool.sh status                  # Security state + other parameters (Android or fastboot)
@@ -782,8 +783,30 @@ od -An -v -tx1 backup/*.mfg.img | tr -d ' \n' \
 
 Run those against the M8 images and you land on exactly the offsets in
 `targets.conf` (`cid = board_info:0x14:8:ascii`, `mid = mfg:0x4000:18:utf16le`).
-Then write a probe with `stool.sh write` and read it back, to confirm the location
-behaves the way you think it does.
+Fields whose value is not unique come from **diffing two images taken in different
+states**, which also writes nothing - `tamper_flag` is only 0 or 4, and a 23 MB
+partition holds thousands of `04000000`, so searching settles nothing:
+
+```sh
+cmp -l backup/<before>.pg1fs.img backup/<after>.pg1fs.img | head
+# column 1 is the byte position counting from 1; subtract one for the offset.
+# columns 2 and 3 are the two values, in octal.
+```
+
+That is how `secure_flag` is confirmed: dump while S-ON, dump again after `soff`,
+and the four bytes that go from `03` to `00` are it; the four that change with
+them are `bl_magic` (dumping before and after `oem lock` / `unlock` shows that one
+on its own).
+
+**A write probe belongs after writes start landing, not at the start.** On a phone
+booted normally into S-ON the bootloader protects the firmware partitions at the
+eMMC level, and `pg1fs` answers `card status 0x400d00`: `dd` reports success,
+nothing reaches the flash, and the read-back cannot match (section 1 of
+[How it works](#how-it-works)). Locating is
+read-only work - search, then diff. `stool.sh write` is for the cases where a
+write does land: an hboot before 3.19 that never armed the protection, or after
+S-OFF, or after the power cut cleared it - the last confirmation, not the first
+step.
 
 | field | key | location on the M8 | offset and width on the M8 | how it was located |
 |---|---|---|---|---|
@@ -799,13 +822,13 @@ behaves the way you think it does.
 converts to, and `bl_partition` names the partition `nowarn` rewrites - `hboot`
 here, `aboot` on other models - and its size is what bounds the image.
 
-Two rules when redoing this on another build - pick the candidate, write a
-probe, read it back:
+Two rules when redoing this on another build - search, diff, and confirm only
+when writes land:
 
 - search for something the device already tells you (`cidnum`, `modelid`,
   the hboot status line) instead of guessing at offsets; the
   same value then confirms what you found.
-- writing, flushing, dropping the cache and reading back is one command:
+- the final confirmation (write, flush, drop the cache, read back) is one command:
 
   ```sh
   scripts/stool.sh write pg1fs 0x8400 00000000

@@ -466,12 +466,14 @@ cmd_write() { # part offset hexbytes - arbitrary firmware bytes, verified
 	esac
 	[ $(( ${#hx} % 2 )) -eq 0 ] || die "hex bytes need an even number of digits: $hx"
 	refuse_fs_part "$part"
-	# No S-OFF gate on purpose: this is the command that locates secure_flag and
-	# tamper_flag on a phone that is still S-ON - finding the offset is what
-	# `soff` needs first.  `any` also skips targets.conf, because a model being
-	# ported to has no section yet and the partition and offset are arguments.
-	# What replaces the gate is the read-back inside write_hex: a write the card
-	# refused shows up as a mismatch instead of a silent success.
+	# No S-OFF gate: an hboot older than 3.19 never arms the write protection, and
+	# between the power cut inside `soff` and the secure-flag write the phone is
+	# still S-ON with the protection already gone - gating on Security state would
+	# refuse exactly the moments a probe can land.  `any` also skips targets.conf,
+	# because a model being ported to has no section yet and the partition and the
+	# offset are arguments.  Whether the bytes land is the card's call: on a
+	# normally booted S-ON phone they do not, and the read-back inside write_hex
+	# reports that as a mismatch instead of a success.
 	require_android any
 	say "== state before =="
 	print_state

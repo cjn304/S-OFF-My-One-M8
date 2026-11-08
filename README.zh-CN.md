@@ -45,7 +45,7 @@ scripts/stool.sh restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 
 ## 命令和期望输出
 
-`scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 Security 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure_flag 0` 本来就是改 Security 状态本身，这几条不预先要求 S-OFF；`set secure_flag 0` 仍会先探测写保护，真还有保护就拒绝。`write` 正好相反，它不查 Security 状态：这条命令就是用来在还没 S-OFF 的机器上找 `secure_flag`、`tamper_flag` 的偏移的，先要求 S-OFF 等于把它的用途否掉。也不要求 `targets.conf` 里有对应的一节——移植的新机型本来就没有，分区和偏移都由参数给出。它靠回读把关：写保护还在时写不进去，回读会失败，而不是报成功。
+`scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 Security 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure_flag 0` 本来就是改 Security 状态本身，这几条不预先要求 S-OFF；`set secure_flag 0` 仍会先探测写保护，真还有保护就拒绝。`write` 正好相反，它不查 Security 状态：hboot 3.19 以前的机器在 S-ON 下就没设保护；`soff` 掉电那一步之后、`secure_flag` 还没写的时候，机器也仍然是 S-ON 而保护已经没了。这两种时候写是能落地的，按 Security 状态一刀切会把它们挡在门外。它也不要求 `targets.conf` 里有对应的一节——分区和偏移都是参数。写保护还在时它写不进去，回读会失败，这是有意的信号，不是偏移错了。
 
 ```sh
 scripts/stool.sh status                  # Security 状态 + 其他参数（Android 或 fastboot 都行）
@@ -466,7 +466,18 @@ od -An -v -tx1 backup/*.mfg.img | tr -d ' \n' \
                                                     # 32768        -> 0x4000
 ```
 
-这两条对着 M8 的 `targets.conf` 跑一遍，得到的正是 `cid = board_info:0x14:8:ascii` 和 `mid = mfg:0x4000:18:utf16le` 里的偏移。搜到之后再用 `stool.sh write` 写探针、读回，确认这个位置真的按你理解的方式读写。
+这两条对着 M8 的 `targets.conf` 跑一遍，得到的正是 `cid = board_info:0x14:8:ascii` 和 `mid = mfg:0x4000:18:utf16le` 里的偏移。
+
+搜不出唯一答案的字段，靠**两份状态不同的镜像做差**，同样不写设备——`tamper_flag` 只有 0 和 4 两个值，一个 23 MB 的分区里 `04000000` 有成千上万个，搜不出结果，做差可以：
+
+```sh
+cmp -l backup/<改动前>.pg1fs.img backup/<改动后>.pg1fs.img | head
+# 第 1 列是从 1 数的字节位置，减一就是偏移；第 2、3 列是两份里的值，八进制
+```
+
+`secure_flag` 就是这么确认的：S-ON 时 dump 一份，`soff` 之后再 dump 一份，`03` 变 `00` 的那 4 个字节就是它；跟着一起变的另 4 个字节是 `bl_magic`（`oem lock` / `unlock` 前后各拍一次能单独看它）。
+
+**写探针是能写之后的事，不是定位的第一步。** 一台正常开机的 S-ON 机器上，bootloader 在 eMMC 这一级保护着固件分区，`pg1fs` 上实测直接回 `card status 0x400d00`：`dd` 报成功，字节落不下去，回读必然不一致（[工作原理](#工作原理) 第 1 节）。所以定位阶段全是只读操作——搜、做差。`stool.sh write` 用在写真的能落地的时候：hboot 3.19 以前没设保护的机器，或者已经 S-OFF、或者掉电清掉保护之后，拿它把候选值写一遍读回，作为最后一道确认。
 
 | 字段 | 键 | M8 上的位置 | M8 上的偏移与宽度 | 怎么定位的 |
 |---|---|---|---|---|
@@ -480,10 +491,10 @@ od -An -v -tx1 backup/*.mfg.img | tr -d ' \n' \
 
 `screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl_partition` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
 
-换构建时这套流程要重走一遍——找候选位置、写探针值、读回——两条规矩：
+换构建时这套流程要重走一遍——搜、做差、能写时再确认——两条规矩：
 
 - 搜设备已经告诉你的东西（`cidnum`、`modelid`、hboot 那行状态），不要猜偏移；同一个值回头还能验证你找到的位置。
-- 写探针、刷盘、丢缓存、回读已经合成一条命令：
+- 最后那步确认（写、刷盘、丢缓存、回读）是一条命令：
 
   ```sh
   scripts/stool.sh write pg1fs 0x8400 00000000
