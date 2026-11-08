@@ -187,7 +187,7 @@ scripts/prepare.sh /d/kernel-src/kernel
 - 别用 RUU 里的 `boot_signed.img`：它前面多 256 字节签名头，boot header 会从错的偏移读。要的是分区 dump，`backup boot` 给的就是。
 - 内核是 zImage 时，压缩体前面还有一段自解压 stub，gzip 不在偏移 0。`extract_config.py` 按魔数找，lz4、lzo、lzma 会明确报出来让你换工具。
 - `CONFIG_LOCALVERSION` 从 `uname -r` 推：`3.4.0-perf-gXXXXXXX` 的后半截填进去，同时关掉 `LOCALVERSION_AUTO`，否则打过补丁的树会被追加 `-dirty`。它不是加载条件（下面解释），只是让 `.ko` 里的串和手机一致、便于核对。
-- `addr.h` 与源码树无关：它是手机正在跑的那个内核的属性，换哪版树都从手机重读。所以它在这一步，而不是编译前手工做。
+- `addr.h` 与源码树无关：它是手机正在跑的那个内核的属性，换哪版树都从手机重读，所以它在这一步，而不是编译前手工做。树已经配好、只想刷新这几个数时，单独跑 `scripts/gen_addr.sh` 就够了——它就是这一步。
 - 手机要在正常启动的状态下跑。boot 分区在上次开机之后被刷过的话，取到的配置和正在跑的符号不是同一个内核。
 
 `--force` 只放开第 5 步的阈值。`ADB`、`CROSS`、`MAKE` 三个环境变量分别指定 adb、工具链前缀和 make 程序。MSYS2 上先做完第 3 节那两条 patch 再跑，`oldconfig` 会先编 `fixdep`。
@@ -347,7 +347,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 * `TARGET_VREG` 和 `TARGET_MMC_DEV` 仍是 `8941_l20` 和 `msm_sdcc.1`。这两个都是板级字符串，不是驱动名：`board-8974.c` 把 `sdhci-msm` 驱动注册的设备命名为 `msm_sdcc.1`，轨名则来自 `msm-pm8x41-rpm-regulator.dtsi`。
 * 安全记录结构不变：pg1fs 0x8400 处的 `{u32 flag; char magic[4]}`，S-ON 时前四字节是 `03 00 00 00`；紧跟的四字节是 bootloader 锁状态 magic，只有解锁时才是 `HTCU`。写之前先核对这八个字节。
-* 整个工作就是重跑 `scripts/gen_addr.sh` 再取一次 `module_layout` 的 crc。
+* 内核侧只有一件事：重跑 `scripts/prepare.sh`，它重写 `addr.h`（五个地址加 crc）并再比一次 `vermagic`。只有树已经配好、又只想刷新地址时，才单独跑 `scripts/gen_addr.sh`——它就是 prepare 的第 3 步。
 
 **C. 驱动层要重做的：** 如 One M9（msm8994）、One M8s（msm8939）、Desire 816 / 610（msm8928 / msm8926），都落在另一层驱动上。思路照样成立，但有四件事同时变，而且每一件都能让模块“加载成功、然后做错事”：
 

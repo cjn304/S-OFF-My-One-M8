@@ -334,7 +334,9 @@ Things that are easy to get wrong:
   to make the string inside the `.ko` match the phone when you read it.
 - `addr.h` has nothing to do with the tree: it describes the kernel the phone is
   running right now, so it is re-read from the device whichever tree you use.
-  That is why it happens here instead of by hand before the build.
+  That is why it happens here instead of by hand before the build.  When the tree
+  is already configured and you only want the numbers refreshed, `scripts/gen_addr.sh`
+  on its own is enough - it is exactly this step.
 - Run it while the phone boots normally. If boot was flashed after the last
   boot, the config you get and the symbols you read belong to different kernels.
 
@@ -597,7 +599,10 @@ re-checking:
   0x8400, `03 00 00 00` in the first four on an S-ON device. The four after it
   are the bootloader lock magic, `HTCU` only while the bootloader is unlocked.
   Check those eight bytes before writing anything.
-* `scripts/gen_addr.sh` plus a fresh `module_layout` crc is the whole job.
+* On the kernel side there is one job: re-run `scripts/prepare.sh`, which rewrites
+  `addr.h` (five addresses plus the crc) and compares `vermagic` again.  Run
+  `scripts/gen_addr.sh` on its own only when the tree is already configured and
+  you just want the numbers refreshed - it is step 3 of prepare.
 
 **C. Driver layer must be redone:** e.g. One M9 (msm8994), One M8s (msm8939),
 Desire 816 / 610 (msm8928 / msm8926) - all on a different driver layer. The idea
