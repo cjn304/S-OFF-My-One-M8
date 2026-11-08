@@ -7,8 +7,10 @@
 .*.cmd
 .tmp_versions/
 
-# generated per-device, never commit: it contains one kernel build's addresses
+# generated per-device, never commit: one kernel build's addresses, and the
+# board strings from targets.conf
 kmod/addr.h
+kmod/board.h
 
 # host tool binary
 tools/mmc_cmd

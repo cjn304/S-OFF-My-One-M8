@@ -29,20 +29,16 @@
 #include <linux/mmc/sdhci.h>
 
 #include "addr.h"
+#include "board.h"
 
 #ifndef STAGE
 #define STAGE 3
 #endif
 
-/* PMIC rail that supplies eMMC VCC on the M8 (PM8941 LDO20). */
-#ifndef TARGET_VREG
-#define TARGET_VREG "8941_l20"
-#endif
-
-/* Platform device of the eMMC host controller (sdhci-msm). */
-#ifndef TARGET_MMC_DEV
-#define TARGET_MMC_DEV "msm_sdcc.1"
-#endif
+/* TARGET_VREG (the PMIC rail feeding eMMC VCC) and TARGET_MMC_DEV (the
+ * platform device of the host controller) come from board.h, which prepare.sh
+ * generates from the matching targets.conf section.  Both are board data: see
+ * the comments there. */
 
 /*
  * The kernel refuses to load a module built with CONFIG_MODVERSIONS unless the

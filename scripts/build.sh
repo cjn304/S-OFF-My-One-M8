@@ -26,6 +26,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 	echo "kmod/addr.h is missing - run scripts/prepare.sh first (it calls gen_addr.sh)" >&2
 	exit 1
 }
+[ -f "$ROOT/kmod/board.h" ] || {
+	echo "kmod/board.h is missing - run scripts/prepare.sh first (it writes it from targets.conf)" >&2
+	exit 1
+}
 grep -q '0x00000000UL' "$ROOT/kmod/addr.h" && {
 	echo "kmod/addr.h still has placeholder addresses" >&2
 	exit 1

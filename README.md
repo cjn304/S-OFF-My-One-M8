@@ -287,7 +287,7 @@ One command, six steps, each one printed:
 |---|---|---|
 | 1 | `stool.sh backup boot` takes the boot partition | adb or root is not working, or the phone is in recovery |
 | 2 | digs the compiled-in `.config` out of the image | the kernel was built without `CONFIG_IKCONFIG`, so the image holds none |
-| 3 | writes the five addresses and the `module_layout` crc into `kmod/addr.h` | `kptr_restrict` is not 0, so kallsyms reads as zeros |
+| 3 | writes the five addresses and the `module_layout` crc into `kmod/addr.h`, and `kmod/board.h` from `targets.conf` | `kptr_restrict` is not 0, or `targets.conf` has no section for this layout |
 | 4 | computes the vermagic flags from the config and compares them with a stock module | the config is not from this phone's kernel |
 | 5 | overwrites `kernel/.config`, runs `oldconfig`, counts new symbols | the tree is too far from this build (over 20 needs `--force`) |
 | 6 | `modules_prepare`, then checks `utsrelease.h` | the toolchain - see the next section |
@@ -368,8 +368,8 @@ does not stop the load (that half is skipped, as above), but it means
 
 ### 3. Build
 
-`build.sh` reads `kmod/addr.h`, which step 3 of the previous section wrote; without
-it the script stops. It does not read a partition, and it does not talk to the
+`build.sh` reads `kmod/addr.h` and `kmod/board.h`, both written by step 3 of the
+previous section; without them the script stops. It does not read a partition, and it does not talk to the
 phone.
 
 ```sh
@@ -541,7 +541,8 @@ re-flashed with the Dev firmware, which is why both builds appear above.
 Two things have to match when moving to another device, and they fail
 independently: the kernel side (struct layouts, symbol addresses) and the model
 side (rail name, device name, offsets, partition names). The regulator name and
-MMC platform device are compile-time parameters in `kmod/pwrsq_impl.h`.
+MMC platform device are `vreg` and `mmc_dev` in `targets.conf`; `prepare.sh` copies
+them into `kmod/board.h`, which the module is built against.
 
 Porting falls into four cases, A to D, ordered by how much has to be redone.
 None of them was tested here.
@@ -578,9 +579,10 @@ One E8, Butterfly 2, One mini 2 - all off the same HTC 3.4 tree. The mechanism,
 the structures and the record layout hold; only the board-level items need
 re-checking:
 
-* `TARGET_VREG` and `TARGET_MMC_DEV` stay `8941_l20` and `msm_sdcc.1`. Both are
-  board-level **data**, not driver names, which is why searching the driver
-  sources will not find them:
+* `vreg` and `mmc_dev` stay `8941_l20` and `msm_sdcc.1`. Both are board-level
+  **data**, not driver names, which is why searching the driver sources will not
+  find them; another model is an edit to these two lines plus a re-run of
+  `prepare.sh`, not a change to the C:
   * the rail is `regulator-name = "8941_l20"` in
     `arch/arm/boot/dts/msm-pm8x41-rpm-regulator.dtsi` (`8941` is the PM8941,
     `l20` is LDO20); the driver itself is the generic `qcom,rpm-regulator-smd`.
@@ -702,6 +704,7 @@ tree"; this is only what the output looks like:
 
 == 3/6 addr.h ==
 crc 0x7d779921UL
+board.h  vreg=8941_l20 mmc_dev=msm_sdcc.1
 
 == 4/6 vermagic ==
   config : SMP preempt mod_unload modversions ARMv7

@@ -165,7 +165,7 @@ scripts/prepare.sh /d/kernel-src/kernel
 |---|---|---|
 | 1 | `stool.sh backup boot` 取下 boot 分区 | adb 或 root 不通，或者手机在 recovery |
 | 2 | 从镜像里挖出编译进内核的 `.config` | 内核没开 `CONFIG_IKCONFIG`，镜像里就没有配置 |
-| 3 | 五个符号地址加 `module_layout` crc，写进 `kmod/addr.h` | `kptr_restrict` 不为 0，kallsyms 读出来全是零 |
+| 3 | 五个符号地址加 `module_layout` crc 写进 `kmod/addr.h`；按 `targets.conf` 生成 `kmod/board.h` | `kptr_restrict` 不为 0，或者 `targets.conf` 里没有对应的一节 |
 | 4 | 用配置算出 vermagic 标志位，和手机上的原厂模块逐字比 | 拿到的配置不是这台机内核的 |
 | 5 | 覆盖 `kernel/.config`，`oldconfig`，数新符号 | 树离这个构建太远（超过 20 个要 `--force`） |
 | 6 | `modules_prepare`，核对 `utsrelease.h` | 工具链，见下一节 |
@@ -205,7 +205,7 @@ scripts/prepare.sh /d/kernel-src/kernel
 
 ### 3. 编译
 
-`build.sh` 要读 `kmod/addr.h`（上一节第 3 步写出来的），缺了直接停；它不会去读分区，也不会去读手机。
+`build.sh` 要读 `kmod/addr.h` 和 `kmod/board.h`，两个都是上一节第 3 步写出来的；缺了直接停，它不会去读分区，也不会去读手机。
 
 ```sh
 scripts/build.sh /path/to/kernel-tree
@@ -324,7 +324,7 @@ done
 
 参考机 MID / CID 后来改成 `0P6B12000` / `11111111` 并刷了 Dev 固件，所以上面列了两个构建。
 
-换机型时有两件事必须同时对上，而且它们会各自独立地失败：内核侧（结构体布局、符号地址）和机型侧（供电轨名、设备名、偏移、分区名）。稳压器名字和 MMC 平台设备名是 `kmod/pwrsq_impl.h` 里的编译期参数。
+换机型时有两件事必须同时对上，而且它们会各自独立地失败：内核侧（结构体布局、符号地址）和机型侧（供电轨名、设备名、偏移、分区名）。稳压器名字和 MMC 平台设备名是 `targets.conf` 里的两项（`vreg`、`mmc_dev`），`prepare.sh` 把它们写进 `kmod/board.h`，再编进模块。
 
 移植按要重做的量分四种情况，A 到 D，未实测。
 
@@ -345,7 +345,7 @@ adb shell 'su -c "chmod 755 /data/local/tmp/mmc_cmd; /data/local/tmp/mmc_cmd wp"
 
 **B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
-* `TARGET_VREG` 和 `TARGET_MMC_DEV` 仍是 `8941_l20` 和 `msm_sdcc.1`。两个都是板级**数据**，不是驱动名，所以查驱动源码找不到它们：
+* `vreg` 和 `mmc_dev` 仍是 `8941_l20` 和 `msm_sdcc.1`。两项都是板级**数据**，不是驱动名，所以查驱动源码找不到它们；换机型改 `targets.conf` 里这两行、重跑 `prepare.sh` 就行，不用动 C 源码：
   * 轨名写在 `arch/arm/boot/dts/msm-pm8x41-rpm-regulator.dtsi` 的 `regulator-name = "8941_l20"` 里（`8941` 是 PM8941，`l20` 是 LDO20），驱动本身是通用的 `qcom,rpm-regulator-smd`。
   * `msm_sdcc.1` 是**平台设备**的名字，来自 `board-8974.c` 的 `OF_DEV_AUXDATA("qcom,sdhci-msm", 0xF9824900, "msm_sdcc.1", NULL)`；`drivers/of/platform.c` 建平台设备时把 `auxdata->name` 当 `bus_id`。驱动自己叫 `sdhci_msm`，靠 `compatible` 匹配，和这个名字无关——沿用它只是为了让 clock、regulator 和老代码还能按名字找到这块控制器。`sdhci-msm` 随后 `devm_regulator_get(dev, "vdd")`，consumer 就记成了 `msm_sdcc.1`，也就是诊断模块打印的那一行。
   * 在目标机上核这两个值，看的是 `/sys/bus/platform/devices/` 和 `/sys/class/regulator/*/name`，不是驱动源码。
@@ -414,6 +414,7 @@ tamper flag 0           pg2fs @ 0x511804
 
 == 3/6 addr.h ==
 crc 0x7d779921UL
+board.h  vreg=8941_l20 mmc_dev=msm_sdcc.1
 
 == 4/6 vermagic ==
   config : SMP preempt mod_unload modversions ARMv7
