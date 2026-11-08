@@ -65,7 +65,7 @@ scripts/stool.sh nowarn                  # 抹掉 hboot 里六行开发警告红
 scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 targets.conf
 ```
 
-每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一种布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[4. 参数偏移](#4-参数偏移)。
+每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一种布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[5. 参数偏移](#5-参数偏移)。
 
 没有整份备份是自动做的：`backup` 写出 `backup/<序列号>-<时间戳>.{txt,img}`（四个整分区，外加一份等于 `status` 输出、末尾附还原命令的 txt），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
@@ -208,24 +208,63 @@ scripts/prepare.sh /d/kernel-src/kernel
 
 第三行每次重读，永远和当前内核一致——`addr.h` 在 `.gitignore` 里，本来就不该跨设备提交。`A_MODULE_LAYOUT_CRC` 读自原厂模块的 `__versions`（`scripts/get_module_layout_crc.py`），那是 genksyms 给 `module_layout` 算的 crc，猜不出来。
 
-第二行的真正验收要编完才能做，也是唯一能证明偏移对得上的办法：
-
-```sh
-scripts/build.sh /path/to/kernel-tree
-adb push kmod/pwrsq_diag.ko //data/local/tmp/
-adb shell 'su -c "dmesg -c >/dev/null; insmod /data/local/tmp/pwrsq_diag.ko; sleep 1; dmesg | grep pwrsq"'
-adb shell 'su -c "rmmod pwrsq_diag"'
-```
-
-看到 `name=8941_l20` 才算过。它一次用上五个地址，以及 `r->rdev`、`rdev->desc->ops`、`consumer_list`、`d->kobj.name`、`drvdata`、`sh->mmc` 这些偏移。被 SELinux 拒的话先 `setenforce 0` 再试一次，只影响这次开机。
+第二行的真正验收要编完才能做，见 [3. 编译](#3-编译) 末尾的诊断模块：只有 `name=8941_l20` 才算过。
 
 失败就换树，不要凑合：树差得远时 `oldconfig` 给新符号塞默认值，编出来的结构体可能少字段，这种错 `insmod` 阶段看不出来，要到 `regulator_get` 或写 `ops` 时才崩。诊断模块是断电前最后一次便宜的检查。
 
 `prepare.sh` 第 6 步会顺带核 `UTS_RELEASE` 和 `uname -r` 是否一致。不一致也不影响加载（同上，那半截被跳过），但说明 `CONFIG_LOCALVERSION` 没落进配置。
 
-### 3. 工具链的五个坑
+### 3. 编译
 
-2016 年的内核 + 现代工具链 + MSYS2，会撞到五件事，补丁都在 `kernel-patches/`。
+```sh
+scripts/build.sh /path/to/kernel-tree
+# Windows/MSYS2 上必须传 MSYS 路径（/d/kernel-src/kernel），不能是 D:/...
+# 因为 kbuild 把 M= 当 make 目标传，盘符里的冒号会被当成目标分隔符。
+```
+
+脚本会打印每个 `.ko` 的未定义符号，必须是空的：
+
+```
+pwrsq_diag: (no undefined symbols)
+pwrsq_off: (no undefined symbols)
+pwrsq_on: (no undefined symbols)
+```
+
+那里出现的任何符号，内核都会要求对应的版本 crc，加载时报 `no symbol version for <sym>` 或 `disagrees about version of symbol <sym>`。
+
+推到手机之前先自检：
+
+```sh
+readelf -S kmod/pwrsq_on.ko | grep __versions    # 64 字节，非空
+strings kmod/pwrsq_on.ko | grep vermagic=
+nm -u kmod/pwrsq_on.ko                           # 什么都不输出
+```
+
+`__versions` 必须正好有一条（`module_layout`，整段 64 字节）。如果是空的，说明这个段没进 `.ko`：检查 `pwrsq_impl.h` 里 `section("__versions"), used` 的属性还在，以及你看的是不是刚编出来的模块。
+
+`build.sh` 不管用户态那个小工具；`tools/mmc_cmd` 也没有入库，它是一个静态链接的 ARM 可执行文件：
+
+```sh
+make -C tools CROSS=arm-none-linux-gnueabihf-
+```
+
+`soff` 会把它放进 `/dev`（tmpfs）并以 root 运行：`adb push` 写不了 `/dev`，所以先落到 `/data/local/tmp`，再由 root 在 eMMC 还在的时候拷过去。没有它，`soff` 会在动手机之前停下：写保护检查是唯一能证明断电生效的依据。
+
+#### 验收：诊断模块
+
+这是唯一能证明结构体偏移对得上的办法：
+
+```sh
+adb push kmod/pwrsq_diag.ko //data/local/tmp/
+adb shell 'su -c "dmesg -c >/dev/null; insmod /data/local/tmp/pwrsq_diag.ko; sleep 1; dmesg | grep pwrsq"'
+adb shell 'su -c "rmmod pwrsq_diag"'
+```
+
+看到 `name=8941_l20` 才算过。它一次用上五个地址，以及 `r->rdev`、`rdev->desc->ops`、`consumer_list`、`d->kobj.name`、`drvdata`、`sh->mmc` 这些偏移。被 SELinux 拒的话先 `setenforce 0` 再试一次，只影响这次开机——这也是断电前最后一次便宜的检查。
+
+### 4. 工具链的五个坑
+
+2016 年的内核 + 现代工具链 + MSYS2，会撞到五件事，补丁都在 `kernel-patches/`。`prepare.sh` 的第 5、6 步或者上一节的编译报错时，先来这里对号。
 
 | 现象 | 处理 |
 |---|---|
@@ -245,7 +284,7 @@ HTC 发的是 tar 包，没有 `.git`，所以用 `patch -p1` 而不是 `git app
 
 wrapper 之所以会介入，是因为顶层 Makefile 写了 `CC = $(srctree)/scripts/gcc-wrapper.py $(REAL_CC)`；命令行传 `CC=<cross>gcc` 就盖掉了。在 Linux 上用老工具链时这些都不需要，fixdep 那个补丁依旧无害。
 
-### 4. 参数偏移
+### 5. 参数偏移
 
 `kmod/addr.h` 管的是内核符号；参数偏移也不由任何脚本生成。它们跟着分区布局走，所以放在 `targets.conf` 里。
 
@@ -285,42 +324,6 @@ done
 - 搜设备已经告诉你的东西（`cidnum`、`modelid`、hboot 那行状态），不要猜偏移；同一个值回头还能验证你找到的位置。
 - 每次写完先 `sync` + `drop_caches` 再回读。写保护还在时，写入“成功”只是更新了页缓存，这也是 `write_hex` 坚持回读而不是相信 `dd` 的原因。
 
-### 5. 编译
-
-```sh
-scripts/build.sh /path/to/kernel-tree
-# Windows/MSYS2 上必须传 MSYS 路径（/d/kernel-src/kernel），不能是 D:/...
-# 因为 kbuild 把 M= 当 make 目标传，盘符里的冒号会被当成目标分隔符。
-```
-
-脚本会打印每个 `.ko` 的未定义符号，必须是空的：
-
-```
-pwrsq_diag: (no undefined symbols)
-pwrsq_off: (no undefined symbols)
-pwrsq_on: (no undefined symbols)
-```
-
-那里出现的任何符号，内核都会要求对应的版本 crc，加载时报 `no symbol version for <sym>` 或 `disagrees about version of symbol <sym>`。
-
-推到手机之前先自检：
-
-```sh
-readelf -S kmod/pwrsq_on.ko | grep __versions    # 64 字节，非空
-strings kmod/pwrsq_on.ko | grep vermagic=
-nm -u kmod/pwrsq_on.ko                           # 什么都不输出
-```
-
-`__versions` 必须正好有一条（`module_layout`，整段 64 字节）。如果是空的，说明这个段没进 `.ko`：检查 `pwrsq_impl.h` 里 `section("__versions"), used` 的属性还在，以及你看的是不是刚编出来的模块。
-
-`build.sh` 不管用户态那个小工具；`tools/mmc_cmd` 也没有入库，它是一个静态链接的 ARM 可执行文件：
-
-```sh
-make -C tools CROSS=arm-none-linux-gnueabihf-
-```
-
-`soff` 会把它放进 `/dev`（tmpfs）并以 root 运行：`adb push` 写不了 `/dev`，所以先落到 `/data/local/tmp`，再由 root 在 eMMC 还在的时候拷过去。没有它，`soff` 会在动手机之前停下：写保护检查是唯一能证明断电生效的依据。
-
 ### 6. 移植
 
 参考构建是：
@@ -341,7 +344,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 移植按要重做的量分四种情况，A 到 D，未实测。
 
-**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够：按[4. 参数偏移](#4-参数偏移)的办法找出分区、偏移和记录形状，填进 `targets.conf` 的一项，`stool.sh set secure_flag 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
+**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够：按[5. 参数偏移](#5-参数偏移)的办法找出分区、偏移和记录形状，填进 `targets.conf` 的一项，`stool.sh set secure_flag 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
 
 **B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
@@ -526,7 +529,7 @@ tamper flag 0           pg2fs @ 0x511804
 
 这是刷了 1540、改过 CID/MID、但仍是 S-ON 的机器，`soff` 要的就是这个状态。
 
-`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[4. 参数偏移](#4-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Security: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Security: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper_flag` 那个 u32 决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
+`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[5. 参数偏移](#5-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Security: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Security: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper_flag` 那个 u32 决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `gen_addr.sh`
 
