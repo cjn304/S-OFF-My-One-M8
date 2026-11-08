@@ -445,7 +445,7 @@ error: no section in targets.conf matches this device.
 
 把 `observed:` 后面那串（从 `hboot:8192` 开始）填进新 `[name]` 项的 `layout =`。偏移是另一个问题。
 
-**偏移的权威来源是 hboot。** 这些数没有一个是猜的，全都是 hboot 自己读的：它读 pg1fs 决定 Security，读那 4 字节 magic 决定 `LOCKED` / `UNLOCKED`，读 tamper 决定 `Software status` 打哪一句，读 `board_info` / `mfg` 回答 `getinfo`，读 `sp1` 画第一屏。所以换机型时的正路是把目标机的 hboot（`aboot`）镜像反汇编，看它读什么：
+**偏移的权威来源是 hboot。** 这些数没有一个是猜的，全都是 hboot 自己读的：它读 pg1fs 决定 Security，读那 4 字节 magic 决定 `LOCKED` / `UNLOCKED`，读 tamper 决定 `Software status` 打哪一句，读 `board_info` / `mfg` 回答 `getinfo`，读 `sp1` 画第一屏。所以换机型时的正路是把目标机的 `hboot`（`aboot`）镜像反汇编，看它读什么：
 
 ```sh
 scripts/stool.sh backup hboot          # 或者从对应 RUU 里取 aboot
@@ -487,29 +487,9 @@ od -An -v -tx1 backup/*.mfg.img | tr -d ' \n' \
 
 这两条对着 M8 的 `targets.conf` 跑一遍，得到的正是 `cid = board_info:0x14:8:ascii` 和 `mid = mfg:0x4000:18:utf16le`。4 字节的数值字段搜不出来：`tamper_flag` 只有 0 和 4，一个 23 MB 的分区里 `04000000` 有成千上万个。
 
-做差，只对**不需要先知道偏移就能改**的状态管用：
-
-```sh
-cmp -l backup/<改动前>.pg2fs.img backup/<改动后>.pg2fs.img | head
-# 第 1 列是从 1 数的字节位置，减一就是偏移；第 2、3 列是两份里的值，八进制
-```
-
-`bl_magic` 属于这一类：`fastboot oem lock` 是 hboot 自己动手，锁上之后再 dump 一次，`HTCU` 变成 `00000000` 的那 4 个字节就是它，我们一个字节都没写。`secure_flag` 不属于：改它正是 `soff` 要做的事，不先知道偏移就改不动状态，所以「S-ON 拍一份、S-OFF 再拍一份」找它是循环论证，那种做差只能当**事后校验**。绕开反汇编交叉核对它，只能借 `bl_magic`：记录是 `{u32 flag; char magic[4]}`（S-OFF 的一份 `pg1fs` 在 0x8400 实测就是 `00 00 00 00 48 54 43 55`），flag 是 magic 前面那 4 字节，值再用 `readsecureflag` 对一次（3 ↔ `03 00 00 00`）。
-
 **写探针是能写之后的事，不是定位的第一步。** 一台正常开机的 S-ON 机器上，bootloader 在 eMMC 这一级保护着固件分区，`pg1fs` 上实测直接回 `card status 0x400d00`：`dd` 报成功，字节落不下去，回读必然不一致（[工作原理](#工作原理) 第 1 节）。`stool.sh write` 用在写真的能落地的时候：hboot 3.19 以前没设保护的机器，或者已经 S-OFF、或者掉电清掉保护之后，拿它把候选值写一遍读回，作为最后一道确认。
 
 `screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl_partition` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
-
-换构建时这套流程要重走一遍——反汇编拿偏移、辅证交叉核对、能写时再确认：
-
-- 先去 hboot 里找锚点（`Set security flag 0`、`Software status`、`cidnum:`），再拿搜或做差核一遍；两条路指向同一个数才算定下来。
-- 最后那步确认（写、刷盘、丢缓存、回读）是一条命令：
-
-  ```sh
-  scripts/stool.sh write pg1fs 0x8400 00000000
-  ```
-
-  它内部就是 `write_hex`：把字节做成文件推上去 → `dd` 写 → `sync` + `echo 3 > /proc/sys/vm/drop_caches` → 读回逐字节比对，不一致直接失败。为什么非得这么绕：`dd` 只把字节写进页缓存；写保护还在时，eMMC 是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备——`write_hex` 末尾自己就带这一步回读（`verify_hex`），不用调用方记着。
 
 ### 5. 移植
 

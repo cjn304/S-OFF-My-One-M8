@@ -760,7 +760,7 @@ new `[name]` section. The offsets are a separate question.
 reads every one of them - pg1fs for the Security state, those four magic bytes for
 LOCKED/UNLOCKED, the tamper byte for which `Software status` line to draw,
 `board_info` and `mfg` for `getinfo`, `sp1` for the first screen. So on a new model
-the way to get them is to disassemble that phone's hboot (`aboot`) and read what
+the way to get them is to disassemble that phone's `hboot` (`aboot`) and read what
 it reads:
 
 ```sh
@@ -817,25 +817,6 @@ Run those against the M8 images and you land on exactly the offsets in
 A four-byte number does not search: `tamper_flag` is only 0 or 4, and a 23 MB
 partition holds thousands of `04000000`.
 
-Diffing works only for a state that can be changed **without already knowing the
-offset**:
-
-```sh
-cmp -l backup/<before>.pg2fs.img backup/<after>.pg2fs.img | head
-# column 1 is the byte position counting from 1; subtract one for the offset.
-# columns 2 and 3 are the two values, in octal.
-```
-
-`bl_magic` qualifies: `fastboot oem lock` is hboot doing the writing, so dump again
-after locking and the four bytes that went from `HTCU` to `00000000` are that
-field - we wrote nothing. `secure_flag` does not qualify: changing it is exactly
-what `soff` does, so dumping while S-ON and again after `soff` argues in a circle,
-and that diff is only an after-the-fact check. To cross-check it without a
-disassembler you have to go through `bl_magic`: the record is
-`{u32 flag; char magic[4]}` (an S-OFF `pg1fs` reads `00 00 00 00 48 54 43 55` at
-0x8400), so the flag is the four bytes before the magic, and `readsecureflag`
-confirms the value (3 <-> `03 00 00 00`).
-
 **A write probe belongs after writes start landing, not at the start.** On a phone
 booted normally into S-ON the bootloader protects the firmware partitions at the
 eMMC level, and `pg1fs` answers `card status 0x400d00`: `dd` reports success,
@@ -847,28 +828,6 @@ or after the power cut cleared it - the last confirmation, not the first step.
 `screen` is the only key without an offset: it sets the default WxH `splash`
 converts to, and `bl_partition` names the partition `nowarn` rewrites - `hboot`
 here, `aboot` on other models - and its size is what bounds the image.
-
-Two rules when redoing this on another build - disassemble for the offset, use the
-shortcuts to cross-check, write only once writes land:
-
-- find the anchor in hboot first (`Set security flag 0`, `Software status`, `cidnum:`),
-  then check it with a search or a diff; the offset is settled when both roads lead
-  to the same number.
-- the final confirmation (write, flush, drop the cache, read back) is one command:
-
-  ```sh
-  scripts/stool.sh write pg1fs 0x8400 00000000
-  ```
-
-  Inside it is `write_hex`: the bytes are pushed as a file, written with `dd`,
-  followed by `sync` + `echo 3 > /proc/sys/vm/drop_caches`, then read back and
-  compared byte for byte - a mismatch fails the command. Why the detour: `dd`
-  only puts the bytes in the page cache. With write protection still armed
-  the eMMC refuses at writeback (`card status 0x400d00`), and the read that
-  follows is served from that same dirty page - it looks like "write succeeded,
-  read matches" while nothing reached the flash. `sync` forces the writeback and
-  `drop_caches` makes the next read go to the device - `write_hex` ends with that
-  read-back itself, so no caller has to remember it.
 
 ### 5. Porting
 
