@@ -22,9 +22,6 @@ followed by writing the flag byte.
   Sunshine without unlocking BL works too, once S-OFF the BL is yours.
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
   (see [Windows toolchain](#windows-toolchain)).
-* Only when porting to a new model: a disassembler that can load a bare ARM32
-  image (Ghidra or IDA), and that model's hboot image. On the M8 the offsets are
-  already in `targets.conf`, so none of this is needed.
 
 ---
 

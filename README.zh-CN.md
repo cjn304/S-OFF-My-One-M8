@@ -14,7 +14,6 @@ hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规�
 
 * 备份数据并[解锁 BL](http://www.htcdev.com/bootloader/)。然后 root，或刷入自带 root 的固件。像 Sunshine 一样临时 root 可以不用解锁 BL，S-OFF 之后随便解锁。
 * 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows 工具链](#windows-工具链)）。
-* 只在移植到新机型时才需要：一个能加载裸 ARM32 镜像的反汇编器（Ghidra 或 IDA），以及那台机的 hboot 镜像。M8 的偏移已经在 `targets.conf` 里，用不到这些。
 
 ---
 
