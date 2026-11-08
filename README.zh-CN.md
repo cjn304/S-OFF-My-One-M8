@@ -85,29 +85,6 @@ M8 的 `backup` 写出这些文件：
 
 `restore` 比对文件名里的序列号：和当前机器不一致时直接拒绝，只给文件名时到 `backup/` 里找。
 
-### CID、MID 和刷机的关系
-
-MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。这两项都写在固件包的 `android-info.txt` 里，hboot 在 RUU 模式下解析 zip 时逐项比对。`set mid` 写 mfg 0x4000，`set cid` 写 board_info 0x14；CID 改成 `11111111`（SuperCID）在多数 hboot 上能放行任意 CID，但不是所有构建都认，而且固件层版本本身可能先把 RUU 挡在门外，见[从 4.18 刷 6.12 的 RUU](#从-418-刷-612-的-ruu)。各固件包的对应见这份[表格](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
-
-#### 从 4.18 刷 6.12 的 RUU
-
-港版 4.18.708.12（hboot `3aa067db`）直接跑 6.12.1540.4 的 RUU，界面在点 Start 后立刻报 Error 155，日志里的错误是：
-
-```text
-(bootloader) zip info parsing...
-FAILED (status read failed (Too many links))
-```
-
-这不是 MID 或 CID 不匹配。RUU 日志（`C:\RUU_log\RUU_*.log`）显示它只读了 `boot-mode`、`battery-status`、`version-main`，随后进入 RUU 模式发送 zip，失败点在 hboot 解析 zip 的位置。
-
-原因是 RUU exe 里的 `rom.zip` 是 HTC 的 large-zip 容器，htc_fastboot 发送前会打印 `found large-zip header`。4.18 这块 hboot 只认普通 zip，读到分块结构后直接重置 USB 端点，主机端看到的就是 `Too many links`。
-
-解法是先刷底包（`DevEdition_6.12.1540.4_+StockRecovery+boot.img_0p6bimg.zip`，约 53 MB，含 hboot），把 hboot 换到 `76df2b54`。
-
-`fastboot flash hboot hboot_signedbyaa.img` 会被 hboot 拒绝，报 `FAILED (remote: not allowed)`，FASTBOOT 和 RUU 模式下都一样。hboot 分区只接受 zip 流程，不接受裸写镜像。
-
-刷固件包会写 sbl1 和 tz，中断会砖。刷之前确认电量，刷的过程中不要动线。`backup hboot` 只在 hboot 还能进 bootloader 时有用，完全黑屏时它救不了。
-
 ### 警告红字
 
 六行开发警告是 hboot 在启动镜像签名校验失败时画出来的，校验覆盖 `boot` 和 `recovery` 两个分区，任一不符都会画。
@@ -140,6 +117,31 @@ FAILED (status read failed (Too many links))
 以前固定是 `stretch`，一张 1920×1080 的照片会被悄悄压成 1080×1920。现在默认 `contain`，因为"带黑边的开机图"比"被拉变形的 logo"是更小的错误。
 
 这个转换器检查的是容器不是内容：PNG 能不能读、色彩类型和位深支不支持、结果是不是正好 4,147,200 字节、写进去的字节读回是否一致。它没法告诉你图片是倒的、全黑、全白，或者分辨率太低糊成一片，这些只能你自己看。
+
+---
+
+## CID、MID 和刷机的关系
+
+MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。这两项都写在固件包的 `android-info.txt` 里，hboot 在 RUU 模式下解析 zip 时逐项比对。`set mid` 写 mfg 0x4000，`set cid` 写 board_info 0x14；CID 改成 `11111111`（SuperCID）在多数 hboot 上能放行任意 CID，但不是所有构建都认，而且固件层版本本身可能先把 RUU 挡在门外，见[从 4.18 刷 6.12 的 RUU](#从-418-刷-612-的-ruu)。各固件包的对应见这份[表格](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
+
+### 从 4.18 刷 6.12 的 RUU
+
+港版 4.18.708.12（hboot `3aa067db`）直接跑 6.12.1540.4 的 RUU，界面在点 Start 后立刻报 Error 155，日志里的错误是：
+
+```text
+(bootloader) zip info parsing...
+FAILED (status read failed (Too many links))
+```
+
+这不是 MID 或 CID 不匹配。RUU 日志（`C:\RUU_log\RUU_*.log`）显示它只读了 `boot-mode`、`battery-status`、`version-main`，随后进入 RUU 模式发送 zip，失败点在 hboot 解析 zip 的位置。
+
+原因是 RUU exe 里的 `rom.zip` 是 HTC 的 large-zip 容器，htc_fastboot 发送前会打印 `found large-zip header`。4.18 这块 hboot 只认普通 zip，读到分块结构后直接重置 USB 端点，主机端看到的就是 `Too many links`。
+
+解法是先刷底包（`DevEdition_6.12.1540.4_+StockRecovery+boot.img_0p6bimg.zip`，约 53 MB，含 hboot），把 hboot 换到 `76df2b54`。
+
+`fastboot flash hboot hboot_signedbyaa.img` 会被 hboot 拒绝，报 `FAILED (remote: not allowed)`，FASTBOOT 和 RUU 模式下都一样。hboot 分区只接受 zip 流程，不接受裸写镜像。
+
+刷固件包会写 sbl1 和 tz，中断会砖。刷之前确认电量，刷的过程中不要动线。`backup hboot` 只在 hboot 还能进 bootloader 时有用，完全黑屏时它救不了。
 
 ---
 
@@ -301,10 +303,10 @@ done
 
 `screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl_partition` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
 
-换构建时重复这套流程，有两条规矩：
+换构建时这套流程要重走一遍——找候选位置、写探针值、读回——两条规矩：
 
 - 搜设备已经告诉你的东西（`cidnum`、`modelid`、hboot 那行状态），不要猜偏移；同一个值回头还能验证你找到的位置。
-- 每次写完先 `sync` + `drop_caches` 再回读。写保护还在时，写入“成功”只是更新了页缓存，这也是 `write_hex` 坚持回读而不是相信 `dd` 的原因。
+- 每次写完先 `sync` + `drop_caches` 再回读。`dd` 写的是块设备的页缓存，`records out` 只说明字节进了内存；写保护还在时，卡是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备，所以 `write_hex` 写完必须跟一次 `verify_hex`，不能相信 `dd`。
 
 ### 6. 移植
 
