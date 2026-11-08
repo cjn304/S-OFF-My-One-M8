@@ -341,7 +341,7 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 移植按要重做的量分四种情况，A 到 D，未实测。
 
-**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下跑 `mmc_cmd wp`，位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够：按[5. 参数偏移](#5-参数偏移)的办法找出分区、偏移和记录形状，填进 `targets.conf` 的一项，`stool.sh set secure_flag 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
+**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护，先在 S-ON 下读一次位图：`adb shell 'su -c "/dev/mmc_cmd wp"'`（`mmc_cmd` 是 `make -C tools` 编出来的，`stool.sh` 会把它放进 `/dev`；自己跑就 `adb push tools/mmc_cmd //data/local/tmp/`，再 `su -c "/data/local/tmp/mmc_cmd wp"`）。位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够：按[5. 参数偏移](#5-参数偏移)的办法找出分区、偏移和记录形状，填进 `targets.conf` 的一项，`stool.sh set secure_flag 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
 
 **B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
@@ -734,7 +734,7 @@ Windows 上有四件事会咬人：
 $ fastboot oem readsecureflag
 (bootloader) secure_flag: 3
 
-$ mmc_cmd wp
+$ /dev/mmc_cmd wp
 bitmap: aa aa aa aa 2a aa aa aa      -> 10b = power-on
 ```
 
@@ -756,7 +756,7 @@ mmc0: mmc_reinit_card return 0
 **之后**
 
 ```
-$ mmc_cmd wp
+$ /dev/mmc_cmd wp
 bitmap: 00 00 00 00 00 00 00 00
   -> no write protection at all
 
@@ -768,7 +768,7 @@ $ fastboot oem readsecureflag
 (bootloader) security: off
 ```
 
-再冷启动两次，`readsecureflag` 和 `mmc_cmd wp` 依旧全是 0。
+再冷启动两次，`readsecureflag` 和 `/dev/mmc_cmd wp` 依旧全是 0。
 
 **分区其余部分的完整性。** `pg1fs[0x0000..0x1000]` 改动前后的 `md5`：
 

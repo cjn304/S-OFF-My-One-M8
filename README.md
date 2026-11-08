@@ -575,8 +575,11 @@ None of them was tested here.
 
 **A. hboot before 3.19:** e.g. One M7 (msm8960), One S (msm8260A),
 Sensation / XE (msm8260), Desire HD (msm8255), plus the B-tier devices that
-have had few system updates. They may not set write protection at all: run
-`mmc_cmd wp` while S-ON, and an all-zero bitmap means hboot never armed it. A
+have had few system updates. They may not set write protection at all: read the
+bitmap while the phone is still S-ON - `adb shell 'su -c "/dev/mmc_cmd wp"'` -
+and all zeroes mean hboot never armed it (`mmc_cmd` comes from `make -C tools`;
+`stool.sh` puts it in `/dev`, or push it yourself and run
+`/data/local/tmp/mmc_cmd wp`). A
 plain write is enough then, with neither the module nor the power cycle: derive
 the partition, the offset and the record shape as in
 [section 5](#5-parameter-offsets), put them in a `targets.conf` section, and
@@ -1214,7 +1217,7 @@ Trimmed captures from the reference device. Serial and IMEI removed.
 $ fastboot oem readsecureflag
 (bootloader) secure_flag: 3
 
-$ mmc_cmd wp
+$ /dev/mmc_cmd wp
 bitmap: aa aa aa aa 2a aa aa aa      -> 10b = power-on
 ```
 
@@ -1236,7 +1239,7 @@ mmc0: mmc_reinit_card return 0
 **After**
 
 ```
-$ mmc_cmd wp
+$ /dev/mmc_cmd wp
 bitmap: 00 00 00 00 00 00 00 00
   -> no write protection at all
 
@@ -1248,7 +1251,7 @@ $ fastboot oem readsecureflag
 (bootloader) security: off
 ```
 
-Two cold boots later both `readsecureflag` and `mmc_cmd wp` still report zero.
+Two cold boots later both `readsecureflag` and `/dev/mmc_cmd wp` still report zero.
 
 **Integrity of the rest of the partition.** `md5` of `pg1fs[0x0000..0x1000]`
 before and after:
