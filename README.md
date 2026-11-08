@@ -514,7 +514,7 @@ probe, read it back:
   same value then confirms what you found.
 - after every write, `sync` + `drop_caches` before reading back. `dd` writes
   into the block device's page cache, so `records out` only means the bytes
-  reached memory. With write protection still armed the card refuses at
+  reached memory. With write protection still armed the eMMC refuses at
   writeback (`card status 0x400d00`), and the read that follows is served from
   that same dirty page - it looks like "write succeeded, read matches" while
   nothing reached the flash. `sync` forces the writeback, `drop_caches` makes the

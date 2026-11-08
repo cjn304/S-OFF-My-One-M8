@@ -306,7 +306,7 @@ done
 换构建时这套流程要重走一遍——找候选位置、写探针值、读回——两条规矩：
 
 - 搜设备已经告诉你的东西（`cidnum`、`modelid`、hboot 那行状态），不要猜偏移；同一个值回头还能验证你找到的位置。
-- 每次写完先 `sync` + `drop_caches` 再回读。`dd` 写的是块设备的页缓存，`records out` 只说明字节进了内存；写保护还在时，卡是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备，所以 `write_hex` 写完必须跟一次 `verify_hex`，不能相信 `dd`。
+- 每次写完先 `sync` + `drop_caches` 再回读。`dd` 写的是块设备的页缓存，`records out` 只说明字节进了内存；写保护还在时，eMMC 是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备，所以 `write_hex` 写完必须跟一次 `verify_hex`，不能相信 `dd`。
 
 ### 6. 移植
 
@@ -673,7 +673,7 @@ eMMC 消失了，`mmcblk0*` 全没了，除了重启没有回头路。这就是�
 1. **拿到稳压器**：`regulator_get(NULL, "8941_l20")`。`struct regulator` 是 `drivers/regulator/core.c` 的私有结构，所以模块里复制了一份，用来取 `->rdev`。
 2. **直接调驱动 ops**：`rdev->desc->ops->disable(rdev)`，之后再 `->enable(rdev)`。这一步绕开了 `_regulator_enable()`，也就绕开了 `is_enabled()` 的短路。
 3. **找到 mmc_host**：遍历 `rdev->consumer_list`，挑出设备名为 `msm_sdcc.1` 的那一项，读它的 drvdata（`sdhci_pltfm_init()` 往这里存的就是 `sdhci_host`），取 `sdhci_host->mmc`。
-4. **请求重扫**：`mmc_detect_change(host, 0)` 调度 `mmc_rescan()`，重新走一遍 eMMC 的识别。
+4. **请求重扫**：`mmc_detect_change(host, 0)` 调度 `mmc_rescan()`，重新走一遍的识别流程。
 
 同一份源码编出三个变体：`diag`（stage 3，只读）、`off`（stage 1）、`on`（stage 2，先 `msleep(1500)` 让电放干净再上电）。
 
