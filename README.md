@@ -759,6 +759,24 @@ done
 the device. Images land in `backup/`, each checked against the length the
 phone reports.
 
+Two kinds of field to search for:
+
+```sh
+# ASCII: search the bytes; grep's offset is already a byte count
+grep -abo '11111111' backup/*.board_info.img        # 20:11111111   -> 0x14
+
+# UTF-16LE: turn the partition into a hex stream first; grep counts hex
+# characters, so halve the offset to get bytes
+od -An -v -tx1 backup/*.mfg.img | tr -d ' \n' \
+	| grep -bo '300050003600420031003200300030003000'
+                                                    # 32768        -> 0x4000
+```
+
+Run those against the M8 images and you land on exactly the offsets in
+`targets.conf` (`cid = board_info:0x14:8:ascii`, `mid = mfg:0x4000:18:utf16le`).
+Then write a probe with `stool.sh write` and read it back, to confirm the location
+behaves the way you think it does.
+
 | field | key | location on the M8 | offset and width on the M8 | how it was located |
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14, 8 bytes ASCII | the `cidnum` string `fastboot getvar all` prints |

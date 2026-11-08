@@ -453,6 +453,21 @@ done
 
 `backup` 只要分区名：名字和长度都读自设备，镜像落在 `backup/`，每个都按设备报的长度校验过。
 
+搜的时候分两种字段：
+
+```sh
+# ASCII：直接搜字节，grep 给的偏移就是字节数
+grep -abo '11111111' backup/*.board_info.img        # 20:11111111   -> 0x14
+
+# UTF-16LE：先把分区转成十六进制流再搜，
+# grep 的偏移是十六进制字符数，除以 2 才是字节数
+od -An -v -tx1 backup/*.mfg.img | tr -d ' \n' \
+	| grep -bo '300050003600420031003200300030003000'
+                                                    # 32768        -> 0x4000
+```
+
+这两条对着 M8 的 `targets.conf` 跑一遍，得到的正是 `cid = board_info:0x14:8:ascii` 和 `mid = mfg:0x4000:18:utf16le` 里的偏移。搜到之后再用 `stool.sh write` 写探针、读回，确认这个位置真的按你理解的方式读写。
+
 | 字段 | 键 | M8 上的位置 | M8 上的偏移与宽度 | 怎么定位的 |
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14，8 字节 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
