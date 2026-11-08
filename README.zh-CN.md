@@ -216,6 +216,8 @@ scripts/prepare.sh /d/kernel-src/kernel
 
 ### 3. 编译
 
+`build.sh` 要读 `kmod/addr.h`（上一节第 3 步写出来的），缺了直接停；它不会去读分区，也不会去读手机。
+
 ```sh
 scripts/build.sh /path/to/kernel-tree
 # Windows/MSYS2 上必须传 MSYS 路径（/d/kernel-src/kernel），不能是 D:/...
@@ -235,10 +237,12 @@ pwrsq_on: (no undefined symbols)
 推到手机之前先自检：
 
 ```sh
-readelf -S kmod/pwrsq_on.ko | grep __versions    # 64 字节，非空
-strings kmod/pwrsq_on.ko | grep vermagic=
-nm -u kmod/pwrsq_on.ko                           # 什么都不输出
+arm-none-linux-gnueabihf-readelf -S kmod/pwrsq_on.ko | grep __versions   # Size 那列 000040
+arm-none-linux-gnueabihf-strings  kmod/pwrsq_on.ko | grep vermagic=
+arm-none-linux-gnueabihf-nm -u    kmod/pwrsq_on.ko                      # 什么都不输出
 ```
+
+三条都带工具链前缀：Git Bash 和 MSYS2 里没有裸的 `readelf`、`nm`、`strings`，只有在 Linux 发行版上才是裸名字。用错会得到 `command not found`，而不是“没问题”。
 
 `__versions` 必须正好有一条（`module_layout`，整段 64 字节）。如果是空的，说明这个段没进 `.ko`：检查 `pwrsq_impl.h` 里 `section("__versions"), used` 的属性还在，以及你看的是不是刚编出来的模块。
 

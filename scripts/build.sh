@@ -18,7 +18,7 @@ CROSS=${2:-arm-none-linux-gnueabihf-}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 [ -f "$ROOT/kmod/addr.h" ] || {
-	echo "kmod/addr.h is missing - run scripts/gen_addr.sh first" >&2
+	echo "kmod/addr.h is missing - run scripts/prepare.sh first (it calls gen_addr.sh)" >&2
 	exit 1
 }
 grep -q '0x00000000UL' "$ROOT/kmod/addr.h" && {

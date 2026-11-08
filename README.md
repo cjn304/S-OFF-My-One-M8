@@ -389,6 +389,10 @@ does not stop the load (that half is skipped, as above), but it means
 
 ### 3. Build
 
+`build.sh` reads `kmod/addr.h`, which step 3 of the previous section wrote; without
+it the script stops. It does not read a partition, and it does not talk to the
+phone.
+
 ```sh
 scripts/build.sh /path/to/kernel-tree
 # On Windows/MSYS2 pass a MSYS path (/d/kernel-src/kernel), not D:/...
@@ -410,10 +414,14 @@ loading fails with `no symbol version for <sym>` or
 Sanity checks before pushing anything to the phone:
 
 ```sh
-readelf -S kmod/pwrsq_on.ko | grep __versions    # 64 bytes, non-empty
-strings kmod/pwrsq_on.ko | grep vermagic=
-nm -u kmod/pwrsq_on.ko                           # prints nothing
+arm-none-linux-gnueabihf-readelf -S kmod/pwrsq_on.ko | grep __versions   # Size 000040
+arm-none-linux-gnueabihf-strings  kmod/pwrsq_on.ko | grep vermagic=
+arm-none-linux-gnueabihf-nm -u    kmod/pwrsq_on.ko                      # prints nothing
 ```
+
+All three carry the toolchain prefix: Git Bash and MSYS2 have no bare `readelf`,
+`nm` or `strings` - only a Linux distribution does. Without the prefix you get
+`command not found` instead of a pass.
 
 `__versions` must contain exactly one entry (`module_layout`, 64 bytes in all).
 If it is empty, the section never made it into the `.ko`: check that
