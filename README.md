@@ -746,14 +746,6 @@ addr.h      /.../kmod/addr.h
 /path/to/repo/backup/HT495WM00193-20261104-031826.txt
 ```
 
-One line per partition on stderr, the txt path on stdout. The txt is written
-after all four dumps: one `# <stamp>` line (the same stamp as the filename), a
-blank line, then the `status` output and a `== restore ==` block listing only the
-partitions that landed. The whole set is
-about 143 MB and takes roughly a minute over USB. A partition that cannot be
-read gives `warning: could not dump <part>` and the run continues; a short image
-gives `<part>: expected N bytes, got M`.
-
 Name a partition and you get that one image instead, with no txt:
 
 ```sh
@@ -1254,24 +1246,6 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   after
 Identical, including the device-specific 4-byte field at `0x424`. Only the four
 bytes at `0x8400` differ, and of those only the lowest one (`03` -> `00`).
 
-**Re-checked 2026-11-08 on another `m8_ul` (kernel `3.4.0-perf-g708019f`).** The
-diagnostic module, built against a tree that `prepare.sh` had configured, loaded
-with:
-
-```
-pwrsq: init stage=3
-pwrsq: rdev=f0326c00 name=8941_l20 use_count=84
-pwrsq: consumer 'msm_sdcc.1'
-pwrsq: mmc_host=f0032000
-pwrsq: done
-```
-
-`name=8941_l20` is the pass condition: all five addresses resolved, and
-`r->rdev`, `rdev->desc->ops`, `consumer_list`, `d->kobj.name`, `drvdata` and
-`sh->mmc` all landed on the right fields. `use_count=84` is just how many
-consumers `msm_sdcc.1` had at the time and differs per boot. The module was
-removed with `rmmod` afterwards, and its file deleted from `/data/local/tmp`.
-
 ---
 
 ## Warnings
@@ -1298,10 +1272,10 @@ voided warranties. If you brick it, you own both halves.
 
 ## Credits
 
-Substantial parts of the code and prose here were written with AI assistance.
-Every address, offset, and verified claim was checked against a real device;
-what could not be tested is marked as such. The experiments, the failure
-analysis and the decisions about what to keep are human work.
+The code and prose here were written with AI assistance. Every address, offset,
+and verified claim was checked against a real device what could not be tested
+is marked as such. The experiments, the failure analysis and the decisions
+about what to keep are human work.
 
 * HTC for publishing the kernel source, and for the `mmc_reinit_card` path that
   makes the eMMC come back without a reboot.

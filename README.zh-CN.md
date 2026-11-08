@@ -446,8 +446,6 @@ addr.h      /.../kmod/addr.h
 /path/to/repo/backup/HT495WM00193-20261104-031826.txt
 ```
 
-每个分区一行打到 stderr，最后一行是 txt 的路径（stdout）。txt 在四个镜像都 dump 完之后才写：第一行是 `# <时间戳>`（和文件名里那串一致），空一行，然后就是 `status` 的输出，末尾一段 `== restore ==`，只列成功的那几个分区。整套约 143 MB，走 USB 大概一分钟。某个分区读不出来会打 `warning: could not dump <分区>` 然后继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
-
 写出分区名就只备份那一个，不写 txt：
 
 ```sh
@@ -779,18 +777,6 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 
 完全一致，包括 `0x424` 那 4 个设备相关字节。只有 `0x8400` 那 4 字节变了，其中实际变化的只有最低字节（`03` → `00`）。
 
-**2026-11-08 复验（另一台 `m8_ul`，内核 `3.4.0-perf-g708019f`）。** 按 `prepare.sh` 重新配好的树编出来的诊断模块，加载输出：
-
-```
-pwrsq: init stage=3
-pwrsq: rdev=f0326c00 name=8941_l20 use_count=84
-pwrsq: consumer 'msm_sdcc.1'
-pwrsq: mmc_host=f0032000
-pwrsq: done
-```
-
-`name=8941_l20` 就是通过条件：五个地址，以及 `r->rdev`、`rdev->desc->ops`、`consumer_list`、`d->kobj.name`、`drvdata`、`sh->mmc` 这些偏移都对上了。`use_count=84` 只是当时 `msm_sdcc.1` 的引用计数，每次开机不同。加载后 `rmmod` 卸载，`/data/local/tmp` 里的模块文件也删了。
-
 ---
 
 ## 风险
@@ -808,7 +794,7 @@ pwrsq: done
 
 ## 致谢
 
-本项目相当一部分代码和文字是在 AI 协助下写成的。但每一个地址、每一个偏移、每一条声称已验证的结论，都在真机上核对过；没有条件实测的，文中明确标了「未实测」。实验、失败分析，以及保留什么、放弃什么的决定，是人做的。
+本项目的代码和文字是在 AI 协助下写成的。但每一个地址、每一个偏移、每一条声称已验证的结论，都在真机上核对过；没有条件实测的，文中明确标了「未实测」。实验、失败分析，以及保留什么、放弃什么的决定，是人做的。
 
 * HTC 公开内核源码，以及 `sdhci_msm` 里那条 `mmc_reinit_card`：eMMC 不用重启就能回来。
 * XDA/ARHD 社区关于 RUU/CID/MID 的整理，本项目的判断建立在这些之上。
