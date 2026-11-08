@@ -399,34 +399,30 @@ scripts/build.sh /path/to/kernel-tree
 # kbuild passes M= to make, and a drive-letter colon breaks the target.
 ```
 
-The script prints the undefined-symbol list of each `.ko`; it must be empty:
+After linking it runs three checks of its own, and exits non-zero if any fails:
 
 ```
-pwrsq_diag: (no undefined symbols)
-pwrsq_off: (no undefined symbols)
-pwrsq_on: (no undefined symbols)
+pwrsq_diag: (no undefined symbols), __versions 64 bytes, 1 entry
+pwrsq_off: (no undefined symbols), __versions 64 bytes, 1 entry
+pwrsq_on: (no undefined symbols), __versions 64 bytes, 1 entry
+vermagic: 3.4.0-perf-g708019f SMP preempt mod_unload modversions ARMv7
 ```
 
-Anything listed there is a symbol the kernel will demand a version crc for, and
-loading fails with `no symbol version for <sym>` or
-`disagrees about version of symbol <sym>`.
+- **undefined symbols**: the modules import nothing, so every symbol listed there
+  makes the kernel demand a version crc, and the load fails with
+  `no symbol version for <sym>` or `disagrees about version of symbol <sym>`.
+- **`__versions`**: exactly one `module_layout` entry, 64 bytes in all (that is
+  `struct modversion_info` on a 32-bit kernel). An empty section still links and
+  only fails on the phone - when it does, check that `pwrsq_impl.h` still carries
+  `section("__versions"), used`.
+- **vermagic**: the string is compared with the kernel recorded in `addr.h`; a
+  mismatch means the `.ko` came from another build, or the tree is still not the
+  one the phone runs.
 
-Sanity checks before pushing anything to the phone:
-
-```sh
-arm-none-linux-gnueabihf-readelf -S kmod/pwrsq_on.ko | grep __versions   # Size 000040
-arm-none-linux-gnueabihf-strings  kmod/pwrsq_on.ko | grep vermagic=
-arm-none-linux-gnueabihf-nm -u    kmod/pwrsq_on.ko                      # prints nothing
-```
-
-All three carry the toolchain prefix: Git Bash and MSYS2 have no bare `readelf`,
-`nm` or `strings` - only a Linux distribution does. Without the prefix you get
-`command not found` instead of a pass.
-
-`__versions` must contain exactly one entry (`module_layout`, 64 bytes in all).
-If it is empty, the section never made it into the `.ko`: check that
-`pwrsq_impl.h` still carries `section("__versions"), used`, and that you are
-looking at the module you just built.
+All three use the `${CROSS}`-prefixed binutils (`nm`, `readelf`, `strings`). Git
+Bash and MSYS2 have no bare `readelf`, `nm` or `strings` - only a Linux
+distribution does - so inspecting a module by hand needs the prefix too, or you
+get `command not found` instead of a pass.
 
 `build.sh` does not build the userspace helper; `tools/mmc_cmd` is not committed
 either, it is a static ARM binary:

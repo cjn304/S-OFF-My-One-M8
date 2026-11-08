@@ -224,27 +224,20 @@ scripts/build.sh /path/to/kernel-tree
 # 因为 kbuild 把 M= 当 make 目标传，盘符里的冒号会被当成目标分隔符。
 ```
 
-脚本会打印每个 `.ko` 的未定义符号，必须是空的：
+编完它自己把三件事查一遍，全过才退出 0：
 
 ```
-pwrsq_diag: (no undefined symbols)
-pwrsq_off: (no undefined symbols)
-pwrsq_on: (no undefined symbols)
+pwrsq_diag: (no undefined symbols), __versions 64 bytes, 1 entry
+pwrsq_off: (no undefined symbols), __versions 64 bytes, 1 entry
+pwrsq_on: (no undefined symbols), __versions 64 bytes, 1 entry
+vermagic: 3.4.0-perf-g708019f SMP preempt mod_unload modversions ARMv7
 ```
 
-那里出现的任何符号，内核都会要求对应的版本 crc，加载时报 `no symbol version for <sym>` 或 `disagrees about version of symbol <sym>`。
+- **未定义符号**：模块一个符号都不导入，列出来的每个都会让内核去要对应的版本 crc，加载时报 `no symbol version for <sym>` 或 `disagrees about version of symbol <sym>`。
+- **`__versions`**：必须正好一条 `module_layout`、整段 64 字节（32 位内核的 `struct modversion_info`）。空了照样链接成功，要到手机上才失败——那时先看 `pwrsq_impl.h` 里 `section("__versions"), used` 的属性还在不在。
+- **vermagic**：拿 `vermagic=` 那行和 `addr.h` 里记的内核串比，不一致就告警，说明 `.ko` 是另一次构建留下的，或者树还没按手机配好。
 
-推到手机之前先自检：
-
-```sh
-arm-none-linux-gnueabihf-readelf -S kmod/pwrsq_on.ko | grep __versions   # Size 那列 000040
-arm-none-linux-gnueabihf-strings  kmod/pwrsq_on.ko | grep vermagic=
-arm-none-linux-gnueabihf-nm -u    kmod/pwrsq_on.ko                      # 什么都不输出
-```
-
-三条都带工具链前缀：Git Bash 和 MSYS2 里没有裸的 `readelf`、`nm`、`strings`，只有在 Linux 发行版上才是裸名字。用错会得到 `command not found`，而不是“没问题”。
-
-`__versions` 必须正好有一条（`module_layout`，整段 64 字节）。如果是空的，说明这个段没进 `.ko`：检查 `pwrsq_impl.h` 里 `section("__versions"), used` 的属性还在，以及你看的是不是刚编出来的模块。
+这几条用的是 `${CROSS}` 前缀的 binutils（`nm`、`readelf`、`strings`）。Git Bash 和 MSYS2 里没有裸的 `readelf`、`nm`、`strings`，只有 Linux 发行版上才是裸名字；想自己单独看某个模块时记得带上前缀，否则得到的是 `command not found` 而不是“没问题”。
 
 `build.sh` 不管用户态那个小工具；`tools/mmc_cmd` 也没有入库，它是一个静态链接的 ARM 可执行文件：
 
