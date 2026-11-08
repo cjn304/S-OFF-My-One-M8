@@ -12,9 +12,8 @@ hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规�
 
 ## 前提条件
 
-* [解锁 BL](http://www.htcdev.com/bootloader/) 并 root，或刷入自带 root 的固件。内核要能加载模块：M8 的 LineageOS 17.1 就不行。像 Sunshine 一样临时 root 就不用解锁 BL，S-OFF 之后随便解锁。
+* 备份数据并[解锁 BL](http://www.htcdev.com/bootloader/) 然后 root，或刷入自带 root 的固件。像 Sunshine 一样临时 root 可以不用解锁 BL，S-OFF 之后随便解锁。
 * 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows](#windows)）。
-* 数据备份和[构建](#构建)。
 
 ---
 
@@ -412,7 +411,7 @@ tamper flag 0           pg2fs @ 0x511804
 
 这是刷了 1540、改过 CID/MID、但仍是 S-ON 的机器，`soff` 要的就是这个状态。
 
-`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[5. 参数偏移](#5-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Security: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Security: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper_flag` 那个 u32 决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，必须是这个值，`disabled` 时 `insmod` 会被拒。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
+`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[5. 参数偏移](#5-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Security: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Security: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper_flag` 那个 u32 决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，内核要能加载模块，`disabled` 时 `insmod` 会被拒：比如 M8 的 LineageOS 17.1。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `prepare.sh`
 

@@ -17,13 +17,11 @@ followed by writing the flag byte.
 
 ## Requirements
 
-* [Unlock bootloader](http://www.htcdev.com/bootloader/). Then root
-  or flash a firmware that ships root. The kernel has to be able to load
-  modules: e.g. LineageOS 17.1 for M8 is disabled. Temporary root like
+* Backup data and [Unlock bootloader](http://www.htcdev.com/bootloader/). Then root
+  or flash a firmware that ships root. Temporary root like
   Sunshine without unlocking BL works too, once S-OFF the BL is yours.
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
   (see [Windows](#windows)).
-* Data backup and [Building](#building).
 
 ---
 
@@ -710,7 +708,8 @@ returns. `Security: unknown (no root ...)` means `su` does not work yet, and
 nothing below will either. `Software status` is the same line the bootloader
 prints, taken from the `tamper_flag` u32: `0` is `Official`, anything else is
 `Modified`. `modules: enabled` is `modules_disabled=0` spelled as the capability
-it grants; `disabled` and `insmod` is refused. `selinux: Enforcing` is not fatal
+it grants; The kernel has to be able to load modules, `insmod` is refused when
+`disabled`: e.g. LineageOS 17.1 for M8. `selinux: Enforcing` is not fatal
 - `soff` warns and carries on, and whether the module loads depends on the domain
 `su` lands in. If it is denied, `setenforce 0` for this boot and rerun.
 
