@@ -771,6 +771,18 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   改动后
 
 完全一致，包括 `0x424` 那 4 个设备相关字节。只有 `0x8400` 那 4 字节变了，其中实际变化的只有最低字节（`03` → `00`）。
 
+**2026-11-08 复验（另一台 `m8_ul`，内核 `3.4.0-perf-g708019f`）。** 按 `prepare.sh` 重新配好的树编出来的诊断模块，加载输出：
+
+```
+pwrsq: init stage=3
+pwrsq: rdev=f0326c00 name=8941_l20 use_count=84
+pwrsq: consumer 'msm_sdcc.1'
+pwrsq: mmc_host=f0032000
+pwrsq: done
+```
+
+`name=8941_l20` 就是通过条件：五个地址，以及 `r->rdev`、`rdev->desc->ops`、`consumer_list`、`d->kobj.name`、`drvdata`、`sh->mmc` 这些偏移都对上了。`use_count=84` 只是当时 `msm_sdcc.1` 的引用计数，每次开机不同。加载后 `rmmod` 卸载，`/data/local/tmp` 里的模块文件也删了。
+
 ---
 
 ## 风险

@@ -1237,6 +1237,24 @@ f22ff5ac41ac26e1a3ecd2997ba6ca3a   after
 Identical, including the device-specific 4-byte field at `0x424`. Only the four
 bytes at `0x8400` differ, and of those only the lowest one (`03` -> `00`).
 
+**Re-checked 2026-11-08 on another `m8_ul` (kernel `3.4.0-perf-g708019f`).** The
+diagnostic module, built against a tree that `prepare.sh` had configured, loaded
+with:
+
+```
+pwrsq: init stage=3
+pwrsq: rdev=f0326c00 name=8941_l20 use_count=84
+pwrsq: consumer 'msm_sdcc.1'
+pwrsq: mmc_host=f0032000
+pwrsq: done
+```
+
+`name=8941_l20` is the pass condition: all five addresses resolved, and
+`r->rdev`, `rdev->desc->ops`, `consumer_list`, `d->kobj.name`, `drvdata` and
+`sh->mmc` all landed on the right fields. `use_count=84` is just how many
+consumers `msm_sdcc.1` had at the time and differs per boot. The module was
+removed with `rmmod` afterwards, and its file deleted from `/data/local/tmp`.
+
 ---
 
 ## Warnings
