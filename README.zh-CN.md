@@ -345,7 +345,10 @@ MID 和 CID 是出厂值；参考机后来改成 `0P6B12000` / `11111111` 并刷
 
 **B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
 
-* `TARGET_VREG` 和 `TARGET_MMC_DEV` 仍是 `8941_l20` 和 `msm_sdcc.1`。这两个都是板级字符串，不是驱动名：`board-8974.c` 把 `sdhci-msm` 驱动注册的设备命名为 `msm_sdcc.1`，轨名则来自 `msm-pm8x41-rpm-regulator.dtsi`。
+* `TARGET_VREG` 和 `TARGET_MMC_DEV` 仍是 `8941_l20` 和 `msm_sdcc.1`。两个都是板级**数据**，不是驱动名，所以查驱动源码找不到它们：
+  * 轨名写在 `arch/arm/boot/dts/msm-pm8x41-rpm-regulator.dtsi` 的 `regulator-name = "8941_l20"` 里（`8941` 是 PM8941，`l20` 是 LDO20），驱动本身是通用的 `qcom,rpm-regulator-smd`。
+  * `msm_sdcc.1` 是**平台设备**的名字，来自 `board-8974.c` 的 `OF_DEV_AUXDATA("qcom,sdhci-msm", 0xF9824900, "msm_sdcc.1", NULL)`；`drivers/of/platform.c` 建平台设备时把 `auxdata->name` 当 `bus_id`。驱动自己叫 `sdhci_msm`，靠 `compatible` 匹配，和这个名字无关——沿用它只是为了让 clock、regulator 和老代码还能按名字找到这块控制器。`sdhci-msm` 随后 `devm_regulator_get(dev, "vdd")`，consumer 就记成了 `msm_sdcc.1`，也就是诊断模块打印的那一行。
+  * 在目标机上核这两个值，看的是 `/sys/bus/platform/devices/` 和 `/sys/class/regulator/*/name`，不是驱动源码。
 * 安全记录结构不变：pg1fs 0x8400 处的 `{u32 flag; char magic[4]}`，S-ON 时前四字节是 `03 00 00 00`；紧跟的四字节是 bootloader 锁状态 magic，只有解锁时才是 `HTCU`。写之前先核对这八个字节。
 * 内核侧只有一件事：重跑 `scripts/prepare.sh`，它重写 `addr.h`（五个地址加 crc）并再比一次 `vermagic`。只有树已经配好、又只想刷新地址时，才单独跑 `scripts/gen_addr.sh`——它就是 prepare 的第 3 步。
 

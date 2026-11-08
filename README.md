@@ -592,9 +592,21 @@ the structures and the record layout hold; only the board-level items need
 re-checking:
 
 * `TARGET_VREG` and `TARGET_MMC_DEV` stay `8941_l20` and `msm_sdcc.1`. Both are
-  board strings, not driver names: `board-8974.c` registers the `sdhci-msm`
-  device under the name `msm_sdcc.1`, and the rail name comes from
-  `msm-pm8x41-rpm-regulator.dtsi`.
+  board-level **data**, not driver names, which is why searching the driver
+  sources will not find them:
+  * the rail is `regulator-name = "8941_l20"` in
+    `arch/arm/boot/dts/msm-pm8x41-rpm-regulator.dtsi` (`8941` is the PM8941,
+    `l20` is LDO20); the driver itself is the generic `qcom,rpm-regulator-smd`.
+  * `msm_sdcc.1` is the **platform device** name, handed over by
+    `OF_DEV_AUXDATA("qcom,sdhci-msm", 0xF9824900, "msm_sdcc.1", NULL)` in
+    `board-8974.c`; `drivers/of/platform.c` uses `auxdata->name` as the `bus_id`
+    when it creates the device. The driver is called `sdhci_msm` and binds on
+    `compatible`, so the name is unrelated to it - it is kept so that clocks,
+    regulators and older code still find the controller by name. `sdhci-msm`
+    then calls `devm_regulator_get(dev, "vdd")`, and the consumer is recorded as
+    `msm_sdcc.1`, the line the diagnostic module prints.
+  * to check both on a target device, read `/sys/bus/platform/devices/` and
+    `/sys/class/regulator/*/name`, not the driver sources.
 * The security record keeps its shape - `{u32 flag; char magic[4]}` at pg1fs
   0x8400, `03 00 00 00` in the first four on an S-ON device. The four after it
   are the bootloader lock magic, `HTCU` only while the bootloader is unlocked.
