@@ -612,14 +612,13 @@ device_tag() { # filename-safe identity, never empty
 # it needs no second format to keep in sync: whatever `status` reports is what
 # the file records.  Called after the dump, with the images that actually
 # landed, so no listed restore command can point at a missing file.
-snapshot_write() { # target file tag [saved-image ...]
+snapshot_write() { # target file stamp [saved-image ...]
 	f=$1
-	tag=$2
+	stamp=$2
 	shift 2
 	{
-		printf '# S-OFF-My-One-M8 backup  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-		printf '# serial %s\n' "$tag"
-		printf '#\n'
+		printf '# %s\n' "$stamp"
+		printf '\n'
 		status_show
 		printf '\n'
 		printf '== restore ==\n'
@@ -708,7 +707,7 @@ cmd_backup() { # [partition] - every partition plus the txt, or just the one
 		fi
 	done
 
-	snapshot_write "$f" "$tag" "$@"
+	snapshot_write "$f" "$ts" "$@"
 	[ -s "$f" ] || die "backup failed"
 
 	printf '%s\n' "$f"
@@ -727,6 +726,7 @@ status_show() {
 		# CID and MID are what hboot answers here; BL magic and secure flag are
 		# readable too, but they are storage offsets, and this mode has no
 		# partition-table match, so the block stays to the getvar values.
+		say ""
 		say "== parameters =="
 		printf '%-11s %s\n' CID          "$("$FB" getvar cidnum 2>&1 | sed -n 's/.*cidnum: //p' | tr -d '\r')"
 		printf '%-11s %s\n' MID          "$("$FB" getvar modelid 2>&1 | sed -n 's/.*modelid: //p' | tr -d '\r')"
@@ -735,6 +735,7 @@ status_show() {
 	# print_state already explained why it could not read anything
 	detect_root && detect_dev || return 0
 	require_android ro
+	say ""
 	say "== parameters =="
 	printf '%-11s %-11s %s @ 0x%x\n' CID           "$(p_cid)"     "$PART_CID"      "$((OFF_CID))"
 	printf '%-11s %-11s %s @ 0x%x\n' MID           "$(p_mid)"     "$PART_MID"      "$((OFF_MID))"

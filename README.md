@@ -284,11 +284,11 @@ look good - that is on you.
 
 ### 1. Get the source
 
-Download the kernel source your firmware was close to. HTC publishes it on [htcdev.com](https://www.htcdev.com/devcenter/downloads)
-(Kernel Source Code). The package is named `m8ul-<uname -r>.zip` - for instance
-`m8ul-3.4.0-perf-ga6393e1.zip`; take the one matching what your phone reports.
-It contains `kernel570.tar.gz` (`kernel/`) and `platform.tar.gz` (the rest of the
-tree). Only `kernel/` matters.
+Download the kernel source your firmware was close to. HTC publishes it on
+[htcdev.com](https://www.htcdev.com/devcenter/downloads)(Kernel Source Code).
+For instance `m8ul-3.4.0-perf-ga6393e1.zip`; take the one matching what your
+phone reports. It contains `kernel570.tar.gz` (`kernel/`) and `platform.tar.gz`
+(the rest of the tree). Only `kernel/` matters.
 
 On Windows, NTFS is case-insensitive and the tree contains files that differ
 only in case (`net/netfilter/xt_DSCP.c` vs `xt_dscp.c`). Either enable
@@ -959,8 +959,9 @@ addr.h      /.../kmod/addr.h
 ```
 
 One line per partition on stderr, the txt path on stdout. The txt is written
-after all four dumps and holds the `status` output plus a `== restore ==` block
-listing only the partitions that landed. The whole set is
+after all four dumps: one `# <stamp>` line (the same stamp as the filename), a
+blank line, then the `status` output and a `== restore ==` block listing only the
+partitions that landed. The whole set is
 about 143 MB and takes roughly a minute over USB. A partition that cannot be
 read gives `warning: could not dump <part>` and the run continues; a short image
 gives `<part>: expected N bytes, got M`.

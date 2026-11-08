@@ -159,7 +159,7 @@ FAILED (status read failed (Too many links))
 
 ### 1. 拿源码
 
-下载与固件接近的内核源码，HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)（Kernel Source Code）发布。包名就是 `m8ul-<uname -r>.zip`，例如 `m8ul-3.4.0-perf-ga6393e1.zip`；手机报哪一串就找哪一个。包内有 `kernel570.tar.gz`（`kernel/`）和 `platform.tar.gz`（其余源码树），只有 `kernel/` 有用。
+下载与固件接近的内核源码，HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)（Kernel Source Code）发布。例如 `m8ul-3.4.0-perf-ga6393e1.zip`，手机报哪一串就找哪一个。包内有 `kernel570.tar.gz`（`kernel/`）和 `platform.tar.gz`（其余源码树），只有 `kernel/` 有用。
 
 Windows 上要注意 NTFS 大小写不敏感，而这棵树里有只差大小写的文件（`net/netfilter/xt_DSCP.c` 与 `xt_dscp.c`）。要么给目录开大小写敏感（`fsutil file setCaseSensitiveInfo <dir> enable`，需要管理员），要么解包时排除这些路径，它们是 netfilter 驱动，与本项目无关。
 
@@ -588,7 +588,7 @@ addr.h      /.../kmod/addr.h
 /path/to/repo/backup/HT495WM00193-20261104-031826.txt
 ```
 
-每个分区一行打到 stderr，最后一行是 txt 的路径（stdout）。txt 在四个镜像都 dump 完之后才写，内容就是 `status` 的输出加一段 `== restore ==`，只列成功的那几个分区。整套约 143 MB，走 USB 大概一分钟。某个分区读不出来会打 `warning: could not dump <分区>` 然后继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
+每个分区一行打到 stderr，最后一行是 txt 的路径（stdout）。txt 在四个镜像都 dump 完之后才写：第一行是 `# <时间戳>`（和文件名里那串一致），空一行，然后就是 `status` 的输出，末尾一段 `== restore ==`，只列成功的那几个分区。整套约 143 MB，走 USB 大概一分钟。某个分区读不出来会打 `warning: could not dump <分区>` 然后继续；镜像长度不对会打 `<分区>: expected N bytes, got M`。
 
 写出分区名就只备份那一个，不写 txt：
 
