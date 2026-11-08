@@ -22,7 +22,7 @@ hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规�
 下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反：重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。每个 `stool.sh` 命令和 `prepare.sh` 都会自己探测 root（Magisk 的 `su`、adb root 或 userdebug 固件）。[期望输出与故障处理](#期望输出与故障处理)。
 
 ```sh
-# 0. 检查 Security 状态、modules、SELinux
+# 0. [查 Security 状态、modules、SELinux](### `stool.sh status`)
 scripts/stool.sh status
 
 # 1. 手机上的配置和地址 → 源码树：m8.config、kmod/addr.h，并把树配好
