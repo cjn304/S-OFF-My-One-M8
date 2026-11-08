@@ -501,10 +501,10 @@ secure_state() { # "off" | "on"
 	[ "$(p_secure)" = 0 ] && printf off || printf on
 }
 
-bl_state() { # "unlocked" | "locked"
+bl_state() { # "UNLOCKED" | "LOCKED"
 	case "$(hex_at "$PART_BLMAGIC" "$OFF_BLMAGIC" 4)" in
-	48544355) printf unlocked ;;
-	*) printf locked ;;
+	48544355) printf UNLOCKED ;;
+	*) printf LOCKED ;;
 	esac
 }
 
@@ -576,9 +576,9 @@ print_state() {
 		esac
 		bl=$("$FB" oem refurbish unlockstatus 2>&1 | tr -d '\r')
 		case "$bl" in
-		*"device unlocked"*) say "BL state: unlocked" ;;
-		*"device locked"*)   say "BL state: locked" ;;
-		*) say "BL state: unknown" ;;
+		*"device unlocked"*) say "BL state: UNLOCKED" ;;
+		*"device locked"*)   say "BL state: LOCKED" ;;
+		*) say "BL state: UNKNOWN" ;;
 		esac
 		# hboot can read the same byte; the command is listed in `oem ?` but
 		# not in `getvar all`.  Older builds without it print nothing here.

@@ -385,136 +385,6 @@ adb shell 'su -c "chmod 755 /data/local/tmp/mmc_cmd; /data/local/tmp/mmc_cmd wp"
 
 ---
 
-## 工作原理
-
-### 1. 那堵墙
-
-S-OFF 状态是 `pg1fs` 0x8400 处的一个小端 u32，占 4 字节：
-
-| 偏移 | 含义 | S-ON | S-OFF |
-|---|---|---|---|
-| `0x8400` | secure flag（u32 LE） | `03 00 00 00` | `00 00 00 00` |
-
-`fastboot oem readsecureflag` 读的就是这个值，`getvar all` 里的 `version-misc: PVT SHIP S-ON/S-OFF` 和 `security: on/off` 也都是从它推出来的。
-
-`0x8404` 那 4 个字节是另一个字段：bootloader 的锁状态，`HTCU` 解锁、`00000000` 锁定。它不跟 Security 状态走，S-ON 的机器可以是解锁的；`lock` / `unlock` 也只动这 4 个字节。
-
-以 root 身份写这个字节会失败，原因既不是 SELinux 也不是文件系统：hboot 每次开机都给固件分区加上 eMMC 的 **power-on 写保护**。`CMD31`（SEND_WRITE_PROT_TYPE）按每 2 bit 一组报告类型：
-
-```
-00 = 无保护   01 = 临时   10 = power-on   11 = 永久
-```
-
-一台正常开机的 M8 回答：
-
-```
-CMD31 -> aaaaaaaa2aaaaaaa
-         8 字节，每 2 bit 一组；10b = power-on
-```
-
-power-on 保护只能靠掉电清除。`CMD29`（CLEAR_WRITE_PROT）对它无效，`dd` 写 `pg1fs` 会拿到 `card status 0x400d00`，第 22 位，`WP_ERASE_SKIP`。
-
-保护不是按分区挂的，而是按**写保护组**，一组多大由 eMMC 自己定。`mmc_cmd extcsd` 把决定这件事的几个 EXT_CSD 字段读出来：
-
-```
-  [221] HC_WP_GRP_SIZE     = 16
-  [224] HC_ERASE_GRP_SIZE  = 1
-  erase group  0.5 MiB
-  wp group     8.0 MiB
-  32 groups    256 MiB of 14910 MiB (1.7%)
-```
-
-每组 8 MiB，CMD31 只报 32 组，所以这张位图最多只能描述前 256 MiB。但在一台 S-ON 的 M8 上实测，位图**并不是** eMMC 遵守的东西：它说 32 组里有 31 组受保护，可写 120 MiB 处那一个字节能落盘，写 315 MiB 处却回 `card status 0x400d00`、根本没到 eMMC 上。`WP_GRP_ENABLE = 0` 从另一侧说的是同一件事：组机制是关的，hboot 保护的是区间，`mmc_cmd wp` 只能当「有没有保护」的总开关用。
-
-于是问题收敛成一句话：**把 eMMC 的 VCC 断掉再上电，且不能让 SoC 重启。**
-
-### 2. 用户态为什么做不到
-
-这路电是 **PM8941 LDO20**（`8941_l20`，2.95 V），由 RPM-SMD 管理。eMMC 控制器的设备树节点写着：
-
-```dts
-&sdhc_1 {
-	vdd-supply = <&pm8941_l20>;
-	qcom,vdd-always-on;
-	...
-```
-
-三个各自独立的障碍：
-
-1. **`qcom,vdd-always-on`**：`sdhci_msm` 在 probe 时把这路电打开，之后永不关闭。
-2. **regulator core 短路**：用 debugfs 把电强制断掉之后，`regulator_enable()` 仍然拒绝调用 `->enable()`：
-
-   ```c
-   static int _regulator_enable(struct regulator_dev *rdev)
-   {
-           if (rdev->use_count == 0) {
-                   ret = _regulator_is_enabled(rdev);
-                   if (ret == -EINVAL || ret == 0) {
-                           ...
-                           ret = rdev->desc->ops->enable(rdev);
-   ```
-
-   `rpm_vreg_is_enabled()` 返回的是驱动缓存的请求位，对 always-on 的稳压器它一直是"开"，于是核心认为电还在、根本不去碰硬件。`echo 1 > .../enable` 会返回成功，然后什么都不做。
-3. **没有重扫入口**：`sdhci` 没有用户态的 rescan 属性；解绑驱动并不会断电；而 `device_release_driver()` 在那个 gendisk 上还有可写文件系统时会永久阻塞。
-
-用户态只能做到前一半：
-
-```sh
-echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC 真的断了
-```
-
-eMMC 消失了，`mmcblk0*` 全没了，除了重启没有回头路。这就是墙。
-
-### 3. 模块做了什么
-
-`kmod/pwrsq_impl.h` 只做四件事：
-
-1. **拿到稳压器**：`regulator_get(NULL, "8941_l20")`。`struct regulator` 是 `drivers/regulator/core.c` 的私有结构，所以模块里复制了一份，用来取 `->rdev`。
-2. **直接调驱动 ops**：`rdev->desc->ops->disable(rdev)`，之后再 `->enable(rdev)`。这一步绕开了 `_regulator_enable()`，也就绕开了 `is_enabled()` 的短路。
-3. **找到 mmc_host**：遍历 `rdev->consumer_list`，挑出设备名为 `msm_sdcc.1` 的那一项，读它的 drvdata（`sdhci_pltfm_init()` 往这里存的就是 `sdhci_host`），取 `sdhci_host->mmc`。
-4. **请求重扫**：`mmc_detect_change(host, 0)` 调度 `mmc_rescan()`，重新走一遍 eMMC 的识别。
-
-同一份源码编出三个变体：`diag`（stage 3，只读）、`off`（stage 1）、`on`（stage 2，先 `msleep(1500)` 让电放干净再上电）。
-
-它打出来的日志在[诊断](#诊断)里；这里真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行：它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：参考构建上 eMMC 就是这样回来的，分区都在，手机没重启。32 GB 机器断电 8 秒时不走这条路，host 先报 `runtime_error -110`，节点要一两分钟才回来，见[断电上电](#断电上电)。
-
-### 4. 写这个 flag
-
-```sh
-dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
-```
-
-`33792` 就是 `0x8400`。字段是 4 字节，但值只有 `0` 和 `3`，高三个字节恒为 0，所以从 S-ON 改 S-OFF 时只有最低字节从 `03` 变 `00`；上面这条 `dd` 就是只写这 1 个字节。工具走的是写满 4 字节（`set secure_flag 0` 的输出里是 `4+0 records`），高字节里万一有残留也会一并清掉。`0x8404` 那 4 个字节是 bootloader 的锁状态，不属于 flag（`HTCU` 解锁、`00000000` 锁定），只写 0x8400 时它原样不动。回读和之后为什么要 `drop_caches`，见[写 flag](#写-flag)。
-
-`pg1fs + 0x424` 还有 4 个字节，老版 Firewater/Sunshine 的配方会一起写。**这台机器上不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，手机正常启动。不要动它。
-
-要读写别的偏移，不经过 `set` 的话：
-
-```sh
-# 读 4 字节，0x8400 = 33792
-adb shell 'dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=33792 count=4 2>/dev/null' | od -An -tx1
-
-# 写 4 字节
-printf '\0\0\0\0' > /tmp/x.bin
-adb push /tmp/x.bin //data/local/tmp/x.bin
-adb shell 'dd if=/data/local/tmp/x.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=4; sync'
-```
-
-大块按 4 KB 对齐，`bs=4096 skip=8 count=1` 就是偏移 32768 处的 4 KB。toybox 的 `dd` 禁用了 `conv=notrunc`，会报 `conv option disabled`，对块设备省略它就行，不会截断分区。写完先 `sync`，再 `echo 3 > /proc/sys/vm/drop_caches`，然后回读，否则读到的是页缓存。脚本里做这件事的是 `hex_at` 和 `write_hex`。
-
-### 5. 为什么之后一直有效
-
-重启后 hboot 读到 `secure_flag = 0`，走它的 S-OFF 分支，其中就包括**不再设置 power-on 写保护**。所以 S-OFF 设备上第二次 `CMD31` 返回全 0，`pg1fs` 从那时起一直可写。写保护不是被"攻破"的，是**不再被设置**了。
-
-### 6. 模块为什么能加载
-
-内核是 `CONFIG_MODVERSIONS=y` 编的，而我们没有它的 `Module.symvers`。两个后果，都已处理：
-
-* 每个被导入的符号都需要匹配的 crc，所以模块**一个符号都不导入**：所有函数地址在编译时从 `/proc/kallsyms` 生成（`kmod/addr.h`）；
-* `module_layout` 是无条件检查的，所以模块自带一条 `__versions` 记录，crc 从设备上原厂 `.ko` 里抄出来。
-
----
-
 ## 期望输出与故障处理
 
 快速开始的每一步，按执行顺序：什么输出说明它成了，以及对应会停在哪。编译那一节的输出贴在[那里](#3-编译)，不在这里重复。
@@ -527,7 +397,7 @@ target: m8_ul
 serial: HT495WM00193
 hboot: 3.19.0.0000
 Security: ON
-BL state: unlocked
+BL state: UNLOCKED
 Software status: Official
 modules: enabled
 selinux: Enforcing
@@ -725,6 +595,136 @@ Windows 上有四件事会咬人：
 4. **PATH。** `adb`、`make`、`python3` 都必须在这个 shell 里能找到。Git Bash 本身不带 `make`，装 MSYS2 或把它加进 PATH。
 
 本次实际使用的组合：Git Bash、MSYS2 的 GNU Make 4.4.1、Python 3.13、adb 1.0.41、`arm-none-linux-gnueabihf-gcc` 13.3.1（MinGW 宿主版）。`scripts/prepare.sh` 在这台机上从头到尾跑通过一次（六步全过），`kmod/addr.h` 和 `kernel/.config` 都是它写出来的。
+
+---
+
+## 工作原理
+
+### 1. 那堵墙
+
+S-OFF 状态是 `pg1fs` 0x8400 处的一个小端 u32，占 4 字节：
+
+| 偏移 | 含义 | S-ON | S-OFF |
+|---|---|---|---|
+| `0x8400` | secure flag（u32 LE） | `03 00 00 00` | `00 00 00 00` |
+
+`fastboot oem readsecureflag` 读的就是这个值，`getvar all` 里的 `version-misc: PVT SHIP S-ON/S-OFF` 和 `security: on/off` 也都是从它推出来的。
+
+`0x8404` 那 4 个字节是另一个字段：bootloader 的锁状态，`HTCU` 解锁、`00000000` 锁定。它不跟 Security 状态走，S-ON 的机器可以是解锁的；`lock` / `unlock` 也只动这 4 个字节。
+
+以 root 身份写这个字节会失败，原因既不是 SELinux 也不是文件系统：hboot 每次开机都给固件分区加上 eMMC 的 **power-on 写保护**。`CMD31`（SEND_WRITE_PROT_TYPE）按每 2 bit 一组报告类型：
+
+```
+00 = 无保护   01 = 临时   10 = power-on   11 = 永久
+```
+
+一台正常开机的 M8 回答：
+
+```
+CMD31 -> aaaaaaaa2aaaaaaa
+         8 字节，每 2 bit 一组；10b = power-on
+```
+
+power-on 保护只能靠掉电清除。`CMD29`（CLEAR_WRITE_PROT）对它无效，`dd` 写 `pg1fs` 会拿到 `card status 0x400d00`，第 22 位，`WP_ERASE_SKIP`。
+
+保护不是按分区挂的，而是按**写保护组**，一组多大由 eMMC 自己定。`mmc_cmd extcsd` 把决定这件事的几个 EXT_CSD 字段读出来：
+
+```
+  [221] HC_WP_GRP_SIZE     = 16
+  [224] HC_ERASE_GRP_SIZE  = 1
+  erase group  0.5 MiB
+  wp group     8.0 MiB
+  32 groups    256 MiB of 14910 MiB (1.7%)
+```
+
+每组 8 MiB，CMD31 只报 32 组，所以这张位图最多只能描述前 256 MiB。但在一台 S-ON 的 M8 上实测，位图**并不是** eMMC 遵守的东西：它说 32 组里有 31 组受保护，可写 120 MiB 处那一个字节能落盘，写 315 MiB 处却回 `card status 0x400d00`、根本没到 eMMC 上。`WP_GRP_ENABLE = 0` 从另一侧说的是同一件事：组机制是关的，hboot 保护的是区间，`mmc_cmd wp` 只能当「有没有保护」的总开关用。
+
+于是问题收敛成一句话：**把 eMMC 的 VCC 断掉再上电，且不能让 SoC 重启。**
+
+### 2. 用户态为什么做不到
+
+这路电是 **PM8941 LDO20**（`8941_l20`，2.95 V），由 RPM-SMD 管理。eMMC 控制器的设备树节点写着：
+
+```dts
+&sdhc_1 {
+	vdd-supply = <&pm8941_l20>;
+	qcom,vdd-always-on;
+	...
+```
+
+三个各自独立的障碍：
+
+1. **`qcom,vdd-always-on`**：`sdhci_msm` 在 probe 时把这路电打开，之后永不关闭。
+2. **regulator core 短路**：用 debugfs 把电强制断掉之后，`regulator_enable()` 仍然拒绝调用 `->enable()`：
+
+   ```c
+   static int _regulator_enable(struct regulator_dev *rdev)
+   {
+           if (rdev->use_count == 0) {
+                   ret = _regulator_is_enabled(rdev);
+                   if (ret == -EINVAL || ret == 0) {
+                           ...
+                           ret = rdev->desc->ops->enable(rdev);
+   ```
+
+   `rpm_vreg_is_enabled()` 返回的是驱动缓存的请求位，对 always-on 的稳压器它一直是"开"，于是核心认为电还在、根本不去碰硬件。`echo 1 > .../enable` 会返回成功，然后什么都不做。
+3. **没有重扫入口**：`sdhci` 没有用户态的 rescan 属性；解绑驱动并不会断电；而 `device_release_driver()` 在那个 gendisk 上还有可写文件系统时会永久阻塞。
+
+用户态只能做到前一半：
+
+```sh
+echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC 真的断了
+```
+
+eMMC 消失了，`mmcblk0*` 全没了，除了重启没有回头路。这就是墙。
+
+### 3. 模块做了什么
+
+`kmod/pwrsq_impl.h` 只做四件事：
+
+1. **拿到稳压器**：`regulator_get(NULL, "8941_l20")`。`struct regulator` 是 `drivers/regulator/core.c` 的私有结构，所以模块里复制了一份，用来取 `->rdev`。
+2. **直接调驱动 ops**：`rdev->desc->ops->disable(rdev)`，之后再 `->enable(rdev)`。这一步绕开了 `_regulator_enable()`，也就绕开了 `is_enabled()` 的短路。
+3. **找到 mmc_host**：遍历 `rdev->consumer_list`，挑出设备名为 `msm_sdcc.1` 的那一项，读它的 drvdata（`sdhci_pltfm_init()` 往这里存的就是 `sdhci_host`），取 `sdhci_host->mmc`。
+4. **请求重扫**：`mmc_detect_change(host, 0)` 调度 `mmc_rescan()`，重新走一遍 eMMC 的识别。
+
+同一份源码编出三个变体：`diag`（stage 3，只读）、`off`（stage 1）、`on`（stage 2，先 `msleep(1500)` 让电放干净再上电）。
+
+它打出来的日志在[诊断](#诊断)里；这里真正要看的是 `ops->disable ret=0` 和 `ops->enable ret=0` 这两行：它们说明驱动 ops 真的被执行了，而不是被 core 短路掉。末尾那对 `mmc_reinit_card` 是 HTC 自己在 `sdhci_msm` 里的重新初始化路径：参考构建上 eMMC 就是这样回来的，分区都在，手机没重启。32 GB 机器断电 8 秒时不走这条路，host 先报 `runtime_error -110`，节点要一两分钟才回来，见[断电上电](#断电上电)。
+
+### 4. 写这个 flag
+
+```sh
+dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
+```
+
+`33792` 就是 `0x8400`。字段是 4 字节，但值只有 `0` 和 `3`，高三个字节恒为 0，所以从 S-ON 改 S-OFF 时只有最低字节从 `03` 变 `00`；上面这条 `dd` 就是只写这 1 个字节。工具走的是写满 4 字节（`set secure_flag 0` 的输出里是 `4+0 records`），高字节里万一有残留也会一并清掉。`0x8404` 那 4 个字节是 bootloader 的锁状态，不属于 flag（`HTCU` 解锁、`00000000` 锁定），只写 0x8400 时它原样不动。回读和之后为什么要 `drop_caches`，见[写 flag](#写-flag)。
+
+`pg1fs + 0x424` 还有 4 个字节，老版 Firewater/Sunshine 的配方会一起写。**这台机器上不需要**：S-OFF 成功后，分区头部（0..0x1000，含 `0x424`）与改动前的备份逐字节一致，手机正常启动。不要动它。
+
+要读写别的偏移，不经过 `set` 的话：
+
+```sh
+# 读 4 字节，0x8400 = 33792
+adb shell 'dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=33792 count=4 2>/dev/null' | od -An -tx1
+
+# 写 4 字节
+printf '\0\0\0\0' > /tmp/x.bin
+adb push /tmp/x.bin //data/local/tmp/x.bin
+adb shell 'dd if=/data/local/tmp/x.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=4; sync'
+```
+
+大块按 4 KB 对齐，`bs=4096 skip=8 count=1` 就是偏移 32768 处的 4 KB。toybox 的 `dd` 禁用了 `conv=notrunc`，会报 `conv option disabled`，对块设备省略它就行，不会截断分区。写完先 `sync`，再 `echo 3 > /proc/sys/vm/drop_caches`，然后回读，否则读到的是页缓存。脚本里做这件事的是 `hex_at` 和 `write_hex`。
+
+### 5. 为什么之后一直有效
+
+重启后 hboot 读到 `secure_flag = 0`，走它的 S-OFF 分支，其中就包括**不再设置 power-on 写保护**。所以 S-OFF 设备上第二次 `CMD31` 返回全 0，`pg1fs` 从那时起一直可写。写保护不是被"攻破"的，是**不再被设置**了。
+
+### 6. 模块为什么能加载
+
+内核是 `CONFIG_MODVERSIONS=y` 编的，而我们没有它的 `Module.symvers`。两个后果，都已处理：
+
+* 每个被导入的符号都需要匹配的 crc，所以模块**一个符号都不导入**：所有函数地址在编译时从 `/proc/kallsyms` 生成（`kmod/addr.h`）；
+* `module_layout` 是无条件检查的，所以模块自带一条 `__versions` 记录，crc 从设备上原厂 `.ko` 里抄出来。
 
 ---
 

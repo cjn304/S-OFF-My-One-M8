@@ -669,198 +669,6 @@ does not exist on those phones regardless of how much of the rest is ported.
 
 ---
 
-## How it works
-
-### 1. The wall
-
-The S-OFF state is a 4-byte little-endian u32 at `pg1fs 0x8400`:
-
-| offset | meaning | S-ON | S-OFF |
-|---|---|---|---|
-| `0x8400` | secure flag (u32 LE) | `03 00 00 00` | `00 00 00 00` |
-
-`fastboot oem readsecureflag` reads exactly this value, and `getvar all` derives
-`version-misc: PVT SHIP S-ON/S-OFF` and `security: on/off` from it.
-
-The 4 bytes at `0x8404` are a separate field - the bootloader lock state, `HTCU`
-unlocked or `00000000` locked. It does not follow the Security state: an S-ON
-phone can be unlocked, and `lock`/`unlock` change nothing else.
-
-Writing it as root fails, and the reason is neither SELinux nor the filesystem:
-at every boot hboot sets the eMMC's **power-on write protection** on the
-firmware groups. `CMD31` (SEND_WRITE_PROT_TYPE) reports 2 bits per group:
-
-```
-00 = not protected   01 = temporary   10 = power-on   11 = permanent
-```
-
-A stock, booted M8 answers:
-
-```
-CMD31 -> aaaaaaaa2aaaaaaa
-         8 bytes, 2 bits per group; 10b = power-on
-```
-
-Power-on protection is only cleared by a power cycle. `CMD29`
-(CLEAR_WRITE_PROT) has no effect on it, and `dd` to `pg1fs` comes back with
-`card status 0x400d00` — bit 22, `WP_ERASE_SKIP`.
-
-Protection is not per partition but per **write protect group**, and the eMMC
-decides how big a group is. `mmc_cmd extcsd` reads the fields that settle it:
-
-```
-  [221] HC_WP_GRP_SIZE     = 16
-  [224] HC_ERASE_GRP_SIZE  = 1
-  erase group  0.5 MiB
-  wp group     8.0 MiB
-  32 groups    256 MiB of 14910 MiB (1.7%)
-```
-
-8 MiB per group and CMD31 reports 32 of them, so this bitmap can describe at most
-the first 256 MiB. Measured on an S-ON M8, that bitmap is **not** what the eMMC
-obeys: it says 31 of the 32 groups are protected, yet a byte written at 120 MiB
-lands and one written at 315 MiB comes back `card status 0x400d00` and never
-reaches the eMMC. `WP_GRP_ENABLE = 0` says the same thing from the other side:
-the group mechanism is off, hboot protects ranges, and `mmc_cmd wp` is only good
-as an all-or-nothing check.
-
-So the problem reduces to: cut VCC to the eMMC and bring it back, without
-rebooting the SoC.
-
-### 2. Why userspace cannot do that
-
-The rail is **PM8941 LDO20** (`8941_l20`, 2.95 V), managed through RPM-SMD. The
-device tree node for the eMMC controller says:
-
-```dts
-&sdhc_1 {
-	vdd-supply = <&pm8941_l20>;
-	qcom,vdd-always-on;
-	...
-```
-
-Three independent blockers:
-
-1. **`qcom,vdd-always-on`** — `sdhci_msm` enables the rail at probe and never
-   disables it.
-2. **regulator core short-circuit** — after forcing the rail off via debugfs,
-   `regulator_enable()` still refuses to call `->enable()`:
-
-   ```c
-   static int _regulator_enable(struct regulator_dev *rdev)
-   {
-           if (rdev->use_count == 0) {
-                   ret = _regulator_is_enabled(rdev);
-                   if (ret == -EINVAL || ret == 0) {
-                           ...
-                           ret = rdev->desc->ops->enable(rdev);
-   ```
-
-   `rpm_vreg_is_enabled()` returns the driver's cached request bit, which stays
-   "on" for an always-on rail, so the core concludes the rail is already up and
-   never touches the hardware. `echo 1 > .../enable` returns success and does
-   nothing.
-3. **No rescan hook** — `sdhci` has no userspace "rescan" attribute, unbinding
-   the driver does not cut power, and `device_release_driver()` can block
-   forever if a filesystem on that gendisk is still writable.
-
-What does work from userspace is the first half only:
-
-```sh
-echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC really drops
-```
-
-The eMMC disappears, `mmcblk0*` vanish — and there is no way back except a
-reboot. That is the wall.
-
-### 3. The module
-
-`kmod/pwrsq_impl.h` does four things:
-
-1. **Resolve the regulator** — `regulator_get(NULL, "8941_l20")`.
-   `struct regulator` is private to `drivers/regulator/core.c`, so the module
-   carries a copy of the struct to reach `->rdev`.
-2. **Call the driver ops directly** — `rdev->desc->ops->disable(rdev)` and later
-   `->enable(rdev)`. This bypasses `_regulator_enable()` and therefore the
-   `is_enabled()` short-circuit.
-3. **Find the MMC host** — walk `rdev->consumer_list`, pick the entry whose
-   device name is `msm_sdcc.1`, read its drvdata (which `sdhci_pltfm_init()`
-   sets to the `sdhci_host`), and take `sdhci_host->mmc`.
-4. **Ask for a rescan** — `mmc_detect_change(host, 0)` schedules `mmc_rescan()`,
-   which re-runs the identification sequence.
-
-Three build variants come from the same source: `diag` (stage 3, read only),
-`off` (stage 1) and `on` (stage 2, which sleeps 1.5 s first so the rail
-discharges before power is restored).
-
-The log these produce is in [diagnostic](#diagnostic); the two lines that matter
-here are `ops->disable ret=0` and `ops->enable ret=0` - they mean the driver ops
-really ran instead of being short-circuited by the core.  The `mmc_reinit_card`
-pair at the end is HTC's own re-initialisation path in `sdhci_msm`: on the
-reference build the eMMC comes back that way, with its partitions, without
-rebooting.  The 32 GB phone with an 8 s cut does not take that path: the host
-reports `runtime_error -110` first and the nodes appear a minute or two later,
-see [Power cycle](#power-cycle).
-
-### 4. Writing the flag
-
-```sh
-dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
-```
-
-`33792` is `0x8400`. The field is four bytes, but it only ever holds `0` or
-`3`, so the top three are always zero and going from S-ON to S-OFF changes just
-the lowest one, `03` -> `00`; that `dd` writes only that single byte. The tool
-writes all four (`set secure_flag 0` reports `4+0 records`), which also clears
-any stale high byte. The 4-byte magic at `0x8404` is the bootloader lock state,
-not part of the flag - `HTCU` unlocked, `00000000` locked - and writing the flag
-leaves it as it was. The read-back and the `drop_caches` that makes it
-trustworthy are in [write flag](#write-flag).
-
-There is a second 4-byte field at `pg1fs + 0x424` that the old
-Firewater/Sunshine payload also writes. On this device it is **not** required:
-the partition head (0..0x1000, including `0x424`) stayed byte-identical to the
-pre-change backup after a successful S-OFF, and the phone booted normally. Leave
-it alone.
-
-For any other offset, without going through `set`:
-
-```sh
-# read 4 bytes at 0x8400 (33792)
-adb shell 'dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=33792 count=4 2>/dev/null' | od -An -tx1
-
-# write 4 bytes
-printf '\0\0\0\0' > /tmp/x.bin
-adb push /tmp/x.bin //data/local/tmp/x.bin
-adb shell 'dd if=/data/local/tmp/x.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=4; sync'
-```
-
-Use 4 KB alignment for larger reads: `bs=4096 skip=8 count=1` is 4 KB at offset
-32768. Toybox `dd` disables `conv=notrunc` and answers `conv option disabled`;
-leave it out for block devices, it cannot truncate a partition. After a write,
-`sync`, then `echo 3 > /proc/sys/vm/drop_caches`, then read back, or you may get
-the page cache. `hex_at` and `write_hex` in the script do exactly this.
-
-### 5. Why it stays off
-
-After the reboot hboot reads `secure_flag = 0` and takes its S-OFF path — which
-includes **not arming the power-on write protection**. That is why a second
-`CMD31` on the S-OFF device returns all zeroes, and why `pg1fs` stays writable
-from then on. The protection was never "defeated"; it simply stopped being set.
-
-### 6. Why the module loads at all
-
-The kernel is built with `CONFIG_MODVERSIONS=y` and we do not have its
-`Module.symvers`. Two consequences, both handled:
-
-* every imported symbol would need a matching crc — so the module imports
-  **none**: all function addresses come from `/proc/kallsyms` at build time
-  (`kmod/addr.h`);
-* `module_layout` is checked unconditionally, so the module carries its own
-  `__versions` entry with the crc copied from a stock `.ko` on the device.
-
----
-
 ## Expected output and troubleshooting
 
 Each step of the quick start in the order it runs: the output that says it
@@ -875,7 +683,7 @@ target: m8_ul
 serial: HT495WM00193
 hboot: 3.19.0.0000
 Security: ON
-BL state: unlocked
+BL state: UNLOCKED
 Software status: Official
 modules: enabled
 selinux: Enforcing
@@ -1206,6 +1014,198 @@ Toolchain actually used here: Git Bash, GNU Make 4.4.1 from MSYS2, Python 3.13,
 adb 1.0.41, `arm-none-linux-gnueabihf-gcc` 13.3.1 (MinGW host build). `scripts/prepare.sh` ran end to
 end on this phone (all six steps); it wrote both `kmod/addr.h` and
 `kernel/.config`.
+
+---
+
+## How it works
+
+### 1. The wall
+
+The S-OFF state is a 4-byte little-endian u32 at `pg1fs 0x8400`:
+
+| offset | meaning | S-ON | S-OFF |
+|---|---|---|---|
+| `0x8400` | secure flag (u32 LE) | `03 00 00 00` | `00 00 00 00` |
+
+`fastboot oem readsecureflag` reads exactly this value, and `getvar all` derives
+`version-misc: PVT SHIP S-ON/S-OFF` and `security: on/off` from it.
+
+The 4 bytes at `0x8404` are a separate field - the bootloader lock state, `HTCU`
+unlocked or `00000000` locked. It does not follow the Security state: an S-ON
+phone can be unlocked, and `lock`/`unlock` change nothing else.
+
+Writing it as root fails, and the reason is neither SELinux nor the filesystem:
+at every boot hboot sets the eMMC's **power-on write protection** on the
+firmware groups. `CMD31` (SEND_WRITE_PROT_TYPE) reports 2 bits per group:
+
+```
+00 = not protected   01 = temporary   10 = power-on   11 = permanent
+```
+
+A stock, booted M8 answers:
+
+```
+CMD31 -> aaaaaaaa2aaaaaaa
+         8 bytes, 2 bits per group; 10b = power-on
+```
+
+Power-on protection is only cleared by a power cycle. `CMD29`
+(CLEAR_WRITE_PROT) has no effect on it, and `dd` to `pg1fs` comes back with
+`card status 0x400d00` — bit 22, `WP_ERASE_SKIP`.
+
+Protection is not per partition but per **write protect group**, and the eMMC
+decides how big a group is. `mmc_cmd extcsd` reads the fields that settle it:
+
+```
+  [221] HC_WP_GRP_SIZE     = 16
+  [224] HC_ERASE_GRP_SIZE  = 1
+  erase group  0.5 MiB
+  wp group     8.0 MiB
+  32 groups    256 MiB of 14910 MiB (1.7%)
+```
+
+8 MiB per group and CMD31 reports 32 of them, so this bitmap can describe at most
+the first 256 MiB. Measured on an S-ON M8, that bitmap is **not** what the eMMC
+obeys: it says 31 of the 32 groups are protected, yet a byte written at 120 MiB
+lands and one written at 315 MiB comes back `card status 0x400d00` and never
+reaches the eMMC. `WP_GRP_ENABLE = 0` says the same thing from the other side:
+the group mechanism is off, hboot protects ranges, and `mmc_cmd wp` is only good
+as an all-or-nothing check.
+
+So the problem reduces to: cut VCC to the eMMC and bring it back, without
+rebooting the SoC.
+
+### 2. Why userspace cannot do that
+
+The rail is **PM8941 LDO20** (`8941_l20`, 2.95 V), managed through RPM-SMD. The
+device tree node for the eMMC controller says:
+
+```dts
+&sdhc_1 {
+	vdd-supply = <&pm8941_l20>;
+	qcom,vdd-always-on;
+	...
+```
+
+Three independent blockers:
+
+1. **`qcom,vdd-always-on`** — `sdhci_msm` enables the rail at probe and never
+   disables it.
+2. **regulator core short-circuit** — after forcing the rail off via debugfs,
+   `regulator_enable()` still refuses to call `->enable()`:
+
+   ```c
+   static int _regulator_enable(struct regulator_dev *rdev)
+   {
+           if (rdev->use_count == 0) {
+                   ret = _regulator_is_enabled(rdev);
+                   if (ret == -EINVAL || ret == 0) {
+                           ...
+                           ret = rdev->desc->ops->enable(rdev);
+   ```
+
+   `rpm_vreg_is_enabled()` returns the driver's cached request bit, which stays
+   "on" for an always-on rail, so the core concludes the rail is already up and
+   never touches the hardware. `echo 1 > .../enable` returns success and does
+   nothing.
+3. **No rescan hook** — `sdhci` has no userspace "rescan" attribute, unbinding
+   the driver does not cut power, and `device_release_driver()` can block
+   forever if a filesystem on that gendisk is still writable.
+
+What does work from userspace is the first half only:
+
+```sh
+echo 1 > /sys/kernel/debug/regulator/8941_l20/force_disable   # VCC really drops
+```
+
+The eMMC disappears, `mmcblk0*` vanish — and there is no way back except a
+reboot. That is the wall.
+
+### 3. The module
+
+`kmod/pwrsq_impl.h` does four things:
+
+1. **Resolve the regulator** — `regulator_get(NULL, "8941_l20")`.
+   `struct regulator` is private to `drivers/regulator/core.c`, so the module
+   carries a copy of the struct to reach `->rdev`.
+2. **Call the driver ops directly** — `rdev->desc->ops->disable(rdev)` and later
+   `->enable(rdev)`. This bypasses `_regulator_enable()` and therefore the
+   `is_enabled()` short-circuit.
+3. **Find the MMC host** — walk `rdev->consumer_list`, pick the entry whose
+   device name is `msm_sdcc.1`, read its drvdata (which `sdhci_pltfm_init()`
+   sets to the `sdhci_host`), and take `sdhci_host->mmc`.
+4. **Ask for a rescan** — `mmc_detect_change(host, 0)` schedules `mmc_rescan()`,
+   which re-runs the identification sequence.
+
+Three build variants come from the same source: `diag` (stage 3, read only),
+`off` (stage 1) and `on` (stage 2, which sleeps 1.5 s first so the rail
+discharges before power is restored).
+
+The log these produce is in [diagnostic](#diagnostic); the two lines that matter
+here are `ops->disable ret=0` and `ops->enable ret=0` - they mean the driver ops
+really ran instead of being short-circuited by the core.  The `mmc_reinit_card`
+pair at the end is HTC's own re-initialisation path in `sdhci_msm`: on the
+reference build the eMMC comes back that way, with its partitions, without
+rebooting.  The 32 GB phone with an 8 s cut does not take that path: the host
+reports `runtime_error -110` first and the nodes appear a minute or two later,
+see [Power cycle](#power-cycle).
+
+### 4. Writing the flag
+
+```sh
+dd if=/dev/zero of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=1
+```
+
+`33792` is `0x8400`. The field is four bytes, but it only ever holds `0` or
+`3`, so the top three are always zero and going from S-ON to S-OFF changes just
+the lowest one, `03` -> `00`; that `dd` writes only that single byte. The tool
+writes all four (`set secure_flag 0` reports `4+0 records`), which also clears
+any stale high byte. The 4-byte magic at `0x8404` is the bootloader lock state,
+not part of the flag - `HTCU` unlocked, `00000000` locked - and writing the flag
+leaves it as it was. The read-back and the `drop_caches` that makes it
+trustworthy are in [write flag](#write-flag).
+
+There is a second 4-byte field at `pg1fs + 0x424` that the old
+Firewater/Sunshine payload also writes. On this device it is **not** required:
+the partition head (0..0x1000, including `0x424`) stayed byte-identical to the
+pre-change backup after a successful S-OFF, and the phone booted normally. Leave
+it alone.
+
+For any other offset, without going through `set`:
+
+```sh
+# read 4 bytes at 0x8400 (33792)
+adb shell 'dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=33792 count=4 2>/dev/null' | od -An -tx1
+
+# write 4 bytes
+printf '\0\0\0\0' > /tmp/x.bin
+adb push /tmp/x.bin //data/local/tmp/x.bin
+adb shell 'dd if=/data/local/tmp/x.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=33792 count=4; sync'
+```
+
+Use 4 KB alignment for larger reads: `bs=4096 skip=8 count=1` is 4 KB at offset
+32768. Toybox `dd` disables `conv=notrunc` and answers `conv option disabled`;
+leave it out for block devices, it cannot truncate a partition. After a write,
+`sync`, then `echo 3 > /proc/sys/vm/drop_caches`, then read back, or you may get
+the page cache. `hex_at` and `write_hex` in the script do exactly this.
+
+### 5. Why it stays off
+
+After the reboot hboot reads `secure_flag = 0` and takes its S-OFF path — which
+includes **not arming the power-on write protection**. That is why a second
+`CMD31` on the S-OFF device returns all zeroes, and why `pg1fs` stays writable
+from then on. The protection was never "defeated"; it simply stopped being set.
+
+### 6. Why the module loads at all
+
+The kernel is built with `CONFIG_MODVERSIONS=y` and we do not have its
+`Module.symvers`. Two consequences, both handled:
+
+* every imported symbol would need a matching crc — so the module imports
+  **none**: all function addresses come from `/proc/kallsyms` at build time
+  (`kmod/addr.h`);
+* `module_layout` is checked unconditionally, so the module carries its own
+  `__versions` entry with the crc copied from a stock `.ko` on the device.
 
 ---
 
