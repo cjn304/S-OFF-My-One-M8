@@ -14,6 +14,7 @@ hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规�
 
 * 备份数据并[解锁 BL](http://www.htcdev.com/bootloader/)。然后 root，或刷入自带 root 的固件。像 Sunshine 一样临时 root 可以不用解锁 BL，S-OFF 之后随便解锁。
 * 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows 工具链](#windows-工具链)）。
+* 只在移植到新机型时才需要：一个能加载裸 ARM32 镜像的反汇编器（Ghidra 或 IDA），以及那台机的 hboot 镜像。M8 的偏移已经在 `targets.conf` 里，用不到这些。
 
 ---
 
@@ -464,7 +465,7 @@ strings -a -t x backup/*.hboot.img | grep -E 'pg1fs|Software status|LOCKED|cidnu
 | 警告 | `bl_partition` | `hboot` p26 | 运行期，无固定偏移 | 六段横幅字符串本身 |
 | 第一屏 | `splash` | `sp1` p12 | 0，W×H×2 字节 | 没有字符串，第一屏的绘制代码 |
 
-右列这些串在 M8 的 hboot 镜像里 `strings -a` 直接就能拿到；别的机型未必同名，但同一家的结构不会差太远，锚点换了就按语义找新的。
+右列这些串在 M8 的 hboot 镜像里 `strings -a` 直接就能拿到；别的机型未必同名，但同一家的结构不会差太远，锚点换了就按语义找新的。要说清楚的是：锚点这一列是核过的，从锚点顺着引用读到具体偏移那一步，本文没有替任何一款新机型做过——[5. 移植](#5-移植) 标的就是「未实测」。
 
 **不想反汇编时，有两条只读的辅证，边界要记牢**——它们只能缩小范围或交叉核对，代替不了反汇编。
 
@@ -593,7 +594,9 @@ HTC 发的是 tar 包，没有 `.git`，所以用 `patch -p1` 而不是 `git app
 
 wrapper 之所以会介入，是因为顶层 Makefile 写了 `CC = $(srctree)/scripts/gcc-wrapper.py $(REAL_CC)`；命令行传 `CC=<cross>gcc` 就盖掉了。在 Linux 上用老工具链时这些都不需要，fixdep 那个补丁依旧无害。
 
-本次实际使用的组合：Git Bash、MSYS2 的 GNU Make 4.4.1、Python 3.13、adb 1.0.41、`arm-none-linux-gnueabihf-gcc` 13.3.1（MinGW 宿主版）。`scripts/prepare.sh` 在这台机上从头到尾跑通过一次（六步全过），`kmod/addr.h` 和 `kernel/.config` 都是它写出来的。
+构建侧实际使用的组合：Git Bash、MSYS2 的 GNU Make 4.4.1、Python 3.13、adb 1.0.41、`arm-none-linux-gnueabihf-gcc` 13.3.1（MinGW 宿主版）。`scripts/prepare.sh` 在这台机上从头到尾跑通过一次（六步全过），`kmod/addr.h` 和 `kernel/.config` 都是它写出来的。
+
+反汇编不在构建链里，仓库的脚本一个都不依赖它。[4. 参数偏移](#4-参数偏移) 里写的 Ghidra / IDA 是移植时读 hboot 用的；那张表里的锚点字符串是用 `strings` 和 `od` 在镜像上核对出来的，命令行里就有。
 
 ---
 

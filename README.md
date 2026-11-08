@@ -22,6 +22,9 @@ followed by writing the flag byte.
   Sunshine without unlocking BL works too, once S-OFF the BL is yours.
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
   (see [Windows toolchain](#windows-toolchain)).
+* Only when porting to a new model: a disassembler that can load a bare ARM32
+  image (Ghidra or IDA), and that model's hboot image. On the M8 the offsets are
+  already in `targets.conf`, so none of this is needed.
 
 ---
 
@@ -787,6 +790,9 @@ symbols, but the anchor strings and the immediates are present:
 Every string in that column is present in the M8 hboot image today (`strings -a`
 finds them). Another model will word them differently; when an anchor is missing,
 look for the new string with the same meaning rather than assuming the old one.
+Note what is and is not verified here: the anchors were checked against the
+images, while following an xref from an anchor down to an offset was not done for
+any new model - [5. Porting](#5-porting) is marked untested for that reason.
 
 **Without a disassembler there are two read-only shortcuts, and both have a
 boundary** - they narrow the search or cross-check a result, they cannot replace
@@ -1013,10 +1019,15 @@ The wrapper is only used because the top Makefile sets
 the command line overrides it. On Linux with an old toolchain none of this is
 needed — the fixdep patch is still harmless.
 
-Toolchain actually used here: Git Bash, GNU Make 4.4.1 from MSYS2, Python 3.13,
-adb 1.0.41, `arm-none-linux-gnueabihf-gcc` 13.3.1 (MinGW host build). `scripts/prepare.sh` ran end to
-end on this phone (all six steps); it wrote both `kmod/addr.h` and
-`kernel/.config`.
+Toolchain actually used for the build: Git Bash, GNU Make 4.4.1 from MSYS2, Python
+3.13, adb 1.0.41, `arm-none-linux-gnueabihf-gcc` 13.3.1 (MinGW host build).
+`scripts/prepare.sh` ran end to end on this phone (all six steps); it wrote both
+`kmod/addr.h` and `kernel/.config`.
+
+Disassembly is not part of that chain and no script here depends on it: the Ghidra
+/ IDA step in [4. Parameter offsets](#4-parameter-offsets) is for reading hboot when
+porting. The anchors in that table were confirmed with `strings` and `od` against
+the images, straight from the command line.
 
 ---
 
