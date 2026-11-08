@@ -129,29 +129,8 @@ What a M8's backup holds:
 | `<serial>-<timestamp>.mfg.img` | p5 — MID lives here | 256 KB |
 | `<serial>-<timestamp>.pg2fs.img` | p6 — the tamper flag lives here | 24 MB |
 
-Names start with the serial (`ro.serialno`) and end with the timestamp, so two
-M8s can share one `backup/` directory without getting mixed up. `restore`
-refuses an image whose name carries another phone's serial.
-
-The txt holds exactly what `status` prints: the `== state ==` block, which
-carries `modules` and `selinux` too, then the `== parameters ==` block. Both come from the same
-function (`status_show`), so the file and the screen cannot drift apart. It ends
-with `== restore ==`, one line per image that actually landed, ready to copy:
-
-```text
-== restore ==
-  stool.sh restore <partition> <file>   (bare filename = look in backup/)
-  stool.sh restore pg1fs       HT495WM00193-20261105-215502.pg1fs.img
-  stool.sh restore mfg         HT495WM00193-20261105-215502.mfg.img
-```
-
-Only partitions whose dump succeeded are listed, so no line points at a missing
-file. A bare filename is looked up in `backup/`. `set cid` writes its 8 bytes at
-`board_info` 0x14 with `dd`, like the rest; hboot reads it at boot, so
-`getvar cidnum` changes only after a reboot. The whole p3 image is still kept -
-the CID sits next to the IMEI and board data this tool never touches. Radio
-(p20) is never written, so it is not dumped. The whole set is ~144 MB and takes
-about a minute over USB.
+`restore` refuses an image whose name carries another phone's serial. A bare filename is
+looked up in `backup/`.
 
 ### CID, MID and flashing
 

@@ -6,7 +6,7 @@
 
 hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规范只有掉电才清除。所有用户态的通路都被堵死，所以这里用一个小内核模块在内核态把 PMIC 的电真断一次再上电，最后写 flag 字节。
 
-已在 HTC One M8，hboot 3.19.0.0000 上[测试成功](#实测记录)（其它机型见[移植](#6-移植)）。
+已在 HTC One M8，hboot 3.19.0.0000 上[测试](#实测记录)（其它机型见[移植](#6-移植)）。
 
 ---
 
@@ -83,18 +83,7 @@ M8 的 `backup` 写出这些文件：
 | `<serial>-<timestamp>.mfg.img` | p5，MID 在这里 | 256 KB |
 | `<serial>-<timestamp>.pg2fs.img` | p6，tamper flag 在这里 | 24 MB |
 
-文件名以序列号（`ro.serialno`）开头，后接时间戳，两台 M8 的备份放在同一个 `backup/` 里也不会混。`restore` 只比对文件名里的序列号：和当前机器不一致时直接拒绝，一个字节都不写。
-
-txt 里就是 `status` 打到屏幕上的那份内容：`== state ==` 一段（含 `modules` 和 `selinux` 两行）、`== parameters ==` 一段。两处用的是同一个函数（`status_show`），所以文件不会和屏幕上的说法分叉。末尾是 `== restore ==`，每个本次真正落盘的镜像一行，照抄就能写回去：
-
-```text
-== restore ==
-  stool.sh restore <partition> <file>   (bare filename = look in backup/)
-  stool.sh restore pg1fs       HT495WM00193-20261105-215502.pg1fs.img
-  stool.sh restore mfg         HT495WM00193-20261105-215502.mfg.img
-```
-
-只列 dump 成功的分区，失败的那个不写进来，所以不会出现指向不存在文件的命令。`restore` 只给文件名时到 `backup/` 里找。`set cid` 和其它参数一样，用 `dd` 写 `board_info` 0x14 那 8 个字节；hboot 在开机时读它，所以 `getvar cidnum` 要重启后才变。整块 p3 镜像仍然保留：CID 紧挨着 IMEI 和板级数据，那些本工具不碰。radio（p20）本工具不写入，所以不再 dump。整套约 143 MB，走 USB 大概一分钟。
+`restore` 比对文件名里的序列号：和当前机器不一致时直接拒绝，只给文件名时到 `backup/` 里找。
 
 ### CID、MID 和刷机的关系
 
