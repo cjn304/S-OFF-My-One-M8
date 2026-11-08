@@ -778,14 +778,22 @@ probe, read it back:
 - search for something the device already tells you (`cidnum`, `modelid`,
   the hboot status line) instead of guessing at offsets; the
   same value then confirms what you found.
-- after every write, `sync` + `drop_caches` before reading back. `dd` writes
-  into the block device's page cache, so `records out` only means the bytes
-  reached memory. With write protection still armed the eMMC refuses at
-  writeback (`card status 0x400d00`), and the read that follows is served from
-  that same dirty page - it looks like "write succeeded, read matches" while
-  nothing reached the flash. `sync` forces the writeback, `drop_caches` makes the
-  next read go to the device, and that is why `write_hex` is always followed by
-  `verify_hex` instead of trusting `dd`.
+- after every write, `sync` + `drop_caches` before reading back - `records out`
+  from `dd` proves nothing:
+
+  ```sh
+  dd if=probe.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=$off count=4
+  sync
+  echo 3 > /proc/sys/vm/drop_caches
+  dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=$off count=4 | od -An -tx1
+  ```
+
+  `dd` only puts the bytes in the page cache. With write protection still armed
+  the eMMC refuses at writeback (`card status 0x400d00`), and the read that
+  follows is served from that same dirty page - it looks like "write succeeded,
+  read matches" while nothing reached the flash. `sync` forces the writeback and
+  `drop_caches` makes the next read go to the device, which is why `write_hex` is
+  always followed by `verify_hex`.
 
 ### 5. Porting
 

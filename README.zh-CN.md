@@ -467,7 +467,16 @@ done
 换构建时这套流程要重走一遍——找候选位置、写探针值、读回——两条规矩：
 
 - 搜设备已经告诉你的东西（`cidnum`、`modelid`、hboot 那行状态），不要猜偏移；同一个值回头还能验证你找到的位置。
-- 每次写完先 `sync` + `drop_caches` 再回读。`dd` 写的是块设备的页缓存，`records out` 只说明字节进了内存；写保护还在时，eMMC 是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备，所以 `write_hex` 写完必须跟一次 `verify_hex`，不能相信 `dd`。
+- 每次写完先 `sync` + `drop_caches` 再回读，`dd` 的 `records out` 不算数：
+
+  ```sh
+  dd if=probe.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=$off count=4
+  sync
+  echo 3 > /proc/sys/vm/drop_caches
+  dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=$off count=4 | od -An -tx1
+  ```
+
+  `dd` 只把字节写进页缓存；写保护还在时，eMMC 是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备，所以 `write_hex` 写完必须跟一次 `verify_hex`。
 
 ### 5. 移植
 
