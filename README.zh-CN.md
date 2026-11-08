@@ -470,11 +470,13 @@ done
 - 每次写完先 `sync` + `drop_caches` 再回读，`dd` 的 `records out` 不算数：
 
   ```sh
-  dd if=probe.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=$off count=4
+  dd if=/data/local/tmp/probe.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=$off count=4
   sync
   echo 3 > /proc/sys/vm/drop_caches
   dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=$off count=4 | od -An -tx1
   ```
+
+  四条都在手机的 root shell 里跑（`adb shell 'su -c "..."'`），探针文件先用 `adb push` 放到 `/data/local/tmp`；主机这一侧只出 `adb` 这一层。`$off` 就是 `stool.sh` 里那个偏移变量；`write_hex` 干的就是这四步。
 
   `dd` 只把字节写进页缓存；写保护还在时，eMMC 是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备，所以 `write_hex` 写完必须跟一次 `verify_hex`。
 

@@ -782,11 +782,15 @@ probe, read it back:
   from `dd` proves nothing:
 
   ```sh
-  dd if=probe.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=$off count=4
+  dd if=/data/local/tmp/probe.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=$off count=4
   sync
   echo 3 > /proc/sys/vm/drop_caches
   dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=$off count=4 | od -An -tx1
   ```
+
+  All four run in the phone's root shell (`adb shell 'su -c "..."'`); push the
+  probe file to `/data/local/tmp` first. The host only supplies `adb`. `$off` is
+  the variable `stool.sh` uses, and these four steps are what `write_hex` does.
 
   `dd` only puts the bytes in the page cache. With write protection still armed
   the eMMC refuses at writeback (`card status 0x400d00`), and the read that
