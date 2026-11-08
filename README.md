@@ -21,8 +21,6 @@ followed by writing the flag byte.
   or flash a firmware that ships root. The kernel has to be able to load
   modules: e.g. LineageOS 17.1 for M8 is disabled. Temporary root like
   Sunshine without unlocking BL works too, once S-OFF the BL is yours.
-* The kernel source your firmware was close to. HTC publishes the official
-  ones on [htcdev.com](https://www.htcdev.com/devcenter/downloads).
 * A cross toolchain and a host that can run kbuild: Linux, or MSYS2/Git Bash
   (see [Windows](#windows)).
 * Data backup and [Building](#building).
@@ -286,7 +284,7 @@ look good - that is on you.
 
 ### 1. Get the source
 
-HTC publishes it on [htcdev.com](https://www.htcdev.com/devcenter/downloads)
+Download the kernel source your firmware was close to. HTC publishes it on [htcdev.com](https://www.htcdev.com/devcenter/downloads)
 (Kernel Source Code). The package is named `m8ul-<uname -r>.zip` - for instance
 `m8ul-3.4.0-perf-ga6393e1.zip`; take the one matching what your phone reports.
 It contains `kernel570.tar.gz` (`kernel/`) and `platform.tar.gz` (the rest of the

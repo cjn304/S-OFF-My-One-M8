@@ -13,7 +13,6 @@ hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规�
 ## 前提条件
 
 * [解锁 BL](http://www.htcdev.com/bootloader/) 并 root，或刷入自带 root 的固件。内核要能加载模块：M8 的 LineageOS 17.1 就不行。像 Sunshine 一样临时 root 就不用解锁 BL，S-OFF 之后随便解锁。
-* 与固件接近的内核源码，HTC 官方的在 [htcdev.com](https://www.htcdev.com/devcenter/downloads) 发布。
 * 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows](#windows)）。
 * 数据备份和[构建](#构建)。
 
@@ -160,7 +159,7 @@ FAILED (status read failed (Too many links))
 
 ### 1. 拿源码
 
-HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)（Kernel Source Code）发布。包名就是 `m8ul-<uname -r>.zip`，例如 `m8ul-3.4.0-perf-ga6393e1.zip`；手机报哪一串就找哪一个。包内有 `kernel570.tar.gz`（`kernel/`）和 `platform.tar.gz`（其余源码树），只有 `kernel/` 有用。
+下载与固件接近的内核源码，HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)（Kernel Source Code）发布。包名就是 `m8ul-<uname -r>.zip`，例如 `m8ul-3.4.0-perf-ga6393e1.zip`；手机报哪一串就找哪一个。包内有 `kernel570.tar.gz`（`kernel/`）和 `platform.tar.gz`（其余源码树），只有 `kernel/` 有用。
 
 Windows 上要注意 NTFS 大小写不敏感，而这棵树里有只差大小写的文件（`net/netfilter/xt_DSCP.c` 与 `xt_dscp.c`）。要么给目录开大小写敏感（`fsutil file setCaseSensitiveInfo <dir> enable`，需要管理员），要么解包时排除这些路径，它们是 netfilter 驱动，与本项目无关。
 
