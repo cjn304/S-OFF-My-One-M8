@@ -575,12 +575,23 @@ None of them was tested here.
 
 **A. hboot before 3.19:** e.g. One M7 (msm8960), One S (msm8260A),
 Sensation / XE (msm8260), Desire HD (msm8255), plus the B-tier devices that
-have had few system updates. They may not set write protection at all: read the
-bitmap while the phone is still S-ON - `adb shell 'su -c "/dev/mmc_cmd wp"'` -
-and all zeroes mean hboot never armed it (`mmc_cmd` comes from `make -C tools`;
-`stool.sh` puts it in `/dev`, or push it yourself and run
-`/data/local/tmp/mmc_cmd wp`). A
-plain write is enough then, with neither the module nor the power cycle: derive
+have had few system updates. They may not set write protection at all. Read the
+bitmap while the phone is still S-ON:
+
+```sh
+adb shell 'su -c "/dev/mmc_cmd wp"'
+```
+
+`mmc_cmd` comes from `make -C tools`, and `stool.sh` leaves a copy in `/dev`; if
+you have not run `stool.sh` yet, push your own:
+
+```sh
+adb push tools/mmc_cmd //data/local/tmp/
+adb shell 'su -c "chmod 755 /data/local/tmp/mmc_cmd; /data/local/tmp/mmc_cmd wp"'
+```
+
+All zeroes mean hboot never armed it. A plain write is enough then, with
+neither the module nor the power cycle: derive
 the partition, the offset and the record shape as in
 [section 5](#5-parameter-offsets), put them in a `targets.conf` section, and
 `stool.sh set secure_flag 0` is that write - it probes the bitmap first and refuses
