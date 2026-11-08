@@ -32,8 +32,8 @@ The commands below assume `adb shell` is root: a userdebug or eng ROM, where
 `adb shell 'su -c "..."'`. The quoting matters - the redirection has to sit
 inside the su command, or the non-root shell performs it first and fails with
 `Permission denied`. Every `stool.sh` command and `prepare.sh` finds root on its own
-(Magisk `su`, adb root, or a userdebug build).
-[Expected output and troubleshooting](#expected-output-and-troubleshooting).
+(Magisk `su`, adb root, or a userdebug build).For details, see [Building](#building)
+and [Expected output and troubleshooting](#expected-output-and-troubleshooting).
 
 ```sh
 # 0. check root, Security state, modules, SELinux
