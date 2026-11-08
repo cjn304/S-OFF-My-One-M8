@@ -67,6 +67,14 @@ before they dump or write anything, and stop with nothing written if S-ON.
 argument, and `soff`, `son` and `set secure_flag 0` are how the Security state
 itself is changed, so none of those need S-OFF up front.
 
+`write` is the other way round: it does not check Security state at all. That is
+the command for locating `secure_flag` and `tamper_flag` on a phone that is still
+S-ON, so gating it on S-OFF would defeat its purpose. It does not need a
+`targets.conf` section either - a model being ported to has none - because the
+partition and the offset are its arguments. The read-back is the gate: with the
+protection still armed nothing lands and the command fails instead of reporting
+success.
+
 ```sh
 scripts/stool.sh status                  # Security state + other parameters (Android or fastboot)
 scripts/stool.sh soff                    # full S-OFF: diag, power cycle, write, verify

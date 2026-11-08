@@ -45,7 +45,7 @@ scripts/stool.sh restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 
 ## 命令和期望输出
 
-`scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`write`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 Security 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure_flag 0` 本来就是改 Security 状态本身，这几条不预先要求 S-OFF；`set secure_flag 0` 仍会先探测写保护，真还有保护就拒绝。
+`scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 Security 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure_flag 0` 本来就是改 Security 状态本身，这几条不预先要求 S-OFF；`set secure_flag 0` 仍会先探测写保护，真还有保护就拒绝。`write` 正好相反，它不查 Security 状态：这条命令就是用来在还没 S-OFF 的机器上找 `secure_flag`、`tamper_flag` 的偏移的，先要求 S-OFF 等于把它的用途否掉。也不要求 `targets.conf` 里有对应的一节——移植的新机型本来就没有，分区和偏移都由参数给出。它靠回读把关：写保护还在时写不进去，回读会失败，而不是报成功。
 
 ```sh
 scripts/stool.sh status                  # Security 状态 + 其他参数（Android 或 fastboot 都行）

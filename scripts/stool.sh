@@ -306,7 +306,8 @@ in_recovery() { # 0 if adbd is a recovery ramdisk rather than Android
 # require_android [mode] - the four modes, from the point of view of writing:
 #   (unset)  writes, so S-OFF is required
 #   ro       never writes; no target_check either
-#   any      works off the on-device table, so targets.conf is not needed
+#   any      works off the on-device table, so targets.conf is not needed, and
+#            nothing is gated on S-OFF - backup and `write` both live here
 #   s-on     may run while S-ON: soff, son and `set secure_flag 0`
 require_android() {
 	case "$(device_mode)" in
@@ -317,9 +318,10 @@ require_android() {
 		die "no device found: check the cable and that adb debugging is on" ;;
 	esac
 	detect_root || die "adb shell is neither root nor able to run su - install Magisk or use a userdebug build"
-	# "any" is for commands that work off the device's own partition table - a
-	# whole-partition backup needs no offsets, so it runs on a phone targets.conf
-	# has never heard of
+	# "any" is for commands that work off the device's own partition table: a
+	# whole-partition backup needs no offsets, and `write` gets the partition and
+	# offset from its arguments - both run on a phone targets.conf has never
+	# heard of, so neither can be gated on a section matching or on S-OFF
 	if [ "${1:-}" = any ]; then
 		layout_probe ||
 			die "could not read the partition table from the device - adb hiccup? nothing was written"
@@ -464,7 +466,13 @@ cmd_write() { # part offset hexbytes - arbitrary firmware bytes, verified
 	esac
 	[ $(( ${#hx} % 2 )) -eq 0 ] || die "hex bytes need an even number of digits: $hx"
 	refuse_fs_part "$part"
-	require_android
+	# No S-OFF gate on purpose: this is the command that locates secure_flag and
+	# tamper_flag on a phone that is still S-ON - finding the offset is what
+	# `soff` needs first.  `any` also skips targets.conf, because a model being
+	# ported to has no section yet and the partition and offset are arguments.
+	# What replaces the gate is the read-back inside write_hex: a write the card
+	# refused shows up as a mismatch instead of a silent success.
+	require_android any
 	say "== state before =="
 	print_state
 	say ""
@@ -1266,7 +1274,7 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh set tamper_flag <0-255>
   stool.sh set secure_flag <0|3>
   stool.sh write <partition> <offset> <hex bytes>
-                                   arbitrary bytes at an offset, read back after
+                                   probe bytes at an offset, read back; S-ON is fine
   stool.sh lock                    write the BL magic = locked
   stool.sh unlock                  write the BL magic = unlocked
   stool.sh nowarn                  blank the six "This build is for ..." lines
