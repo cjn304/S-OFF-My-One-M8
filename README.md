@@ -77,6 +77,7 @@ scripts/stool.sh set cid <cid>           # 8 chars, 11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 chars, e.g. 0P6B12000
 scripts/stool.sh set tamper_flag <0|4>   # 0 = Official, 4 = Modified
 scripts/stool.sh set secure_flag <0|3>   # 0 = S-OFF, 3 = S-ON
+scripts/stool.sh write pg1fs 0x8400 00000000   # any offset, any bytes, read back after
 scripts/stool.sh lock                    # BL magic -> HTCU
 scripts/stool.sh unlock                  # BL magic -> 00000000
 scripts/stool.sh nowarn                  # blank the six dev-warning lines in hboot
@@ -778,37 +779,21 @@ probe, read it back:
 - search for something the device already tells you (`cidnum`, `modelid`,
   the hboot status line) instead of guessing at offsets; the
   same value then confirms what you found.
-- after every write, `sync` + `drop_caches` before reading back - `records out`
-  from `dd` proves nothing:
+- writing, flushing, dropping the cache and reading back is one command:
 
   ```sh
-  # host: the bytes to write, packed into the file dd reads
-  printf '\x00\x00\x00\x00' > probe.bin
-  adb push probe.bin //data/local/tmp/
-
-  # phone, root shell: write, flush, drop the cache, read back
-  dd if=/data/local/tmp/probe.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=$off count=4
-  sync
-  echo 3 > /proc/sys/vm/drop_caches
-  dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=$off count=4 | od -An -tx1
+  scripts/stool.sh write pg1fs 0x8400 00000000
   ```
 
-  The probe is just those bytes: `dd` needs an input file, and binary handed to
-  `adb shell` as an argument gets eaten by quoting and NULs, so it is pushed as a
-  file. Its length has to match `count` (four bytes for a u32 field). `write_hex`
-  builds the same thing with python's `unhexlify`, with `count` set to half the
-  hex string's length.
-
-  The first two lines are host-side; the rest run in the phone's root shell
-  (`adb shell 'su -c "..."'`). `$off` is the offset variable `stool.sh` uses, and
-  this sequence is what `write_hex` does.
-
-  `dd` only puts the bytes in the page cache. With write protection still armed
+  Inside it is `write_hex`: the bytes are pushed as a file, written with `dd`,
+  followed by `sync` + `echo 3 > /proc/sys/vm/drop_caches`, then read back and
+  compared byte for byte - a mismatch fails the command. Why the detour: `dd`
+  only puts the bytes in the page cache. With write protection still armed
   the eMMC refuses at writeback (`card status 0x400d00`), and the read that
   follows is served from that same dirty page - it looks like "write succeeded,
   read matches" while nothing reached the flash. `sync` forces the writeback and
-  `drop_caches` makes the next read go to the device, which is why `write_hex` is
-  always followed by `verify_hex`.
+  `drop_caches` makes the next read go to the device - `write_hex` ends with that
+  read-back itself, so no caller has to remember it.
 
 ### 5. Porting
 

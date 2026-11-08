@@ -439,12 +439,38 @@ EOF
 	devsh "rm -f /data/local/tmp/stool.bin" >/dev/null 2>&1
 	devsh "sync; echo 3 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
 	rm -f "$STOOL_TMP"
+	# Read back here, not at the call site: with write protection still armed the
+	# dd above reports success and only the card refuses, so a caller that forgets
+	# this line would believe a write that never happened.
+	verify_hex "$part" "$off" "$hx"
 }
 
 verify_hex() { # part offset hexstring -> 0 if the card returns the same bytes
 	want=$3
 	got=$(hex_at "$1" "$2" $(( ${#want} / 2 )))
 	[ "$want" = "$got" ] || die "read-back mismatch at $1+$2: wrote $want, read $got"
+}
+
+cmd_write() { # part offset hexbytes - arbitrary firmware bytes, verified
+	part=${1:-}; off=${2:-}; hx=${3:-}
+	[ -n "$part" ] && [ -n "$off" ] && [ -n "$hx" ] ||
+		die "usage: stool.sh write <partition> <offset> <hex bytes>"
+	case "$off" in
+	0x* | 0X*) off=$((off)) ;;
+	*[!0-9]*) die "offset must be decimal or 0x-prefixed hex: $off" ;;
+	esac
+	case "$hx" in
+	*[!0-9a-fA-F]*) die "hex bytes must be plain hex digits: $hx" ;;
+	esac
+	[ $(( ${#hx} % 2 )) -eq 0 ] || die "hex bytes need an even number of digits: $hx"
+	refuse_fs_part "$part"
+	require_android
+	say "== state before =="
+	print_state
+	say ""
+	say "write: $part @ 0x$(printf '%x' "$off") <- $hx"
+	write_hex "$part" "$off" "$hx"
+	say "ok"
 }
 
 dump_part() { # part dest-file  (whole partition, pulled to the PC)
@@ -778,7 +804,6 @@ cmd_set() {
 		hx=$(str2hex "$val")
 		say "CID: $(p_cid) -> $val"
 		write_hex "$PART_CID" "$OFF_CID" "$hx"
-		verify_hex "$PART_CID" "$OFF_CID" "$hx"
 		say "now: $(p_cid)"
 		;;
 	mid)
@@ -786,14 +811,12 @@ cmd_set() {
 		hx=$("$PY" -c 'import sys;h=sys.argv[1];print((h+"00"*16)[:36])' "$hx")
 		say "MID: $(p_mid) -> $val"
 		write_hex "$PART_MID" "$OFF_MID" "$hx"
-		verify_hex "$PART_MID" "$OFF_MID" "$hx"
 		say "ok"
 		;;
 	tamper_flag)
 		hx=$(u32hex "$val")
 		say "tamper_flag: $(p_tamper) -> $val"
 		write_hex "$PART_TAMPER" "$OFF_TAMPER" "$hx"
-		verify_hex "$PART_TAMPER" "$OFF_TAMPER" "$hx"
 		say "ok"
 		;;
 	secure_flag)
@@ -806,7 +829,6 @@ cmd_set() {
 		hx=$(u32hex "$val")
 		say "secure_flag: $(p_secure) -> $val"
 		write_hex "$PART_SECURE" "$OFF_SECURE" "$hx"
-		verify_hex "$PART_SECURE" "$OFF_SECURE" "$hx"
 		say "ok"
 		;;
 	esac
@@ -831,7 +853,6 @@ cmd_bl() { # locked | unlocked
 	say ""
 	say "BL lock: $(bl_state) -> $want   ($PART_BLMAGIC 0x$(printf '%x' "$((OFF_BLMAGIC))") = $hx)"
 	write_hex "$PART_BLMAGIC" "$OFF_BLMAGIC" "$hx"
-	verify_hex "$PART_BLMAGIC" "$OFF_BLMAGIC" "$hx"
 	say "ok - reboot to the bootloader to see it"
 }
 
@@ -937,7 +958,6 @@ cmd_soff() {
 	say ""
 	say "== write secure flag =="
 	write_hex "$PART_SECURE" "$OFF_SECURE" "$(u32hex 0)"
-	verify_hex "$PART_SECURE" "$OFF_SECURE" 00000000
 	say "$PART_SECURE 0x$(printf '%x' "$((OFF_SECURE))") = 0"
 
 	say ""
@@ -981,7 +1001,6 @@ cmd_son() {
 	say ""
 	say "== write secure flag =="
 	write_hex "$PART_SECURE" "$OFF_SECURE" "$(u32hex 3)"
-	verify_hex "$PART_SECURE" "$OFF_SECURE" 03000000
 	say "$PART_SECURE 0x$(printf '%x' "$((OFF_SECURE))") = 3"
 
 	say ""
@@ -1246,6 +1265,8 @@ stool.sh $VERSION - HTC One M8 S-OFF control tool
   stool.sh set mid <9 chars>
   stool.sh set tamper_flag <0-255>
   stool.sh set secure_flag <0|3>
+  stool.sh write <partition> <offset> <hex bytes>
+                                   arbitrary bytes at an offset, read back after
   stool.sh lock                    write the BL magic = locked
   stool.sh unlock                  write the BL magic = unlocked
   stool.sh nowarn                  blank the six "This build is for ..." lines
@@ -1288,6 +1309,7 @@ son)     [ $# -eq 0 ] || die "usage: stool.sh son"
 backup)  cmd_backup "$@" ;;
 restore) cmd_restore "$@" ;;
 set)     cmd_set "$@" ;;
+write)   cmd_write "$@" ;;
 lock)    [ $# -eq 0 ] || die "usage: stool.sh lock"
          cmd_bl locked ;;
 unlock)  [ $# -eq 0 ] || die "usage: stool.sh unlock"

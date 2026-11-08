@@ -45,7 +45,7 @@ scripts/stool.sh restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 
 ## 命令和期望输出
 
-`scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 Security 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure_flag 0` 本来就是改 Security 状态本身，这几条不预先要求 S-OFF；`set secure_flag 0` 仍会先探测写保护，真还有保护就拒绝。
+`scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`write`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 Security 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure_flag 0` 本来就是改 Security 状态本身，这几条不预先要求 S-OFF；`set secure_flag 0` 仍会先探测写保护，真还有保护就拒绝。
 
 ```sh
 scripts/stool.sh status                  # Security 状态 + 其他参数（Android 或 fastboot 都行）
@@ -57,6 +57,7 @@ scripts/stool.sh set cid <cid>           # 8 字符，11111111 = SuperCID
 scripts/stool.sh set mid <mid>           # 9 字符，例如 0P6B12000
 scripts/stool.sh set tamper_flag <0|4>   # 0 = Official，4 = Modified
 scripts/stool.sh set secure_flag <0|3>   # 0 = S-OFF，3 = S-ON
+scripts/stool.sh write pg1fs 0x8400 00000000   # 任意偏移写任意字节，写完自动回读
 scripts/stool.sh lock                    # BL magic -> HTCU
 scripts/stool.sh unlock                  # BL magic -> 00000000
 scripts/stool.sh nowarn                  # 抹掉 hboot 里六行开发警告红字
@@ -467,25 +468,13 @@ done
 换构建时这套流程要重走一遍——找候选位置、写探针值、读回——两条规矩：
 
 - 搜设备已经告诉你的东西（`cidnum`、`modelid`、hboot 那行状态），不要猜偏移；同一个值回头还能验证你找到的位置。
-- 每次写完先 `sync` + `drop_caches` 再回读，`dd` 的 `records out` 不算数：
+- 写探针、刷盘、丢缓存、回读已经合成一条命令：
 
   ```sh
-  # 主机：要写进去的那几个字节，做成 dd 的输入文件
-  printf '\x00\x00\x00\x00' > probe.bin
-  adb push probe.bin //data/local/tmp/
-
-  # 手机 root shell：写 → 刷盘 → 丢缓存 → 读回
-  dd if=/data/local/tmp/probe.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=$off count=4
-  sync
-  echo 3 > /proc/sys/vm/drop_caches
-  dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=$off count=4 | od -An -tx1
+  scripts/stool.sh write pg1fs 0x8400 00000000
   ```
 
-  所谓“探针”就是那几个字节本身：`dd` 要一个输入文件，而二进制走 `adb shell` 的参数会被引号和 NUL 吃掉，所以做成文件推上去。长度必须和 `count` 对上（4 字节字段就 `count=4`）。`stool.sh` 里 `write_hex` 用 python 的 `unhexlify` 生成同一个东西，`count` 取十六进制串长度的一半。
-
-  前两条在主机上，后四条在手机的 root shell 里（`adb shell 'su -c "..."'`）。`$off` 是 `stool.sh` 里的偏移变量，`write_hex` 干的就是这一套。
-
-  `dd` 只把字节写进页缓存；写保护还在时，eMMC 是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备，所以 `write_hex` 写完必须跟一次 `verify_hex`。
+  它内部就是 `write_hex`：把字节做成文件推上去 → `dd` 写 → `sync` + `echo 3 > /proc/sys/vm/drop_caches` → 读回逐字节比对，不一致直接失败。为什么非得这么绕：`dd` 只把字节写进页缓存；写保护还在时，eMMC 是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备——`write_hex` 末尾自己就带这一步回读（`verify_hex`），不用调用方记着。
 
 ### 5. 移植
 
