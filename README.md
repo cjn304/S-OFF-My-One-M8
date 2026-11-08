@@ -535,9 +535,8 @@ The reference build is:
 | root | Magisk 20.1 (`su`), `modules_disabled=0` |
 | 32 GB test unit | 4.18.708.12 (S-ON), hboot `3aa067db`, Magisk 20.1, 61071360-sector eMMC |
 
-MID and CID are the values the phone shipped with; the reference unit was later
-switched to `0P6B12000` / `11111111` and re-flashed with the Dev firmware, which
-is why both builds appear above.
+The reference unit was later switched MID / CID to `0P6B12000` / `11111111` and
+re-flashed with the Dev firmware, which is why both builds appear above.
 
 Two things have to match when moving to another device, and they fail
 independently: the kernel side (struct layouts, symbol addresses) and the model
