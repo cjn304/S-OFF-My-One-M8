@@ -443,19 +443,38 @@ error: no section in targets.conf matches this device.
   observed: hboot:8192 sp1:10240 pg1fs:243646 board_info:32 ...
 ```
 
-把 `observed:` 后面那串（从 `hboot:8192` 开始）填进新 `[name]` 项的 `layout =`，再补偏移；偏移仍然只能人工推导。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
+把 `observed:` 后面那串（从 `hboot:8192` 开始）填进新 `[name]` 项的 `layout =`。偏移是另一个问题。
+
+**偏移的权威来源是 hboot。** 这些数没有一个是猜的，全都是 hboot 自己读的：它读 pg1fs 决定 Security，读那 4 字节 magic 决定 `LOCKED` / `UNLOCKED`，读 tamper 决定 `Software status` 打哪一句，读 `board_info` / `mfg` 回答 `getinfo`，读 `sp1` 画第一屏。所以换机型时的正路是把目标机的 hboot（`aboot`）镜像反汇编，看它读什么：
+
+```sh
+scripts/stool.sh backup hboot          # 或者从对应 RUU 里取 aboot
+strings -a -t x backup/*.hboot.img | grep -E 'pg1fs|Software status|LOCKED|cidnum|modelid'
+```
+
+拿到字符串的文件偏移（按你给镜像设的加载基址换算成地址），在 Ghidra / IDA 里跳过去，看谁引用它（Ghidra 的 References、IDA 的 xrefs），顺着读到那段「读分区 → 取字段 → 和常量比较」的代码。hboot 是裸 ARM32 小端、没有符号，但锚点字符串和立即数都在：
+
+| 字段 | 键 | 位置 | 偏移与宽度 | hboot 里的锚点 |
+|---|---|---|---|---|
+| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，4 字节 u32 LE | `Set security flag 0 fail!!!`、`SecurityLevel:%d`、`pg1fs_security` |
+| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字节 ASCII | `*** UNLOCKED ***` / `*** LOCKED ***` |
+| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，4 字节 u32 LE | `*** Software status: Modified ***` / `Official` |
+| CID | `cid` | `board_info` p3 | 0x14，8 字节 ASCII | `cidnum:` |
+| MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `modelid:` |
+| 警告 | `bl_partition` | `hboot` p26 | 运行期，无固定偏移 | 六段横幅字符串本身 |
+| 第一屏 | `splash` | `sp1` p12 | 0，W×H×2 字节 | 没有字符串，第一屏的绘制代码 |
+
+右列这些串在 M8 的 hboot 镜像里 `strings -a` 直接就能拿到；别的机型未必同名，但同一家的结构不会差太远，锚点换了就按语义找新的。
+
+**不想反汇编时，有两条只读的辅证，边界要记牢**——它们只能缩小范围或交叉核对，代替不了反汇编。
+
+搜，只对唯一的字符串管用。先把这个机型的小分区各 dump 一份（`backup` 只要分区名：名字和长度都读自设备，镜像落在 `backup/`，每个都按设备报的长度校验过）：
 
 ```sh
 for p in board_info mfg pg1fs pg2fs hboot sp1; do
 	scripts/stool.sh backup "$p"
 done
-```
 
-`backup` 只要分区名：名字和长度都读自设备，镜像落在 `backup/`，每个都按设备报的长度校验过。
-
-搜的时候分两种字段：
-
-```sh
 # ASCII：直接搜字节，grep 给的偏移就是字节数
 grep -abo '11111111' backup/*.board_info.img        # 20:11111111   -> 0x14
 
@@ -466,42 +485,24 @@ od -An -v -tx1 backup/*.mfg.img | tr -d ' \n' \
                                                     # 32768        -> 0x4000
 ```
 
-这两条对着 M8 的 `targets.conf` 跑一遍，得到的正是 `cid = board_info:0x14:8:ascii` 和 `mid = mfg:0x4000:18:utf16le` 里的偏移。
+这两条对着 M8 的 `targets.conf` 跑一遍，得到的正是 `cid = board_info:0x14:8:ascii` 和 `mid = mfg:0x4000:18:utf16le`。4 字节的数值字段搜不出来：`tamper_flag` 只有 0 和 4，一个 23 MB 的分区里 `04000000` 有成千上万个。
 
-搜不出唯一答案的字段，靠**两份状态不同的镜像做差**——但前提是那个状态**不需要先知道偏移就能改**，否则就是绕圈子。`tamper_flag` 属于这一类：它只有 0 和 4 两个值，一个 23 MB 的分区里 `04000000` 有成千上万个，搜不出结果；手上要是有两份 `Software status` 不同的 `pg2fs`（解锁前后就是一对），做差能直接看到它：
+做差，只对**不需要先知道偏移就能改**的状态管用：
 
 ```sh
-cmp -l backup/<改动前>.pg1fs.img backup/<改动后>.pg1fs.img | head
+cmp -l backup/<改动前>.pg2fs.img backup/<改动后>.pg2fs.img | head
 # 第 1 列是从 1 数的字节位置，减一就是偏移；第 2、3 列是两份里的值，八进制
 ```
 
-`secure_flag` 不在这一类里：改它正是 `soff` 要做的事，不先知道偏移就改不动状态。所以「S-ON 拍一份、S-OFF 再拍一份」去找它是循环论证——那种做差只能在偏移已知之后做，是**事后校验**，不是定位手段。
+`bl_magic` 属于这一类：`fastboot oem lock` 是 hboot 自己动手，锁上之后再 dump 一次，`HTCU` 变成 `00000000` 的那 4 个字节就是它，我们一个字节都没写。`secure_flag` 不属于：改它正是 `soff` 要做的事，不先知道偏移就改不动状态，所以「S-ON 拍一份、S-OFF 再拍一份」找它是循环论证，那种做差只能当**事后校验**。绕开反汇编交叉核对它，只能借 `bl_magic`：记录是 `{u32 flag; char magic[4]}`（S-OFF 的一份 `pg1fs` 在 0x8400 实测就是 `00 00 00 00 48 54 43 55`），flag 是 magic 前面那 4 字节，值再用 `readsecureflag` 对一次（3 ↔ `03 00 00 00`）。
 
-它的定位顺序反过来：
-
-1. 先用做差把 `bl_magic` 定下来。`fastboot oem lock` 是 hboot 自己动手：锁上之后再 dump 一次，`HTCU` 变成 `00000000` 的那 4 个字节就是它，我们一个字节都没写。
-2. flag 是紧挨在 `bl_magic` 前面的 4 字节：记录结构是 `{u32 flag; char magic[4]}`。
-3. 值用 `readsecureflag` 交叉验证：报 3 对上 `03 00 00 00`。
-
-跨代移植时连这个结构都可能变；从没解锁过的机器也没有锁前锁后的差可做。这两种情况只能从 hboot 里读——它决定 `Security: on/off` 时读的就是这个位置。
-
-**写探针是能写之后的事，不是定位的第一步。** 一台正常开机的 S-ON 机器上，bootloader 在 eMMC 这一级保护着固件分区，`pg1fs` 上实测直接回 `card status 0x400d00`：`dd` 报成功，字节落不下去，回读必然不一致（[工作原理](#工作原理) 第 1 节）。所以定位阶段全是只读操作——搜、做差。`stool.sh write` 用在写真的能落地的时候：hboot 3.19 以前没设保护的机器，或者已经 S-OFF、或者掉电清掉保护之后，拿它把候选值写一遍读回，作为最后一道确认。
-
-| 字段 | 键 | M8 上的位置 | M8 上的偏移与宽度 | 怎么定位的 |
-|---|---|---|---|---|
-| CID | `cid` | `board_info` p3 | 0x14，8 字节 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
-| MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `fastboot getvar all` 里的 `modelid` 字符串，每字符 2 字节 |
-| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，4 字节 u32 LE | 值只有 0（Official）/ 4（Modified），搜索不唯一；两份 `Software status` 不同的 `pg2fs` 做差，或 S-OFF 之后写一次读回 |
-| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，4 字节 u32 LE | 紧挨在 `bl_magic` 前面那 4 字节；值用 `readsecureflag` 对（3 ↔ `03 00 00 00`） |
-| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字节 ASCII | `HTCU` 解锁、`00000000` 锁定；解锁过之后，`oem lock` 前后各 dump 一次做差 |
-| 警告 | `bl_partition` | `hboot` p26 | 运行期，无固定偏移 | 六段已知横幅字符串，按镜像搜 |
-| 第一屏 | `splash` | `sp1` p12 | 0，W×H×2 字节 | 画面从 0 开始 |
+**写探针是能写之后的事，不是定位的第一步。** 一台正常开机的 S-ON 机器上，bootloader 在 eMMC 这一级保护着固件分区，`pg1fs` 上实测直接回 `card status 0x400d00`：`dd` 报成功，字节落不下去，回读必然不一致（[工作原理](#工作原理) 第 1 节）。`stool.sh write` 用在写真的能落地的时候：hboot 3.19 以前没设保护的机器，或者已经 S-OFF、或者掉电清掉保护之后，拿它把候选值写一遍读回，作为最后一道确认。
 
 `screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl_partition` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
 
-换构建时这套流程要重走一遍——搜、做差、能写时再确认——两条规矩：
+换构建时这套流程要重走一遍——反汇编拿偏移、辅证交叉核对、能写时再确认：
 
-- 搜设备已经告诉你的东西（`cidnum`、`modelid`、hboot 那行状态），不要猜偏移；同一个值回头还能验证你找到的位置。
+- 先去 hboot 里找锚点（`Set security flag 0`、`Software status`、`cidnum:`），再拿搜或做差核一遍；两条路指向同一个数才算定下来。
 - 最后那步确认（写、刷盘、丢缓存、回读）是一条命令：
 
   ```sh

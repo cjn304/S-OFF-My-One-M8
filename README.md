@@ -753,24 +753,55 @@ error: no section in targets.conf matches this device.
   observed: hboot:8192 sp1:10240 pg1fs:243646 board_info:32 ...
 ```
 
-Paste the part after `observed:` - starting at `hboot:8192` - as `layout =`
-in a new `[name]` section, then fill in the offsets; those still have to be
-derived by hand. Dump the small partitions and search for a value the
-bootloader already reports:
+Paste the part after `observed:` - starting at `hboot:8192` - as `layout =` in a
+new `[name]` section. The offsets are a separate question.
+
+**hboot is where the offsets come from.** None of these numbers is a guess: hboot
+reads every one of them - pg1fs for the Security state, those four magic bytes for
+LOCKED/UNLOCKED, the tamper byte for which `Software status` line to draw,
+`board_info` and `mfg` for `getinfo`, `sp1` for the first screen. So on a new model
+the way to get them is to disassemble that phone's hboot (`aboot`) and read what
+it reads:
+
+```sh
+scripts/stool.sh backup hboot          # or take aboot out of the matching RUU
+strings -a -t x backup/*.hboot.img | grep -E 'pg1fs|Software status|LOCKED|cidnum|modelid'
+```
+
+Take the file offset of a string (add the load base you gave the image), jump
+there in Ghidra or IDA and follow who references it (References in Ghidra, xrefs
+in IDA); the code that reads the partition, picks the field and compares it
+against a constant is right there. hboot is bare ARM32 little-endian with no
+symbols, but the anchor strings and the immediates are present:
+
+| field | key | location | offset and width | anchor in hboot |
+|---|---|---|---|---|
+| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400, 4 bytes u32 LE | `Set security flag 0 fail!!!`, `SecurityLevel:%d`, `pg1fs_security` |
+| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404, 4 bytes ASCII | `*** UNLOCKED ***` / `*** LOCKED ***` |
+| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804, 4 bytes u32 LE | `*** Software status: Modified ***` / `Official` |
+| CID | `cid` | `board_info` p3 | 0x14, 8 bytes ASCII | `cidnum:` |
+| MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE | `modelid:` |
+| warning | `bl_partition` | `hboot` p26 | run time, no fixed offset | the six banner strings themselves |
+| first screen | `splash` | `sp1` p12 | 0, W x H x 2 bytes | no string - the code that draws it |
+
+Every string in that column is present in the M8 hboot image today (`strings -a`
+finds them). Another model will word them differently; when an anchor is missing,
+look for the new string with the same meaning rather than assuming the old one.
+
+**Without a disassembler there are two read-only shortcuts, and both have a
+boundary** - they narrow the search or cross-check a result, they cannot replace
+reading the code.
+
+Search works only for unique strings. Dump the small partitions of the model first
+(`backup` needs only the partition name - the name and the size both come from the
+device, images land in `backup/`, each checked against the length the phone
+reports):
 
 ```sh
 for p in board_info mfg pg1fs pg2fs hboot sp1; do
 	scripts/stool.sh backup "$p"
 done
-```
 
-`backup` needs only the partition name - the name and the size both come from
-the device. Images land in `backup/`, each checked against the length the
-phone reports.
-
-Two kinds of field to search for:
-
-```sh
 # ASCII: search the bytes; grep's offset is already a byte count
 grep -abo '11111111' backup/*.board_info.img        # 20:11111111   -> 0x14
 
@@ -783,67 +814,46 @@ od -An -v -tx1 backup/*.mfg.img | tr -d ' \n' \
 
 Run those against the M8 images and you land on exactly the offsets in
 `targets.conf` (`cid = board_info:0x14:8:ascii`, `mid = mfg:0x4000:18:utf16le`).
-Fields whose value is not unique come from **diffing two images taken in different
-states** - but only when that state can be changed **without already knowing the
-offset**, or the argument goes in a circle. `tamper_flag` qualifies: it is only 0
-or 4, a 23 MB partition holds thousands of `04000000`, so searching settles
-nothing; two `pg2fs` dumps whose `Software status` differs (the unlock gives you
-such a pair) show it directly when diffed:
+A four-byte number does not search: `tamper_flag` is only 0 or 4, and a 23 MB
+partition holds thousands of `04000000`.
+
+Diffing works only for a state that can be changed **without already knowing the
+offset**:
 
 ```sh
-cmp -l backup/<before>.pg1fs.img backup/<after>.pg1fs.img | head
+cmp -l backup/<before>.pg2fs.img backup/<after>.pg2fs.img | head
 # column 1 is the byte position counting from 1; subtract one for the offset.
 # columns 2 and 3 are the two values, in octal.
 ```
 
-`secure_flag` does not qualify: changing it is exactly what `soff` does, and
-without the offset nothing can be changed. Dumping while S-ON and again after
-`soff` therefore argues in a circle - that diff only works once the offset is
-already known, which makes it an after-the-fact check, not a way to locate it.
-
-Its offset is found in the opposite order:
-
-1. diff for `bl_magic` first. `fastboot oem lock` is hboot doing the writing:
-   dump again after locking, and the four bytes that went from `HTCU` to
-   `00000000` are that field - we wrote nothing.
-2. the flag is the four bytes immediately before `bl_magic` - the record is
-   `{u32 flag; char magic[4]}`.
-3. cross-check the value with `readsecureflag`: 3 matches `03 00 00 00`.
-
-Across generations even that structure can change, and a phone that was never
-unlocked has no before/after to diff either. In both cases the only source is
-hboot itself: it is what reads this location to decide `Security: on/off`.
+`bl_magic` qualifies: `fastboot oem lock` is hboot doing the writing, so dump again
+after locking and the four bytes that went from `HTCU` to `00000000` are that
+field - we wrote nothing. `secure_flag` does not qualify: changing it is exactly
+what `soff` does, so dumping while S-ON and again after `soff` argues in a circle,
+and that diff is only an after-the-fact check. To cross-check it without a
+disassembler you have to go through `bl_magic`: the record is
+`{u32 flag; char magic[4]}` (an S-OFF `pg1fs` reads `00 00 00 00 48 54 43 55` at
+0x8400), so the flag is the four bytes before the magic, and `readsecureflag`
+confirms the value (3 <-> `03 00 00 00`).
 
 **A write probe belongs after writes start landing, not at the start.** On a phone
 booted normally into S-ON the bootloader protects the firmware partitions at the
 eMMC level, and `pg1fs` answers `card status 0x400d00`: `dd` reports success,
 nothing reaches the flash, and the read-back cannot match (section 1 of
-[How it works](#how-it-works)). Locating is
-read-only work - search, then diff. `stool.sh write` is for the cases where a
-write does land: an hboot before 3.19 that never armed the protection, or after
-S-OFF, or after the power cut cleared it - the last confirmation, not the first
-step.
-
-| field | key | location on the M8 | offset and width on the M8 | how it was located |
-|---|---|---|---|---|
-| CID | `cid` | `board_info` p3 | 0x14, 8 bytes ASCII | the `cidnum` string `fastboot getvar all` prints |
-| MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE | the `modelid` string `fastboot getvar all` prints, 2 bytes per char |
-| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804, 4 bytes u32 LE | only 0 (Official) / 4 (Modified), not unique to search for; diff two `pg2fs` dumps whose `Software status` differs, or write once and read back after S-OFF |
-| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400, 4 bytes u32 LE | the four bytes right before `bl_magic`; value cross-checked with `readsecureflag` (3 <-> `03 00 00 00`) |
-| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404, 4 bytes ASCII | `HTCU` unlocked, `00000000` locked; once the phone has been unlocked, dump either side of `oem lock` and diff |
-| warning | `bl_partition` | `hboot` p26 | run time, no fixed offset | six known banner strings, searched per image |
-| first screen | `splash` | `sp1` p12 | 0, W x H x 2 bytes | the frame starts at 0 |
+[How it works](#how-it-works)). `stool.sh write` is for the cases where a write
+does land: an hboot before 3.19 that never armed the protection, or after S-OFF,
+or after the power cut cleared it - the last confirmation, not the first step.
 
 `screen` is the only key without an offset: it sets the default WxH `splash`
 converts to, and `bl_partition` names the partition `nowarn` rewrites - `hboot`
 here, `aboot` on other models - and its size is what bounds the image.
 
-Two rules when redoing this on another build - search, diff, and confirm only
-when writes land:
+Two rules when redoing this on another build - disassemble for the offset, use the
+shortcuts to cross-check, write only once writes land:
 
-- search for something the device already tells you (`cidnum`, `modelid`,
-  the hboot status line) instead of guessing at offsets; the
-  same value then confirms what you found.
+- find the anchor in hboot first (`Set security flag 0`, `Software status`, `cidnum:`),
+  then check it with a search or a diff; the offset is settled when both roads lead
+  to the same number.
 - the final confirmation (write, flush, drop the cache, read back) is one command:
 
   ```sh
