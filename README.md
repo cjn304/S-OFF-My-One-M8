@@ -782,15 +782,26 @@ probe, read it back:
   from `dd` proves nothing:
 
   ```sh
+  # host: the bytes to write, packed into the file dd reads
+  printf '\x00\x00\x00\x00' > probe.bin
+  adb push probe.bin //data/local/tmp/
+
+  # phone, root shell: write, flush, drop the cache, read back
   dd if=/data/local/tmp/probe.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=$off count=4
   sync
   echo 3 > /proc/sys/vm/drop_caches
   dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=$off count=4 | od -An -tx1
   ```
 
-  All four run in the phone's root shell (`adb shell 'su -c "..."'`); push the
-  probe file to `/data/local/tmp` first. The host only supplies `adb`. `$off` is
-  the variable `stool.sh` uses, and these four steps are what `write_hex` does.
+  The probe is just those bytes: `dd` needs an input file, and binary handed to
+  `adb shell` as an argument gets eaten by quoting and NULs, so it is pushed as a
+  file. Its length has to match `count` (four bytes for a u32 field). `write_hex`
+  builds the same thing with python's `unhexlify`, with `count` set to half the
+  hex string's length.
+
+  The first two lines are host-side; the rest run in the phone's root shell
+  (`adb shell 'su -c "..."'`). `$off` is the offset variable `stool.sh` uses, and
+  this sequence is what `write_hex` does.
 
   `dd` only puts the bytes in the page cache. With write protection still armed
   the eMMC refuses at writeback (`card status 0x400d00`), and the read that

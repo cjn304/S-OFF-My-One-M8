@@ -470,13 +470,20 @@ done
 - 每次写完先 `sync` + `drop_caches` 再回读，`dd` 的 `records out` 不算数：
 
   ```sh
+  # 主机：要写进去的那几个字节，做成 dd 的输入文件
+  printf '\x00\x00\x00\x00' > probe.bin
+  adb push probe.bin //data/local/tmp/
+
+  # 手机 root shell：写 → 刷盘 → 丢缓存 → 读回
   dd if=/data/local/tmp/probe.bin of=/dev/block/bootdevice/by-name/pg1fs bs=1 seek=$off count=4
   sync
   echo 3 > /proc/sys/vm/drop_caches
   dd if=/dev/block/bootdevice/by-name/pg1fs bs=1 skip=$off count=4 | od -An -tx1
   ```
 
-  四条都在手机的 root shell 里跑（`adb shell 'su -c "..."'`），探针文件先用 `adb push` 放到 `/data/local/tmp`；主机这一侧只出 `adb` 这一层。`$off` 就是 `stool.sh` 里那个偏移变量；`write_hex` 干的就是这四步。
+  所谓“探针”就是那几个字节本身：`dd` 要一个输入文件，而二进制走 `adb shell` 的参数会被引号和 NUL 吃掉，所以做成文件推上去。长度必须和 `count` 对上（4 字节字段就 `count=4`）。`stool.sh` 里 `write_hex` 用 python 的 `unhexlify` 生成同一个东西，`count` 取十六进制串长度的一半。
+
+  前两条在主机上，后四条在手机的 root shell 里（`adb shell 'su -c "..."'`）。`$off` 是 `stool.sh` 里的偏移变量，`write_hex` 干的就是这一套。
 
   `dd` 只把字节写进页缓存；写保护还在时，eMMC 是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备，所以 `write_hex` 写完必须跟一次 `verify_hex`。
 
