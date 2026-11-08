@@ -6,20 +6,20 @@
 
 hboot 用 eMMC 的 power-on 写保护锁住固件分区，而这种保护按规范只有掉电才清除。所有用户态的通路都被堵死，所以这里用一个小内核模块在内核态把 PMIC 的电真断一次再上电，最后写 flag 字节。
 
-已在 HTC One M8，hboot 3.19.0.0000 上[测试](#实测记录)（其它机型见[移植](#6-移植)）。
+已在 HTC One M8，hboot 3.19.0.0000 上[测试](#实测记录)（其它机型见[移植](#5-移植)）。
 
 ---
 
 ## 前提条件
 
 * 备份数据并[解锁 BL](http://www.htcdev.com/bootloader/)。然后 root，或刷入自带 root 的固件。像 Sunshine 一样临时 root 可以不用解锁 BL，S-OFF 之后随便解锁。
-* 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows](#windows)）。
+* 一套交叉工具链 + 能跑 kbuild 的机器：Linux，或 MSYS2/Git Bash（见 [Windows 工具链](#windows-工具链)）。
 
 ---
 
 ## 快速开始
 
-下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反：重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。每个 `stool.sh` 命令和 `prepare.sh` 都会自己探测 root（Magisk 的 `su`、adb root 或 userdebug 固件）。详见[构建](#构建)和[期望输出与故障处理](#期望输出与故障处理)。
+下面的命令假设 `adb shell` 本身就是 root：要么是 userdebug / eng 固件，`adb root` 能生效；要么是已 root 的官方固件，每条 `adb shell ...` 改成 `adb shell 'su -c "..."'`。引号顺序不能反：重定向必须写在 su 里面，否则非 root 的 shell 会先执行它，直接 `Permission denied`。每个 `stool.sh` 命令和 `prepare.sh` 都会自己探测 root（Magisk 的 `su`、adb root 或 userdebug 固件）。详见[构建](#构建)和[命令和期望输出](#命令和期望输出)。
 
 ```sh
 # 0. 查 Security 状态、modules、SELinux
@@ -43,7 +43,7 @@ scripts/stool.sh restore pg2fs HT495WM00193-20261104-045201.pg2fs.img
 
 ---
 
-## stool.sh
+## 命令和期望输出
 
 `scripts/stool.sh` 是下面全部命令的入口。会写设备的命令（`set`、`lock`、`unlock`、`nowarn`、`splash`）在 dump 和写入之前先查 Security 状态，S-ON 直接拒绝，一个字节都不会写。`status`、`backup` 只读，`restore` 的分区由参数给出，`soff`、`son` 和 `set secure_flag 0` 本来就是改 Security 状态本身，这几条不预先要求 S-OFF；`set secure_flag 0` 仍会先探测写保护，真还有保护就拒绝。
 
@@ -63,13 +63,13 @@ scripts/stool.sh nowarn                  # 抹掉 hboot 里六行开发警告红
 scripts/stool.sh splash photo.png        # 换开机第一屏，尺寸取自 targets.conf
 ```
 
-每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一种布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[5. 参数偏移](#5-参数偏移)。
+每个参数放在哪、备份哪些分区，都来自 `targets.conf`：一种布局一项，用设备在 `/sys/class/block/*/uevent` 里报的尺寸去匹配。布局对不上的机器会在写入之前被拒绝；要加一项，见[4. 参数偏移](#4-参数偏移)。
 
 没有整份备份是自动做的：`backup` 写出 `backup/<序列号>-<时间戳>.{txt,img}`（四个整分区，外加一份等于 `status` 输出、末尾附还原命令的 txt），`restore <partition> <file.img>` 再把其中一张 img 写回去，`pg1fs` 里的 `0x8400` 也在其中。所以镜像里的状态说了算：还原一份 S-ON 时期拍的 `pg1fs.img`，手机就回到 S-ON。不打招呼就 dump 的只有 `nowarn` 和 `splash`：它们只把自己即将覆盖的那一个分区存下来，那是撤销用的，不是别处的保险。
 
 `set tamper_flag` 接受 0..255 的十进制，标准取值是 `0` 和 `4`。这个 u32（4 字节，只有最低字节非零）就是 hboot `Software status:` 那行的唯一来源：`00` 显示 `*** Software status: Official ***`，其他显示 `*** Software status: Modified ***`。bootloader 侧也能读同一个值：`fastboot oem get_tamper_flag` 返回 `Tamper_Flag: 0x0`，这条命令不在 `getvar all` 里，只在 `oem ?` 的列表里。
 
-`set secure_flag` 就是 `soff` 最后一步的那次写入，单独跑：写 `0x8400`，再回读，不断电也不重启。S-ON 时写 `0` 会先探测 `mmc_cmd wp`：只有真的还有写保护才拒绝；位图全零（[移植](#6-移植) A 档那种旧 hboot）就照写。已 S-OFF 的机器上，还原了一份 S-ON 时期拍的 `pg1fs.img` 之后，也用它把 `00` 写回去。
+`set secure_flag` 就是 `soff` 最后一步的那次写入，单独跑：写 `0x8400`，再回读，不断电也不重启。S-ON 时写 `0` 会先探测 `mmc_cmd wp`：只有真的还有写保护才拒绝；位图全零（[移植](#5-移植) A 档那种旧 hboot）就照写。已 S-OFF 的机器上，还原了一份 S-ON 时期拍的 `pg1fs.img` 之后，也用它把 `00` 写回去。
 
 `lock` / `unlock` 直接写 `pg1fs`（p2）0x8404 的四个字节：`HTCU` = 解锁，`00000000` = 锁定。hboot 开机比对的就是这串 magic，所以设备一旦 S-OFF 就不需要在官网申请的解锁码了；也不走 `fastboot oem lock`：那条只会得到 `RELOCKED`，而 hboot 3.19 根本没有 `oem unlock` 命令（返回 `[ERR] Command error`）。
 
@@ -85,299 +85,9 @@ M8 的 `backup` 写出这些文件：
 
 `restore` 比对文件名里的序列号：和当前机器不一致时直接拒绝，只给文件名时到 `backup/` 里找。
 
-### 警告红字
+下面每条命令：什么输出说明它成了，以及会停在哪。`prepare.sh` 和编译的输出在下面的「构建」里，不在这里重复。
 
-六行开发警告是 hboot 在启动镜像签名校验失败时画出来的，校验覆盖 `boot` 和 `recovery` 两个分区，任一不符都会画。
-
-在 6.12.1540.4 的 hboot 里，六行共用一个绘制函数（文件偏移 `0x18B64`），全镜像只有一条 `bl` 指令进入它（`0x147EA`）。这条指令位于按分区校验的函数里，而该函数有六个入口：两个把 mode 设为 `9` 或 `0x0F`，读 `boot`；四个设为 `3`，读 `recovery`。任一入口校验失败，都会执行同一条 `bl 0x18B64`。其中两个 recovery 入口在 fastboot 命令处理函数里，调用前刚给主机回过 `OKAY`。
-
-调用点前面紧挨着签名校验（`0x147D4`）：校验返回 0 就直接启动，非 0 才进这个函数画警告、刷屏，然后继续启动。4.18 的 `3aa067db` 是同一结构（函数 `0x18258`，调用点 `0x142AE`，校验 `0x14298`）。
-
-`nowarn` 是按内容找那六行，不是写死偏移。它先把整个 4 MB 的 `hboot` 分区 dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回，再逐字节读回校验。偏移在不同构建之间是变动的（6.12.1540.4 上是 `0x8C340`，6.31.1402.1 的 dump 上是 `0x8C3F8`，更老的 m8_ul 镜像上是 `0x899CE`），所以必须动态找。
-
-运行前要知道两件事：
-
-- hboot 带 HTC 签名，改一个字节签名就废了。S-OFF 时 SBL 跳过校验，所以还能启动；一旦 `son` 把 secure flag 写回 3，下次启动 SBL 重新验签，失败就停在那里——hboot 不会执行，fastboot、RUU 都进不去，只剩 EDL。改之前必须留下 `nowarn` 打出的 `<serial>-<timestamp>.hboot.img`，并且在 `son` 之前用 `restore hboot <序列号>-<时间戳>.hboot.img` 写回去。`son` 会先检查六行是否还在，发现被清空就直接拒绝。
-- 这六行有引用，只是不用 32 位绝对地址：代码先 `ldr rX, [pc, #imm]` 取一个小偏移，再 `add rX, pc` 加上当前 PC，得到字符串地址。所以按 `0x0F58xxxx` 这种绝对地址搜不到，但绘制函数确实存在：6.12.1540.4 上是 `0x18B64`，4.18 的 `3aa067db` 上是 `0x18258`。改字符串仍然是最小改动，因为六行只有这一处绘制，清空内容不影响控制流。
-
-### 第一屏
-
-`splash` 把 PNG 转成 `sp1` 分区真正的格式：小端 RGB565，尺寸取 `targets.conf` 里该机型那一项（M8 上是 1080x1920，4,147,200 字节），分区其余部分是填充。换机型时正确做法是给 `targets.conf` 加一项，把 `screen` 写成它的原生分辨率，之后直接 `splash photo.png` 就会用那个尺寸；`--size=WxH` 只是临时覆盖，不改配置时才用。写之前会先拿帧大小和分区大小比一遍，装不下就直接停。M8 的 `sp1` 是 5,242,880 字节，1080x1920 刚好装下，1440x2560 的 7,372,800 字节会被拒绝，那个尺寸只适合分区更大的机型。
-
-转换由 `scripts/png2rgb565.py` 完成，刻意只用标准库：精简的 Windows 环境里没有 ffmpeg、没有 PIL、没有 ImageMagick。支持非隔行 8 位 PNG 的灰度、灰度+alpha、RGB、RGBA 和调色板，缩放用双线性；其它格式会明确报错而不是生成一张错图（JPG 也一样，先另存成 PNG）。
-
-源图不是 9:16 时由 `--fit` 决定怎么处理，命令会把这行打出来：
-
-| `--fit` | 行为 |
-|---|---|
-| `contain`（默认） | 等比缩放到放得下，居中，其余用 `--bg=RRGGBB` 填（默认黑） |
-| `cover` | 等比缩放到铺满，居中裁掉溢出部分，没有黑边，但会切边 |
-| `stretch` | 两个方向各自拉伸，**会变形**，会打印警告 |
-
-以前固定是 `stretch`，一张 1920×1080 的照片会被悄悄压成 1080×1920。现在默认 `contain`，因为"带黑边的开机图"比"被拉变形的 logo"是更小的错误。
-
-这个转换器检查的是容器不是内容：PNG 能不能读、色彩类型和位深支不支持、结果是不是正好 4,147,200 字节、写进去的字节读回是否一致。它没法告诉你图片是倒的、全黑、全白，或者分辨率太低糊成一片，这些只能你自己看。
-
----
-
-## CID、MID 和刷机的关系
-
-MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。这两项都写在固件包的 `android-info.txt` 里，hboot 在 RUU 模式下解析 zip 时逐项比对。`set mid` 写 mfg 0x4000，`set cid` 写 board_info 0x14；CID 改成 `11111111`（SuperCID）在多数 hboot 上能放行任意 CID，但不是所有构建都认，而且固件层版本本身可能先把 RUU 挡在门外，见[从 4.18 刷 6.12 的 RUU](#从-418-刷-612-的-ruu)。各固件包的对应见这份[表格](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
-
-### 从 4.18 刷 6.12 的 RUU
-
-港版 4.18.708.12（hboot `3aa067db`）直接跑 6.12.1540.4 的 RUU，界面在点 Start 后立刻报 Error 155，日志里的错误是：
-
-```text
-(bootloader) zip info parsing...
-FAILED (status read failed (Too many links))
-```
-
-这不是 MID 或 CID 不匹配。RUU 日志（`C:\RUU_log\RUU_*.log`）显示它只读了 `boot-mode`、`battery-status`、`version-main`，随后进入 RUU 模式发送 zip，失败点在 hboot 解析 zip 的位置。
-
-原因是 RUU exe 里的 `rom.zip` 是 HTC 的 large-zip 容器，htc_fastboot 发送前会打印 `found large-zip header`。4.18 这块 hboot 只认普通 zip，读到分块结构后直接重置 USB 端点，主机端看到的就是 `Too many links`。
-
-解法是先刷底包（`DevEdition_6.12.1540.4_+StockRecovery+boot.img_0p6bimg.zip`，约 53 MB，含 hboot），把 hboot 换到 `76df2b54`。
-
-`fastboot flash hboot hboot_signedbyaa.img` 会被 hboot 拒绝，报 `FAILED (remote: not allowed)`，FASTBOOT 和 RUU 模式下都一样。hboot 分区只接受 zip 流程，不接受裸写镜像。
-
-刷固件包会写 sbl1 和 tz，中断会砖。刷之前确认电量，刷的过程中不要动线。`backup hboot` 只在 hboot 还能进 bootloader 时有用，完全黑屏时它救不了。
-
----
-
-## 构建
-
-### 1. 拿源码
-
-下载与固件接近的内核源码，HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)（Kernel Source Code）发布。例如 `m8ul-3.4.0-perf-ga6393e1.zip`，手机报哪一串就找哪一个。包内有 `kernel570.tar.gz`（`kernel/`）和 `platform.tar.gz`（其余源码树），只有 `kernel/` 有用。
-
-Windows 上要注意 NTFS 大小写不敏感，而这棵树里有只差大小写的文件（`net/netfilter/xt_DSCP.c` 与 `xt_dscp.c`）。要么给目录开大小写敏感（`fsutil file setCaseSensitiveInfo <dir> enable`，需要管理员），要么解包时排除这些路径，它们是 netfilter 驱动，与本项目无关。
-
-### 2. 手机 → 源码树
-
-```sh
-scripts/prepare.sh /d/kernel-src/kernel
-```
-
-一条命令做六件事，每一步都把结果打出来：
-
-| 步 | 做什么 | 停在这一步说明 |
-|---|---|---|
-| 1 | `stool.sh backup boot` 取下 boot 分区 | adb 或 root 不通，或者手机在 recovery |
-| 2 | 从镜像里挖出编译进内核的 `.config` | 内核没开 `CONFIG_IKCONFIG`，镜像里就没有配置 |
-| 3 | 五个符号地址加 `module_layout` crc 写进 `kmod/addr.h`；按 `targets.conf` 生成 `kmod/board.h`，再拿手机上的实际值核对 | `kptr_restrict` 不为 0、`targets.conf` 没有对应的一节，或者那两项和手机对不上 |
-| 4 | 用配置算出 vermagic 标志位，和手机上的原厂模块逐字比 | 拿到的配置不是这台机内核的 |
-| 5 | 覆盖 `kernel/.config`，`oldconfig`，数新符号 | 树离这个构建太远（超过 20 个要 `--force`） |
-| 6 | `modules_prepare`，核对 `utsrelease.h` | 工具链，见下一节 |
-
-几处不能想当然的地方：
-
-- 配置不看 `arch/arm/configs/m8_defconfig`：HTC 一棵树出很多变体，设备自己的配置压在 kernel 镜像里（`CONFIG_IKCONFIG=y`，`CONFIG_IKCONFIG_PROC` 关着，所以手机上没有 `/proc/config.gz`）。第 2 步是从 `IKCFG_ST` 标记里把那团 gzip 解出来的。
-- 别用 RUU 里的 `boot_signed.img`：它前面多 256 字节签名头，boot header 会从错的偏移读。要的是分区 dump，`backup boot` 给的就是。
-- 内核是 zImage 时，压缩体前面还有一段自解压 stub，gzip 不在偏移 0。`extract_config.py` 按魔数找，lz4、lzo、lzma 会明确报出来让你换工具。
-- `CONFIG_LOCALVERSION` 从 `uname -r` 推：`3.4.0-perf-gXXXXXXX` 的后半截填进去，同时关掉 `LOCALVERSION_AUTO`，否则打过补丁的树会被追加 `-dirty`。它不是加载条件（下面解释），只是让 `.ko` 里的串和手机一致、便于核对。
-- `addr.h` 与源码树无关：它是手机正在跑的那个内核的属性，换哪版树都从手机重读，所以它在这一步，而不是编译前手工做。树已经配好、只想刷新这几个数时，单独跑 `scripts/gen_addr.sh` 就够了——它就是这一步。
-- 手机要在正常启动的状态下跑。boot 分区在上次开机之后被刷过的话，取到的配置和正在跑的符号不是同一个内核。
-
-`--force` 只放开第 5 步的阈值。`ADB`、`CROSS`、`MAKE` 三个环境变量分别指定 adb、工具链前缀和 make 程序。MSYS2 上先做完第 3 节那两条 patch 再跑，`oldconfig` 会先编 `fixdep`。
-
-#### 源码和手机内核不是同一次构建
-
-这是常态：HTC 每个固件版本对应一个源码包，`uname -r` 里那截 `gXXXXXXX` 就是源码包的 git 提交。能不能用**不看版本号**，看三件事：
-
-| 必须一致 | 由谁决定 | 不一致的后果 |
-|---|---|---|
-| vermagic 标志位（`SMP preempt mod_unload modversions ARMv7`） | 树的 `.config` | `insmod` 直接拒 |
-| `struct device` / `sdhci_host` / `mmc_host` 的字段偏移 | 树的头文件 + `.config` | 装得进去，解引用错位 |
-| 五个地址 + `module_layout` crc | 手机的 `addr.h` | 与树无关，换哪版树都一样 |
-
-第一行脚本已经变成一次编译前的比较：第 4 步从 `.config` 算出那串标志位，和手机上的原厂模块逐字对。对不上就停，不会让你等一次二十分钟的编译再发现 `insmod` 拒。理由是 `same_magic()` 只比这半截：模块带 `__versions` 时，第一个空格之前的 `UTS_RELEASE` 被跳过。
-
-第二行脚本只能给间接信号：第 5 步数出来的 `(NEW)` 个数。0 个说明两边符号表对得上，结构体多半没问题；刷出一大片就是树差得远，超过 20 个要 `--force` 才继续。
-
-第三行每次重读，永远和当前内核一致——`addr.h` 在 `.gitignore` 里，本来就不该跨设备提交。`A_MODULE_LAYOUT_CRC` 读自原厂模块的 `__versions`（`scripts/get_module_layout_crc.py`），那是 genksyms 给 `module_layout` 算的 crc，猜不出来。
-
-第二行的真正验收要编完才能做，见 [3. 编译](#3-编译) 末尾的诊断模块：只有 `name=8941_l20` 才算过。
-
-失败就换树，不要凑合：树差得远时 `oldconfig` 给新符号塞默认值，编出来的结构体可能少字段，这种错 `insmod` 阶段看不出来，要到 `regulator_get` 或写 `ops` 时才崩。诊断模块是断电前最后一次便宜的检查。
-
-`prepare.sh` 第 6 步会顺带核 `UTS_RELEASE` 和 `uname -r` 是否一致。不一致也不影响加载（同上，那半截被跳过），但说明 `CONFIG_LOCALVERSION` 没落进配置。
-
-### 3. 编译
-
-`build.sh` 要读 `kmod/addr.h` 和 `kmod/board.h`，两个都是上一节第 3 步写出来的；缺了直接停，它不会去读分区，也不会去读手机。
-
-```sh
-scripts/build.sh /path/to/kernel-tree
-# Windows/MSYS2 上必须传 MSYS 路径（/d/kernel-src/kernel），不能是 D:/...
-# 因为 kbuild 把 M= 当 make 目标传，盘符里的冒号会被当成目标分隔符。
-```
-
-编完它自己把三件事查一遍，全过才退出 0：
-
-```
-pwrsq_diag: (no undefined symbols), __versions 64 bytes, 1 entry
-pwrsq_off: (no undefined symbols), __versions 64 bytes, 1 entry
-pwrsq_on: (no undefined symbols), __versions 64 bytes, 1 entry
-vermagic: 3.4.0-perf-g708019f SMP preempt mod_unload modversions ARMv7
-```
-
-- **未定义符号**：模块一个符号都不导入，列出来的每个都会让内核去要对应的版本 crc，加载时报 `no symbol version for <sym>` 或 `disagrees about version of symbol <sym>`。
-- **`__versions`**：必须正好一条 `module_layout`、整段 64 字节（32 位内核的 `struct modversion_info`）。空了照样链接成功，要到手机上才失败——那时先看 `pwrsq_impl.h` 里 `section("__versions"), used` 的属性还在不在。
-- **vermagic**：拿 `vermagic=` 那行和 `addr.h` 里记的内核串比，不一致就告警，说明 `.ko` 是另一次构建留下的，或者树还没按手机配好。
-
-这几条用的是 `${CROSS}` 前缀的 binutils（`nm`、`readelf`、`strings`）。Git Bash 和 MSYS2 里没有裸的 `readelf`、`nm`、`strings`，只有 Linux 发行版上才是裸名字；想自己单独看某个模块时记得带上前缀，否则得到的是 `command not found` 而不是“没问题”。
-
-`build.sh` 不管用户态那个小工具；`tools/mmc_cmd` 也没有入库，它是一个静态链接的 ARM 可执行文件：
-
-```sh
-make -C tools CROSS=arm-none-linux-gnueabihf-
-```
-
-`soff` 会把它放进 `/dev`（tmpfs）并以 root 运行：`adb push` 写不了 `/dev`，所以先落到 `/data/local/tmp`，再由 root 在 eMMC 还在的时候拷过去。没有它，`soff` 会在动手机之前停下：写保护检查是唯一能证明断电生效的依据。
-
-#### 验收：诊断模块
-
-这是唯一能证明结构体偏移对得上的办法：
-
-```sh
-adb push kmod/pwrsq_diag.ko //data/local/tmp/
-adb shell 'su -c "dmesg -c >/dev/null; insmod /data/local/tmp/pwrsq_diag.ko; sleep 1; dmesg | grep pwrsq"'
-adb shell 'su -c "rmmod pwrsq_diag"'
-```
-
-看到 `name=8941_l20` 才算过。它一次用上五个地址，以及 `r->rdev`、`rdev->desc->ops`、`consumer_list`、`d->kobj.name`、`drvdata`、`sh->mmc` 这些偏移。被 SELinux 拒的话先 `setenforce 0` 再试一次，只影响这次开机——这也是断电前最后一次便宜的检查。
-
-### 4. 工具链的五个坑
-
-2016 年的内核 + 现代工具链 + MSYS2，会撞到五件事，补丁都在 `kernel-patches/`。`prepare.sh` 的第 5、6 步或者上一节的编译报错时，先来这里对号。
-
-| 现象 | 处理 |
-|---|---|
-| `scripts/gcc-wrapper.py` 是 Python 2（`print "..."`） | 命令行传 `CC=` 直接绕过这个 wrapper |
-| `fatal error: linux/compiler-gcc13.h: No such file` | 把 `compiler-gcc4.h` 复制成 `compiler-gcc13.h` |
-| `fixdep: error opening config file:` 和随机解析错误 | MinGW 的 gcc 写出的 `.d` 是 CRLF，让 fixdep 跳过 `\r` |
-| fixdep 在 MSYS2 上段错误 | 把它的 `mmap()` 换成 `malloc()+read()` |
-| 编 dtc 报 `multiple definition of 'yylloc'` | `HOSTCFLAGS=-fcommon`，`prepare.sh` 已经带上 |
-
-```sh
-cd kernel
-patch -p1 < ../kernel-patches/0001-fixdep-crlf-and-no-mmap.patch
-cp ../kernel-patches/compiler-gcc13.h include/linux/
-```
-
-HTC 发的是 tar 包，没有 `.git`，所以用 `patch -p1` 而不是 `git apply`。
-
-wrapper 之所以会介入，是因为顶层 Makefile 写了 `CC = $(srctree)/scripts/gcc-wrapper.py $(REAL_CC)`；命令行传 `CC=<cross>gcc` 就盖掉了。在 Linux 上用老工具链时这些都不需要，fixdep 那个补丁依旧无害。
-
-### 5. 参数偏移
-
-参数偏移不由任何脚本生成，它们跟着分区布局走，所以放在 `targets.conf` 里。
-
-选哪一项，是拿它的 `layout` 行去比设备在 `/sys/class/block/*/uevent` 里报的尺寸（`PARTNAME` 加 `size`，单位 512 字节扇区；无需 root）。用尺寸当键是有道理的：改 MID 或 CID 不会挪动任何东西，因为那两项都是分区里的内容；换了固件，装这些记录的分区尺寸就跟着变。一项都对不上时，脚本在动 eMMC 之前停下，把看到的布局原样打出来：
-
-```
-error: no section in targets.conf matches this device.
-  observed: hboot:8192 sp1:10240 pg1fs:243646 board_info:32 ...
-```
-
-把 `observed:` 后面那串（从 `hboot:8192` 开始）填进新 `[name]` 项的 `layout =`，再补偏移；偏移仍然只能人工推导。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
-
-```sh
-for p in board_info mfg pg1fs pg2fs hboot sp1; do
-	scripts/stool.sh backup "$p"
-done
-```
-
-`backup` 只要分区名：名字和长度都读自设备，镜像落在 `backup/`，每个都按设备报的长度校验过。
-
-| 字段 | 键 | M8 上的位置 | M8 上的偏移与宽度 | 怎么定位的 |
-|---|---|---|---|---|
-| CID | `cid` | `board_info` p3 | 0x14，8 字节 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
-| MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `fastboot getvar all` 里的 `modelid` 字符串，每字符 2 字节 |
-| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，4 字节 u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
-| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，4 字节 u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
-| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字节 ASCII | secure flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
-| 警告 | `bl_partition` | `hboot` p26 | 运行期，无固定偏移 | 六段已知横幅字符串，按镜像搜 |
-| 第一屏 | `splash` | `sp1` p12 | 0，W×H×2 字节 | 画面从 0 开始 |
-
-`screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl_partition` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
-
-换构建时这套流程要重走一遍——找候选位置、写探针值、读回——两条规矩：
-
-- 搜设备已经告诉你的东西（`cidnum`、`modelid`、hboot 那行状态），不要猜偏移；同一个值回头还能验证你找到的位置。
-- 每次写完先 `sync` + `drop_caches` 再回读。`dd` 写的是块设备的页缓存，`records out` 只说明字节进了内存；写保护还在时，eMMC 是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备，所以 `write_hex` 写完必须跟一次 `verify_hex`，不能相信 `dd`。
-
-### 6. 移植
-
-参考构建是：
-
-| 项目 | 值 |
-|---|---|
-| 机型 | HTC One M8，`m8_ul` |
-| 出厂 MID / CID | `0P6B62000` / `HTCCN703` |
-| 测试过的固件 | 6.31.1402.1，之后是 6.12.1540.4（都是 Android 6.0.1） |
-| 内核 | `3.4.0-perf-ga6393e1`（2016-01）/ `3.4.0-perf-g708019f`（2015-11） |
-| hboot | `3.19.0.0000` |
-| root | Magisk 20.1（`su`）、`modules_disabled=0` |
-| 32 GB 测试机 | 4.18.708.12（S-ON），hboot `3aa067db`，Magisk 20.1，eMMC 61071360 扇区 |
-
-参考机 MID / CID 后来改成 `0P6B12000` / `11111111` 并刷了 Dev 固件，所以上面列了两个构建。
-
-换机型时有两件事必须同时对上，而且它们会各自独立地失败：内核侧（结构体布局、符号地址）和机型侧（供电轨名、设备名、偏移、分区名）。稳压器名字和 MMC 平台设备名是 `targets.conf` 里的两项（`vreg`、`mmc_dev`），`prepare.sh` 把它们写进 `kmod/board.h`，再编进模块。
-
-移植按要重做的量分四种情况，A 到 D，未实测。
-
-**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护。先在 S-ON 下读一次位图：
-
-```sh
-adb shell 'su -c "/dev/mmc_cmd wp"'
-```
-
-`mmc_cmd` 是 `make -C tools` 编出来的，`stool.sh` 会把它放进 `/dev`；没走过 `stool.sh` 就自己推一份：
-
-```sh
-adb push tools/mmc_cmd //data/local/tmp/
-adb shell 'su -c "chmod 755 /data/local/tmp/mmc_cmd; /data/local/tmp/mmc_cmd wp"'
-```
-
-位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够：按[5. 参数偏移](#5-参数偏移)的办法找出分区、偏移和记录形状，填进 `targets.conf` 的一项，`stool.sh set secure_flag 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
-
-**B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
-
-* `vreg` 和 `mmc_dev` 仍是 `8941_l20` 和 `msm_sdcc.1`。两项都是板级**数据**，不是驱动名，所以查驱动源码找不到它们；换机型改 `targets.conf` 里这两行、重跑 `prepare.sh` 就行，不用动 C 源码：
-  * 轨名写在 `arch/arm/boot/dts/msm-pm8x41-rpm-regulator.dtsi` 的 `regulator-name = "8941_l20"` 里（`8941` 是 PM8941，`l20` 是 LDO20），驱动本身是通用的 `qcom,rpm-regulator-smd`。
-  * `msm_sdcc.1` 是**平台设备**的名字，来自 `board-8974.c` 的 `OF_DEV_AUXDATA("qcom,sdhci-msm", 0xF9824900, "msm_sdcc.1", NULL)`；`drivers/of/platform.c` 建平台设备时把 `auxdata->name` 当 `bus_id`。驱动自己叫 `sdhci_msm`，靠 `compatible` 匹配，和这个名字无关——沿用它只是为了让 clock、regulator 和老代码还能按名字找到这块控制器。`sdhci-msm` 随后 `devm_regulator_get(dev, "vdd")`，consumer 就记成了 `msm_sdcc.1`，也就是诊断模块打印的那一行。
-  * 这两项不用你手动核：`prepare.sh` 会读手机上的实际值比对——设备名取 `/sys/class/mmc_host/mmc0/device` 链接指向的名字，轨名扫 `/sys/kernel/debug/regulator/*/consumers` 里以 `<设备名>-vdd` 开头的那一条（`-vdd-io` 是另一路电，所以是精确匹配而不是前缀）。对不上就停下。
-* 安全记录结构不变：pg1fs 0x8400 处的 `{u32 flag; char magic[4]}`，S-ON 时前四字节是 `03 00 00 00`；紧跟的四字节是 bootloader 锁状态 magic，只有解锁时才是 `HTCU`。写之前先核对这八个字节。
-* 内核侧只有一件事：重跑 `scripts/prepare.sh`，它重写 `addr.h`（五个地址加 crc）并再比一次 `vermagic`。只有树已经配好、又只想刷新地址时，才单独跑 `scripts/gen_addr.sh`——它就是 prepare 的第 3 步。
-
-**C. 驱动层要重做的：** 如 One M9（msm8994）、One M8s（msm8939）、Desire 816 / 610（msm8928 / msm8926），都落在另一层驱动上。思路照样成立，但有四件事同时变，而且每一件都能让模块“加载成功、然后做错事”：
-
-1. `struct regulator` 是 `drivers/regulator/core.c` 的私有结构，本文件里存的是一份拷贝，必须按目标树重新抄。
-2. drvdata：本内核存的是 `sdhci_host`；绑老 `msm_sdcc` 驱动的变体存的是它自己的 host 结构体，从上面读 `->mmc` 拿到的是垃圾。
-3. 供电轨名跟的是 PMIC，不是 SoC。
-4. `targets.conf` 里每一个偏移都要重新定位。
-
-`pwrsq_diag.ko` 就是为了用设备实测回答第 2、3 条，而不是靠猜：它解析稳压器、打印全部 consumer 和找到的 mmc_host，且不写任何东西。
-
-**D. HTC 10 及以后的：** 如 Desire 10 pro，以及之后仍用 eMMC 的机型，没有任何一项能原样沿用。按 XDA 上的 HTC 10 分区表（thread 3374048）：bootloader 是 `aboot`；参数分区整体挪位：`board_info` 在 p1、`mfg` 在 p2、`pg1fs` 在 p3、`pg2fs` 在 p4（23.6 MB，和 M8 差不多）；`sp1` 在 p21、10 MB，屏幕 1440x2560；by-name 在 `/dev/block/platform/soc/7464900.sdhci/by-name`。by-name 是 ueventd 按分区表建的一组符号链接，一个分区名一个；脚本通过它找分区，而不是写死 `mmcblk0pN`。
-
-要移植到这些机型，需要改的地方按严重程度排：
-
-1. `struct regulator` 按分支重新抄：新版内核跟 3.4 不一样，各分支之间也不一样。
-2. drvdata：新内核存 `sdhci_pltfm_host`，要取 `pltfm_host->host`。
-3. `targets.conf` 里每个偏移重新定位；只有 pg1fs 那条记录的形状大概能保持不变。
-
-另外从 U11 这一代起，HTC 改用 UFS 2.1 而不是 eMMC。没有 `mmcblk0`，也没有 CMD28/29/31 那套写保护组，所以不管其余部分移植多少，本工具赖以成立的机制在那些机器上都不存在。
-
----
-
-## 期望输出与故障处理
-
-快速开始的每一步，按执行顺序：什么输出说明它成了，以及对应会停在哪。编译那一节的输出贴在[那里](#3-编译)，不在这里重复。
-
-### `stool.sh status`
+### `status`
 
 ```
 == state ==
@@ -398,43 +108,7 @@ secure flag 3           pg1fs @ 0x8400
 tamper flag 0           pg2fs @ 0x511804
 ```
 
-`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[5. 参数偏移](#5-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Security: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Security: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper_flag` 那个 u32 决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，内核要能加载模块，`disabled` 时 `insmod` 会被拒：比如 M8 的 LineageOS 17.1。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
-
-### `prepare.sh`
-
-六步里失败会停在哪，「2. 手机 → 源码树」那张表已经列过；这里只看输出形状：
-
-```
-== 1/6 boot image ==
-  boot          16777216 bytes
-/.../backup/<序列号>-<时间戳>.boot.img
-
-== 2/6 config ==
-/.../m8.config  1362 symbols, localversion "-perf-g708019f"
-
-== 3/6 addr.h ==
-crc 0x7d779921UL
-board.h  vreg=8941_l20 mmc_dev=msm_sdcc.1  (matches the phone)
-
-== 4/6 vermagic ==
-  config : SMP preempt mod_unload modversions ARMv7
-  module : SMP preempt mod_unload modversions ARMv7
-
-== 5/6 configure the tree ==
-
-== 6/6 modules_prepare ==
-
-== summary ==
-kernel      3.4.0-perf-g708019f
-tree        /d/kernel-src/kernel
-config      /.../m8.config
-addr.h      /.../kmod/addr.h
-```
-
-- 第 2 步的符号数来自手机内核自己的配置，不是树的；`localversion` 那串是从 `uname -r` 推出来的。
-- 第 3 步只打印 crc，它和五个地址一样随构建变，别照抄。要看文件本身 `cat kmod/addr.h`：五个地址都不能是 0，`Kernel:` 那行必须是手机**当前**跑的内核（`adb shell cat /proc/version`）。
-- 第 4 步两行必须逐字一致；不一致说明这份配置不是这台机内核的，脚本会停下。
-- 第 5、6 步没有输出就是没事。出现 `symbol '...' unavailable` 说明 `kptr_restrict` 没归零——脚本会先自己试两种写法（直接写、`su -c`），都不行才由 `gen_addr.sh` 报错。
+`target` 是 `targets.conf` 里命中的那一项（节名就是 `fastboot getvar product` 的输出，这台是 `m8_ul`），也是第一个要看的东西：出现 `unknown - no targets.conf section matches` 就说明表里没有这个布局，它下面那行 `observed:` 贴进新增的一项即可（见[4. 参数偏移](#4-参数偏移)）。下面 `hboot:` 那行是设备实际报告的 bootloader 构建号。`soff` 要的是 `Security: ON`，已经是 S-OFF 时会打印 `already S-OFF` 直接返回；出现 `Security: unknown (no root ...)` 说明 `su` 还不通，后面每一步也一样跑不动。`Software status` 与 bootloader 界面上那行同源，由 `tamper_flag` 那个 u32 决定：`0` 是 `Official`，其它任何值都是 `Modified`。`modules: enabled` 是 `modules_disabled=0` 的另一种说法，内核要能加载模块，`disabled` 时 `insmod` 会被拒：比如 M8 的 LineageOS 17.1。`selinux: Enforcing` 不致命：`soff` 只告警、照样往下走，模块能不能加载取决于 `su` 落到的域；如果被拒，这次开机先 `setenforce 0` 再重来。
 
 ### `backup`
 
@@ -553,6 +227,38 @@ scripts/stool.sh restore mfg HT495WM00193-20261104-045201.mfg.img
 
 别的一概不动：还原 `pg1fs` 不碰 `hboot`，反之亦然。`hboot` 和 `sp1` 也走同一条命令，所以 `nowarn` 和 `splash` 各自那个 `--restore` 已经去掉。
 
+### `nowarn`
+
+六行开发警告是 hboot 在启动镜像签名校验失败时画出来的，校验覆盖 `boot` 和 `recovery` 两个分区，任一不符都会画。
+
+在 6.12.1540.4 的 hboot 里，六行共用一个绘制函数（文件偏移 `0x18B64`），全镜像只有一条 `bl` 指令进入它（`0x147EA`）。这条指令位于按分区校验的函数里，而该函数有六个入口：两个把 mode 设为 `9` 或 `0x0F`，读 `boot`；四个设为 `3`，读 `recovery`。任一入口校验失败，都会执行同一条 `bl 0x18B64`。其中两个 recovery 入口在 fastboot 命令处理函数里，调用前刚给主机回过 `OKAY`。
+
+调用点前面紧挨着签名校验（`0x147D4`）：校验返回 0 就直接启动，非 0 才进这个函数画警告、刷屏，然后继续启动。4.18 的 `3aa067db` 是同一结构（函数 `0x18258`，调用点 `0x142AE`，校验 `0x14298`）。
+
+`nowarn` 是按内容找那六行，不是写死偏移。它先把整个 4 MB 的 `hboot` 分区 dump 出来，搜到这六个字符串，把每行首字节改成 `00`，写回，再逐字节读回校验。偏移在不同构建之间是变动的（6.12.1540.4 上是 `0x8C340`，6.31.1402.1 的 dump 上是 `0x8C3F8`，更老的 m8_ul 镜像上是 `0x899CE`），所以必须动态找。
+
+运行前要知道两件事：
+
+- hboot 带 HTC 签名，改一个字节签名就废了。S-OFF 时 SBL 跳过校验，所以还能启动；一旦 `son` 把 secure flag 写回 3，下次启动 SBL 重新验签，失败就停在那里——hboot 不会执行，fastboot、RUU 都进不去，只剩 EDL。改之前必须留下 `nowarn` 打出的 `<serial>-<timestamp>.hboot.img`，并且在 `son` 之前用 `restore hboot <序列号>-<时间戳>.hboot.img` 写回去。`son` 会先检查六行是否还在，发现被清空就直接拒绝。
+- 这六行有引用，只是不用 32 位绝对地址：代码先 `ldr rX, [pc, #imm]` 取一个小偏移，再 `add rX, pc` 加上当前 PC，得到字符串地址。所以按 `0x0F58xxxx` 这种绝对地址搜不到，但绘制函数确实存在：6.12.1540.4 上是 `0x18B64`，4.18 的 `3aa067db` 上是 `0x18258`。改字符串仍然是最小改动，因为六行只有这一处绘制，清空内容不影响控制流。
+
+### `splash`
+
+`splash` 把 PNG 转成 `sp1` 分区真正的格式：小端 RGB565，尺寸取 `targets.conf` 里该机型那一项（M8 上是 1080x1920，4,147,200 字节），分区其余部分是填充。换机型时正确做法是给 `targets.conf` 加一项，把 `screen` 写成它的原生分辨率，之后直接 `splash photo.png` 就会用那个尺寸；`--size=WxH` 只是临时覆盖，不改配置时才用。写之前会先拿帧大小和分区大小比一遍，装不下就直接停。M8 的 `sp1` 是 5,242,880 字节，1080x1920 刚好装下，1440x2560 的 7,372,800 字节会被拒绝，那个尺寸只适合分区更大的机型。
+
+转换由 `scripts/png2rgb565.py` 完成，刻意只用标准库：精简的 Windows 环境里没有 ffmpeg、没有 PIL、没有 ImageMagick。支持非隔行 8 位 PNG 的灰度、灰度+alpha、RGB、RGBA 和调色板，缩放用双线性；其它格式会明确报错而不是生成一张错图（JPG 也一样，先另存成 PNG）。
+
+源图不是 9:16 时由 `--fit` 决定怎么处理，命令会把这行打出来：
+
+| `--fit` | 行为 |
+|---|---|
+| `contain`（默认） | 等比缩放到放得下，居中，其余用 `--bg=RRGGBB` 填（默认黑） |
+| `cover` | 等比缩放到铺满，居中裁掉溢出部分，没有黑边，但会切边 |
+| `stretch` | 两个方向各自拉伸，**会变形**，会打印警告 |
+
+以前固定是 `stretch`，一张 1920×1080 的照片会被悄悄压成 1080×1920。现在默认 `contain`，因为"带黑边的开机图"比"被拉变形的 logo"是更小的错误。
+
+这个转换器检查的是容器不是内容：PNG 能不能读、色彩类型和位深支不支持、结果是不是正好 4,147,200 字节、写进去的字节读回是否一致。它没法告诉你图片是倒的、全黑、全白，或者分辨率太低糊成一片，这些只能你自己看。
 ### 不要做
 
 * **不要 `fastboot flash` 固件分区。** S-ON 时 hboot 会逐个核对它们的签名，签不上就拒绝写入，这道检查同时也挡住了坏镜像和别的机型的镜像。S-OFF 之后它不再核对，`fastboot flash pg1fs ...` 会把你给的文件整块写进去，写坏了没有下一道关。
@@ -565,7 +271,270 @@ scripts/stool.sh restore mfg HT495WM00193-20261104-045201.mfg.img
 
 ---
 
-## Windows
+## CID、MID 和刷机的关系
+
+MID 标明机型变体：`0P6B62000` 是国行联通版，`0P6B12000` 是 Dev Edition；CID 标明运营商或地区（国行联通是 `HTCCN703`）。这两项都写在固件包的 `android-info.txt` 里，hboot 在 RUU 模式下解析 zip 时逐项比对。`set mid` 写 mfg 0x4000，`set cid` 写 board_info 0x14；CID 改成 `11111111`（SuperCID）在多数 hboot 上能放行任意 CID，但不是所有构建都认，而且固件层版本本身可能先把 RUU 挡在门外，见[从 4.18 刷 6.12 的 RUU](#从-418-刷-612-的-ruu)。各固件包的对应见这份[表格](https://docs.google.com/spreadsheets/d/10H7RftecZZKb5tT2zpShfYNFAfSe-imhhqtVfeMPVDA/edit?gid=0#gid=0)。
+
+### 从 4.18 刷 6.12 的 RUU
+
+港版 4.18.708.12（hboot `3aa067db`）直接跑 6.12.1540.4 的 RUU，界面在点 Start 后立刻报 Error 155，日志里的错误是：
+
+```text
+(bootloader) zip info parsing...
+FAILED (status read failed (Too many links))
+```
+
+这不是 MID 或 CID 不匹配。RUU 日志（`C:\RUU_log\RUU_*.log`）显示它只读了 `boot-mode`、`battery-status`、`version-main`，随后进入 RUU 模式发送 zip，失败点在 hboot 解析 zip 的位置。
+
+原因是 RUU exe 里的 `rom.zip` 是 HTC 的 large-zip 容器，htc_fastboot 发送前会打印 `found large-zip header`。4.18 这块 hboot 只认普通 zip，读到分块结构后直接重置 USB 端点，主机端看到的就是 `Too many links`。
+
+解法是先刷底包（`DevEdition_6.12.1540.4_+StockRecovery+boot.img_0p6bimg.zip`，约 53 MB，含 hboot），把 hboot 换到 `76df2b54`。
+
+`fastboot flash hboot hboot_signedbyaa.img` 会被 hboot 拒绝，报 `FAILED (remote: not allowed)`，FASTBOOT 和 RUU 模式下都一样。hboot 分区只接受 zip 流程，不接受裸写镜像。
+
+刷固件包会写 sbl1 和 tz，中断会砖。刷之前确认电量，刷的过程中不要动线。`backup hboot` 只在 hboot 还能进 bootloader 时有用，完全黑屏时它救不了。
+
+---
+
+## 构建
+
+### 1. 拿源码
+
+下载与固件接近的内核源码，HTC 在 [htcdev.com](https://www.htcdev.com/devcenter/downloads)（Kernel Source Code）发布。例如 `m8ul-3.4.0-perf-ga6393e1.zip`，手机报哪一串就找哪一个。包内有 `kernel570.tar.gz`（`kernel/`）和 `platform.tar.gz`（其余源码树），只有 `kernel/` 有用。
+
+Windows 上要注意 NTFS 大小写不敏感，而这棵树里有只差大小写的文件（`net/netfilter/xt_DSCP.c` 与 `xt_dscp.c`）。要么给目录开大小写敏感（`fsutil file setCaseSensitiveInfo <dir> enable`，需要管理员），要么解包时排除这些路径，它们是 netfilter 驱动，与本项目无关。
+
+### 2. 手机 → 源码树
+
+```sh
+scripts/prepare.sh /d/kernel-src/kernel
+```
+
+一条命令做六件事，每一步都把结果打出来：
+
+| 步 | 做什么 | 停在这一步说明 |
+|---|---|---|
+| 1 | `stool.sh backup boot` 取下 boot 分区 | adb 或 root 不通，或者手机在 recovery |
+| 2 | 从镜像里挖出编译进内核的 `.config` | 内核没开 `CONFIG_IKCONFIG`，镜像里就没有配置 |
+| 3 | 五个符号地址加 `module_layout` crc 写进 `kmod/addr.h`；按 `targets.conf` 生成 `kmod/board.h`，再拿手机上的实际值核对 | `kptr_restrict` 不为 0、`targets.conf` 没有对应的一节，或者那两项和手机对不上 |
+| 4 | 用配置算出 vermagic 标志位，和手机上的原厂模块逐字比 | 拿到的配置不是这台机内核的 |
+| 5 | 覆盖 `kernel/.config`，`oldconfig`，数新符号 | 树离这个构建太远（超过 20 个要 `--force`） |
+| 6 | `modules_prepare`，核对 `utsrelease.h` | 工具链，见 [Windows 工具链](#windows-工具链) |
+
+真实输出（这台机，路径省略）：
+
+```
+== 1/6 boot image ==
+  boot          16777216 bytes
+/.../backup/<序列号>-<时间戳>.boot.img
+
+== 2/6 config ==
+/.../m8.config  1362 symbols, localversion "-perf-g708019f"
+
+== 3/6 addr.h ==
+crc 0x7d779921UL
+board.h  vreg=8941_l20 mmc_dev=msm_sdcc.1  (matches the phone)
+
+== 4/6 vermagic ==
+  config : SMP preempt mod_unload modversions ARMv7
+  module : SMP preempt mod_unload modversions ARMv7
+
+== 5/6 configure the tree ==
+
+== 6/6 modules_prepare ==
+
+== summary ==
+kernel      3.4.0-perf-g708019f
+tree        /d/kernel-src/kernel
+config      /.../m8.config
+addr.h      /.../kmod/addr.h
+```
+
+第 2 步的符号数来自手机内核自己的配置，不是树的；`localversion` 那串是从 `uname -r` 推出来的。第 5、6 步没有输出就是没事。
+
+几处不能想当然的地方：
+
+- 配置不看 `arch/arm/configs/m8_defconfig`：HTC 一棵树出很多变体，设备自己的配置压在 kernel 镜像里（`CONFIG_IKCONFIG=y`，`CONFIG_IKCONFIG_PROC` 关着，所以手机上没有 `/proc/config.gz`）。第 2 步是从 `IKCFG_ST` 标记里把那团 gzip 解出来的。
+- 别用 RUU 里的 `boot_signed.img`：它前面多 256 字节签名头，boot header 会从错的偏移读。要的是分区 dump，`backup boot` 给的就是。
+- 内核是 zImage 时，压缩体前面还有一段自解压 stub，gzip 不在偏移 0。`extract_config.py` 按魔数找，lz4、lzo、lzma 会明确报出来让你换工具。
+- `CONFIG_LOCALVERSION` 从 `uname -r` 推：`3.4.0-perf-gXXXXXXX` 的后半截填进去，同时关掉 `LOCALVERSION_AUTO`，否则打过补丁的树会被追加 `-dirty`。它不是加载条件（下面解释），只是让 `.ko` 里的串和手机一致、便于核对。
+- `addr.h` 与源码树无关：它是手机正在跑的那个内核的属性，换哪版树都从手机重读，所以它在这一步，而不是编译前手工做。树已经配好、只想刷新这几个数时，单独跑 `scripts/gen_addr.sh` 就够了——它就是这一步。`crc` 那行和五个地址一样随构建变，别照抄；要看文件本身 `cat kmod/addr.h`：五个地址都不能是 0，`Kernel:` 那行必须是手机**当前**跑的内核（`adb shell cat /proc/version`）。
+- 第 4 步两行必须逐字一致；不一致说明这份配置不是这台机内核的，脚本直接停。出现 `symbol '...' unavailable` 说明 `kptr_restrict` 没归零——脚本会先自己试两种写法（直接写、`su -c`），都不行才由 `gen_addr.sh` 报错。
+- 手机要在正常启动的状态下跑。boot 分区在上次开机之后被刷过的话，取到的配置和正在跑的符号不是同一个内核。
+
+`--force` 只放开第 5 步的阈值。`ADB`、`CROSS`、`MAKE` 三个环境变量分别指定 adb、工具链前缀和 make 程序。MSYS2 上先做完 [Windows 工具链](#windows-工具链) 那两条 patch 再跑，`oldconfig` 会先编 `fixdep`。
+
+#### 源码和手机内核不是同一次构建
+
+这是常态：HTC 每个固件版本对应一个源码包，`uname -r` 里那截 `gXXXXXXX` 就是源码包的 git 提交。能不能用**不看版本号**，看三件事：
+
+| 必须一致 | 由谁决定 | 不一致的后果 |
+|---|---|---|
+| vermagic 标志位（`SMP preempt mod_unload modversions ARMv7`） | 树的 `.config` | `insmod` 直接拒 |
+| `struct device` / `sdhci_host` / `mmc_host` 的字段偏移 | 树的头文件 + `.config` | 装得进去，解引用错位 |
+| 五个地址 + `module_layout` crc | 手机的 `addr.h` | 与树无关，换哪版树都一样 |
+
+第一行脚本已经变成一次编译前的比较：第 4 步从 `.config` 算出那串标志位，和手机上的原厂模块逐字对。对不上就停，不会让你等一次二十分钟的编译再发现 `insmod` 拒。理由是 `same_magic()` 只比这半截：模块带 `__versions` 时，第一个空格之前的 `UTS_RELEASE` 被跳过。
+
+第二行脚本只能给间接信号：第 5 步数出来的 `(NEW)` 个数。0 个说明两边符号表对得上，结构体多半没问题；刷出一大片就是树差得远，超过 20 个要 `--force` 才继续。
+
+第三行每次重读，永远和当前内核一致——`addr.h` 在 `.gitignore` 里，本来就不该跨设备提交。`A_MODULE_LAYOUT_CRC` 读自原厂模块的 `__versions`（`scripts/get_module_layout_crc.py`），那是 genksyms 给 `module_layout` 算的 crc，猜不出来。
+
+第二行的真正验收要编完才能做，见 [3. 编译](#3-编译) 末尾的诊断模块：只有 `name=8941_l20` 才算过。
+
+失败就换树，不要凑合：树差得远时 `oldconfig` 给新符号塞默认值，编出来的结构体可能少字段，这种错 `insmod` 阶段看不出来，要到 `regulator_get` 或写 `ops` 时才崩。诊断模块是断电前最后一次便宜的检查。
+
+`prepare.sh` 第 6 步会顺带核 `UTS_RELEASE` 和 `uname -r` 是否一致。不一致也不影响加载（同上，那半截被跳过），但说明 `CONFIG_LOCALVERSION` 没落进配置。
+
+### 3. 编译
+
+`build.sh` 要读 `kmod/addr.h` 和 `kmod/board.h`，两个都是上一节第 3 步写出来的；缺了直接停，它不会去读分区，也不会去读手机。
+
+```sh
+scripts/build.sh /path/to/kernel-tree
+# Windows/MSYS2 上必须传 MSYS 路径（/d/kernel-src/kernel），不能是 D:/...
+# 因为 kbuild 把 M= 当 make 目标传，盘符里的冒号会被当成目标分隔符。
+```
+
+编完它自己把三件事查一遍，全过才退出 0：
+
+```
+pwrsq_diag: (no undefined symbols), __versions 64 bytes, 1 entry
+pwrsq_off: (no undefined symbols), __versions 64 bytes, 1 entry
+pwrsq_on: (no undefined symbols), __versions 64 bytes, 1 entry
+vermagic: 3.4.0-perf-g708019f SMP preempt mod_unload modversions ARMv7
+```
+
+- **未定义符号**：模块一个符号都不导入，列出来的每个都会让内核去要对应的版本 crc，加载时报 `no symbol version for <sym>` 或 `disagrees about version of symbol <sym>`。
+- **`__versions`**：必须正好一条 `module_layout`、整段 64 字节（32 位内核的 `struct modversion_info`）。空了照样链接成功，要到手机上才失败——那时先看 `pwrsq_impl.h` 里 `section("__versions"), used` 的属性还在不在。
+- **vermagic**：拿 `vermagic=` 那行和 `addr.h` 里记的内核串比，不一致就告警，说明 `.ko` 是另一次构建留下的，或者树还没按手机配好。
+
+这几条用的是 `${CROSS}` 前缀的 binutils（`nm`、`readelf`、`strings`）。Git Bash 和 MSYS2 里没有裸的 `readelf`、`nm`、`strings`，只有 Linux 发行版上才是裸名字；想自己单独看某个模块时记得带上前缀，否则得到的是 `command not found` 而不是“没问题”。
+
+`build.sh` 不管用户态那个小工具；`tools/mmc_cmd` 也没有入库，它是一个静态链接的 ARM 可执行文件：
+
+```sh
+make -C tools CROSS=arm-none-linux-gnueabihf-
+```
+
+`soff` 会把它放进 `/dev`（tmpfs）并以 root 运行：`adb push` 写不了 `/dev`，所以先落到 `/data/local/tmp`，再由 root 在 eMMC 还在的时候拷过去。没有它，`soff` 会在动手机之前停下：写保护检查是唯一能证明断电生效的依据。
+
+#### 验收：诊断模块
+
+这是唯一能证明结构体偏移对得上的办法：
+
+```sh
+adb push kmod/pwrsq_diag.ko //data/local/tmp/
+adb shell 'su -c "dmesg -c >/dev/null; insmod /data/local/tmp/pwrsq_diag.ko; sleep 1; dmesg | grep pwrsq"'
+adb shell 'su -c "rmmod pwrsq_diag"'
+```
+
+看到 `name=8941_l20` 才算过。它一次用上五个地址，以及 `r->rdev`、`rdev->desc->ops`、`consumer_list`、`d->kobj.name`、`drvdata`、`sh->mmc` 这些偏移。被 SELinux 拒的话先 `setenforce 0` 再试一次，只影响这次开机——这也是断电前最后一次便宜的检查。
+
+### 4. 参数偏移
+
+参数偏移不由任何脚本生成，它们跟着分区布局走，所以放在 `targets.conf` 里。
+
+选哪一项，是拿它的 `layout` 行去比设备在 `/sys/class/block/*/uevent` 里报的尺寸（`PARTNAME` 加 `size`，单位 512 字节扇区；无需 root）。用尺寸当键是有道理的：改 MID 或 CID 不会挪动任何东西，因为那两项都是分区里的内容；换了固件，装这些记录的分区尺寸就跟着变。一项都对不上时，脚本在动 eMMC 之前停下，把看到的布局原样打出来：
+
+```
+error: no section in targets.conf matches this device.
+  observed: hboot:8192 sp1:10240 pg1fs:243646 board_info:32 ...
+```
+
+把 `observed:` 后面那串（从 `hboot:8192` 开始）填进新 `[name]` 项的 `layout =`，再补偏移；偏移仍然只能人工推导。做法是把小分区 dump 下来，拿设备自己报出来的值去搜：
+
+```sh
+for p in board_info mfg pg1fs pg2fs hboot sp1; do
+	scripts/stool.sh backup "$p"
+done
+```
+
+`backup` 只要分区名：名字和长度都读自设备，镜像落在 `backup/`，每个都按设备报的长度校验过。
+
+| 字段 | 键 | M8 上的位置 | M8 上的偏移与宽度 | 怎么定位的 |
+|---|---|---|---|---|
+| CID | `cid` | `board_info` p3 | 0x14，8 字节 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
+| MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `fastboot getvar all` 里的 `modelid` 字符串，每字符 2 字节 |
+| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，4 字节 u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
+| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，4 字节 u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
+| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字节 ASCII | secure flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
+| 警告 | `bl_partition` | `hboot` p26 | 运行期，无固定偏移 | 六段已知横幅字符串，按镜像搜 |
+| 第一屏 | `splash` | `sp1` p12 | 0，W×H×2 字节 | 画面从 0 开始 |
+
+`screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl_partition` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
+
+换构建时这套流程要重走一遍——找候选位置、写探针值、读回——两条规矩：
+
+- 搜设备已经告诉你的东西（`cidnum`、`modelid`、hboot 那行状态），不要猜偏移；同一个值回头还能验证你找到的位置。
+- 每次写完先 `sync` + `drop_caches` 再回读。`dd` 写的是块设备的页缓存，`records out` 只说明字节进了内存；写保护还在时，eMMC 是在回写阶段才拒绝的（`card status 0x400d00`），而紧跟着的读回又会被同一页缓存满足——看起来“写入成功、读回一致”，实际一个字节都没落盘。`sync` 逼出回写，`drop_caches` 让下一次读真的走设备，所以 `write_hex` 写完必须跟一次 `verify_hex`，不能相信 `dd`。
+
+### 5. 移植
+
+参考构建是：
+
+| 项目 | 值 |
+|---|---|
+| 机型 | HTC One M8，`m8_ul` |
+| 出厂 MID / CID | `0P6B62000` / `HTCCN703` |
+| 测试过的固件 | 6.31.1402.1，之后是 6.12.1540.4（都是 Android 6.0.1） |
+| 内核 | `3.4.0-perf-ga6393e1`（2016-01）/ `3.4.0-perf-g708019f`（2015-11） |
+| hboot | `3.19.0.0000` |
+| root | Magisk 20.1（`su`）、`modules_disabled=0` |
+| 32 GB 测试机 | 4.18.708.12（S-ON），hboot `3aa067db`，Magisk 20.1，eMMC 61071360 扇区 |
+
+参考机 MID / CID 后来改成 `0P6B12000` / `11111111` 并刷了 Dev 固件，所以上面列了两个构建。
+
+换机型时有两件事必须同时对上，而且它们会各自独立地失败：内核侧（结构体布局、符号地址）和机型侧（供电轨名、设备名、偏移、分区名）。稳压器名字和 MMC 平台设备名是 `targets.conf` 里的两项（`vreg`、`mmc_dev`），`prepare.sh` 把它们写进 `kmod/board.h`，再编进模块。
+
+移植按要重做的量分四种情况，A 到 D，未实测。
+
+**A. hboot 版本在 3.19 以前的：** 如 One M7（msm8960）、One S（msm8260A）、Sensation / XE（msm8260）、Desire HD（msm8255）以及 B 档中没怎么更新系统的。可能不设写保护。先在 S-ON 下读一次位图：
+
+```sh
+adb shell 'su -c "/dev/mmc_cmd wp"'
+```
+
+`mmc_cmd` 是 `make -C tools` 编出来的，`stool.sh` 会把它放进 `/dev`；没走过 `stool.sh` 就自己推一份：
+
+```sh
+adb push tools/mmc_cmd //data/local/tmp/
+adb shell 'su -c "chmod 755 /data/local/tmp/mmc_cmd; /data/local/tmp/mmc_cmd wp"'
+```
+
+位图全零说明 hboot 没设保护。这时不需要模块也不用断电，普通写入就够：按[4. 参数偏移](#4-参数偏移)的办法找出分区、偏移和记录形状，填进 `targets.conf` 的一项，`stool.sh set secure_flag 0` 就是那条写入（它会先探测位图，只有真的还有保护才拒绝）。那里有一点要注意：`03 00 00 00` 后面那 4 字节只有在 bootloader 解锁时才是 `HTCU`，锁着的机器上是 `00000000`，所以这个组合不能当通用锚点；找到候选后用 `readsecureflag` 验证。
+
+**B. 同一世代的：** 如其它 M8 版本（双卡、Sprint、Verizon）、One E8、Butterfly 2、One mini 2，出自同一棵 HTC 3.4 树。机制、结构体、记录布局都成立，需要重新核对的只有板级那几项：
+
+* `vreg` 和 `mmc_dev` 仍是 `8941_l20` 和 `msm_sdcc.1`。两项都是板级**数据**，不是驱动名，所以查驱动源码找不到它们；换机型改 `targets.conf` 里这两行、重跑 `prepare.sh` 就行，不用动 C 源码：
+  * 轨名写在 `arch/arm/boot/dts/msm-pm8x41-rpm-regulator.dtsi` 的 `regulator-name = "8941_l20"` 里（`8941` 是 PM8941，`l20` 是 LDO20），驱动本身是通用的 `qcom,rpm-regulator-smd`。
+  * `msm_sdcc.1` 是**平台设备**的名字，来自 `board-8974.c` 的 `OF_DEV_AUXDATA("qcom,sdhci-msm", 0xF9824900, "msm_sdcc.1", NULL)`；`drivers/of/platform.c` 建平台设备时把 `auxdata->name` 当 `bus_id`。驱动自己叫 `sdhci_msm`，靠 `compatible` 匹配，和这个名字无关——沿用它只是为了让 clock、regulator 和老代码还能按名字找到这块控制器。`sdhci-msm` 随后 `devm_regulator_get(dev, "vdd")`，consumer 就记成了 `msm_sdcc.1`，也就是诊断模块打印的那一行。
+  * 这两项不用你手动核：`prepare.sh` 会读手机上的实际值比对——设备名取 `/sys/class/mmc_host/mmc0/device` 链接指向的名字，轨名扫 `/sys/kernel/debug/regulator/*/consumers` 里以 `<设备名>-vdd` 开头的那一条（`-vdd-io` 是另一路电，所以是精确匹配而不是前缀）。对不上就停下。
+* 安全记录结构不变：pg1fs 0x8400 处的 `{u32 flag; char magic[4]}`，S-ON 时前四字节是 `03 00 00 00`；紧跟的四字节是 bootloader 锁状态 magic，只有解锁时才是 `HTCU`。写之前先核对这八个字节。
+* 内核侧只有一件事：重跑 `scripts/prepare.sh`，它重写 `addr.h`（五个地址加 crc）并再比一次 `vermagic`。只有树已经配好、又只想刷新地址时，才单独跑 `scripts/gen_addr.sh`——它就是 prepare 的第 3 步。
+
+**C. 驱动层要重做的：** 如 One M9（msm8994）、One M8s（msm8939）、Desire 816 / 610（msm8928 / msm8926），都落在另一层驱动上。思路照样成立，但有四件事同时变，而且每一件都能让模块“加载成功、然后做错事”：
+
+1. `struct regulator` 是 `drivers/regulator/core.c` 的私有结构，本文件里存的是一份拷贝，必须按目标树重新抄。
+2. drvdata：本内核存的是 `sdhci_host`；绑老 `msm_sdcc` 驱动的变体存的是它自己的 host 结构体，从上面读 `->mmc` 拿到的是垃圾。
+3. 供电轨名跟的是 PMIC，不是 SoC。
+4. `targets.conf` 里每一个偏移都要重新定位。
+
+`pwrsq_diag.ko` 就是为了用设备实测回答第 2、3 条，而不是靠猜：它解析稳压器、打印全部 consumer 和找到的 mmc_host，且不写任何东西。
+
+**D. HTC 10 及以后的：** 如 Desire 10 pro，以及之后仍用 eMMC 的机型，没有任何一项能原样沿用。按 XDA 上的 HTC 10 分区表（thread 3374048）：bootloader 是 `aboot`；参数分区整体挪位：`board_info` 在 p1、`mfg` 在 p2、`pg1fs` 在 p3、`pg2fs` 在 p4（23.6 MB，和 M8 差不多）；`sp1` 在 p21、10 MB，屏幕 1440x2560；by-name 在 `/dev/block/platform/soc/7464900.sdhci/by-name`。by-name 是 ueventd 按分区表建的一组符号链接，一个分区名一个；脚本通过它找分区，而不是写死 `mmcblk0pN`。
+
+要移植到这些机型，需要改的地方按严重程度排：
+
+1. `struct regulator` 按分支重新抄：新版内核跟 3.4 不一样，各分支之间也不一样。
+2. drvdata：新内核存 `sdhci_pltfm_host`，要取 `pltfm_host->host`。
+3. `targets.conf` 里每个偏移重新定位；只有 pg1fs 那条记录的形状大概能保持不变。
+
+另外从 U11 这一代起，HTC 改用 UFS 2.1 而不是 eMMC。没有 `mmcblk0`，也没有 CMD28/29/31 那套写保护组，所以不管其余部分移植多少，本工具赖以成立的机制在那些机器上都不存在。
+
+---
+
+## Windows 工具链
 
 `.sh` 是 POSIX shell 脚本，Windows 不能直接执行。三种跑法：
 
@@ -579,6 +548,28 @@ Windows 上有四件事会咬人：
 2. **设备路径。** MSYS 会在 `adb` 看到之前把绝对路径改写成 Windows 路径：`adb push x /data/local/tmp/x` 到手的会是 `C:/Program Files/Git/data/local/tmp/x`。手机上的路径前面加 `//`（`//data/local/tmp/x`）才是字面量；仓库里的脚本已经这么写了。
 3. **主机路径。** Git Bash 认识 `/d/...`；kbuild 不接受 `D:/...` 作为 `M=`，因为冒号看起来像 make 的目标分隔符。给 `scripts/build.sh` 传 MSYS 路径。
 4. **PATH。** `adb`、`make`、`python3` 都必须在这个 shell 里能找到。Git Bash 本身不带 `make`，装 MSYS2 或把它加进 PATH。
+
+### 2016 年内核的五个坑
+
+五件事，补丁都在 `kernel-patches/`。`prepare.sh` 的第 5、6 步或者编译报错时，先来这里对号。
+
+| 现象 | 处理 |
+|---|---|
+| `scripts/gcc-wrapper.py` 是 Python 2（`print "..."`） | 命令行传 `CC=` 直接绕过这个 wrapper |
+| `fatal error: linux/compiler-gcc13.h: No such file` | 把 `compiler-gcc4.h` 复制成 `compiler-gcc13.h` |
+| `fixdep: error opening config file:` 和随机解析错误 | MinGW 的 gcc 写出的 `.d` 是 CRLF，让 fixdep 跳过 `\r` |
+| fixdep 在 MSYS2 上段错误 | 把它的 `mmap()` 换成 `malloc()+read()` |
+| 编 dtc 报 `multiple definition of 'yylloc'` | `HOSTCFLAGS=-fcommon`，`prepare.sh` 已经带上 |
+
+```sh
+cd kernel
+patch -p1 < ../kernel-patches/0001-fixdep-crlf-and-no-mmap.patch
+cp ../kernel-patches/compiler-gcc13.h include/linux/
+```
+
+HTC 发的是 tar 包，没有 `.git`，所以用 `patch -p1` 而不是 `git apply`。
+
+wrapper 之所以会介入，是因为顶层 Makefile 写了 `CC = $(srctree)/scripts/gcc-wrapper.py $(REAL_CC)`；命令行传 `CC=<cross>gcc` 就盖掉了。在 Linux 上用老工具链时这些都不需要，fixdep 那个补丁依旧无害。
 
 本次实际使用的组合：Git Bash、MSYS2 的 GNU Make 4.4.1、Python 3.13、adb 1.0.41、`arm-none-linux-gnueabihf-gcc` 13.3.1（MinGW 宿主版）。`scripts/prepare.sh` 在这台机上从头到尾跑通过一次（六步全过），`kmod/addr.h` 和 `kernel/.config` 都是它写出来的。
 
