@@ -694,9 +694,6 @@ secure flag 3           pg1fs @ 0x8400
 tamper flag 0           pg2fs @ 0x511804
 ```
 
-This is a phone that already runs 1540 with a changed CID/MID but is still
-S-ON, which is exactly the state `soff` wants.
-
 `target` is the `targets.conf` section that matched - the section name is what
 `fastboot getvar product` prints, `m8_ul` on this phone - and it is the first
 thing to look at: `unknown - no targets.conf section matches` means the table has no
