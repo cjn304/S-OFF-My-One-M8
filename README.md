@@ -287,7 +287,7 @@ One command, six steps, each one printed:
 |---|---|---|
 | 1 | `stool.sh backup boot` takes the boot partition | adb or root is not working, or the phone is in recovery |
 | 2 | digs the compiled-in `.config` out of the image | the kernel was built without `CONFIG_IKCONFIG`, so the image holds none |
-| 3 | writes the five addresses and the `module_layout` crc into `kmod/addr.h`, and `kmod/board.h` from `targets.conf` | `kptr_restrict` is not 0, or `targets.conf` has no section for this layout |
+| 3 | writes the five addresses and the `module_layout` crc into `kmod/addr.h`, and `kmod/board.h` from `targets.conf`; then checks both against the phone | `kptr_restrict` is not 0, `targets.conf` has no section for this layout, or the two values disagree with the phone |
 | 4 | computes the vermagic flags from the config and compares them with a stock module | the config is not from this phone's kernel |
 | 5 | overwrites `kernel/.config`, runs `oldconfig`, counts new symbols | the tree is too far from this build (over 20 needs `--force`) |
 | 6 | `modules_prepare`, then checks `utsrelease.h` | the toolchain - see the next section |
@@ -594,8 +594,11 @@ re-checking:
     regulators and older code still find the controller by name. `sdhci-msm`
     then calls `devm_regulator_get(dev, "vdd")`, and the consumer is recorded as
     `msm_sdcc.1`, the line the diagnostic module prints.
-  * to check both on a target device, read `/sys/bus/platform/devices/` and
-    `/sys/class/regulator/*/name`, not the driver sources.
+  * you do not have to check them by hand: `prepare.sh` reads both off the phone
+    and compares. The device name is what
+    `/sys/class/mmc_host/mmc0/device` links to; the rail is the regulator whose
+    `consumers` file lists `<device>-vdd` (exact match - `-vdd-io` is a separate
+    rail). A mismatch stops the run.
 * The security record keeps its shape - `{u32 flag; char magic[4]}` at pg1fs
   0x8400, `03 00 00 00` in the first four on an S-ON device. The four after it
   are the bootloader lock magic, `HTCU` only while the bootloader is unlocked.
@@ -704,7 +707,7 @@ tree"; this is only what the output looks like:
 
 == 3/6 addr.h ==
 crc 0x7d779921UL
-board.h  vreg=8941_l20 mmc_dev=msm_sdcc.1
+board.h  vreg=8941_l20 mmc_dev=msm_sdcc.1  (matches the phone)
 
 == 4/6 vermagic ==
   config : SMP preempt mod_unload modversions ARMv7
