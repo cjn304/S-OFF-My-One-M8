@@ -468,14 +468,22 @@ od -An -v -tx1 backup/*.mfg.img | tr -d ' \n' \
 
 这两条对着 M8 的 `targets.conf` 跑一遍，得到的正是 `cid = board_info:0x14:8:ascii` 和 `mid = mfg:0x4000:18:utf16le` 里的偏移。
 
-搜不出唯一答案的字段，靠**两份状态不同的镜像做差**，同样不写设备——`tamper_flag` 只有 0 和 4 两个值，一个 23 MB 的分区里 `04000000` 有成千上万个，搜不出结果，做差可以：
+搜不出唯一答案的字段，靠**两份状态不同的镜像做差**——但前提是那个状态**不需要先知道偏移就能改**，否则就是绕圈子。`tamper_flag` 属于这一类：它只有 0 和 4 两个值，一个 23 MB 的分区里 `04000000` 有成千上万个，搜不出结果；手上要是有两份 `Software status` 不同的 `pg2fs`（解锁前后就是一对），做差能直接看到它：
 
 ```sh
 cmp -l backup/<改动前>.pg1fs.img backup/<改动后>.pg1fs.img | head
 # 第 1 列是从 1 数的字节位置，减一就是偏移；第 2、3 列是两份里的值，八进制
 ```
 
-`secure_flag` 就是这么确认的：S-ON 时 dump 一份，`soff` 之后再 dump 一份，`03` 变 `00` 的那 4 个字节就是它；跟着一起变的另 4 个字节是 `bl_magic`（`oem lock` / `unlock` 前后各拍一次能单独看它）。
+`secure_flag` 不在这一类里：改它正是 `soff` 要做的事，不先知道偏移就改不动状态。所以「S-ON 拍一份、S-OFF 再拍一份」去找它是循环论证——那种做差只能在偏移已知之后做，是**事后校验**，不是定位手段。
+
+它的定位顺序反过来：
+
+1. 先用做差把 `bl_magic` 定下来。`fastboot oem lock` 是 hboot 自己动手：锁上之后再 dump 一次，`HTCU` 变成 `00000000` 的那 4 个字节就是它，我们一个字节都没写。
+2. flag 是紧挨在 `bl_magic` 前面的 4 字节：记录结构是 `{u32 flag; char magic[4]}`。
+3. 值用 `readsecureflag` 交叉验证：报 3 对上 `03 00 00 00`。
+
+跨代移植时连这个结构都可能变；从没解锁过的机器也没有锁前锁后的差可做。这两种情况只能从 hboot 里读——它决定 `Security: on/off` 时读的就是这个位置。
 
 **写探针是能写之后的事，不是定位的第一步。** 一台正常开机的 S-ON 机器上，bootloader 在 eMMC 这一级保护着固件分区，`pg1fs` 上实测直接回 `card status 0x400d00`：`dd` 报成功，字节落不下去，回读必然不一致（[工作原理](#工作原理) 第 1 节）。所以定位阶段全是只读操作——搜、做差。`stool.sh write` 用在写真的能落地的时候：hboot 3.19 以前没设保护的机器，或者已经 S-OFF、或者掉电清掉保护之后，拿它把候选值写一遍读回，作为最后一道确认。
 
@@ -483,9 +491,9 @@ cmp -l backup/<改动前>.pg1fs.img backup/<改动后>.pg1fs.img | head
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14，8 字节 ASCII | `fastboot getvar all` 里的 `cidnum` 字符串 |
 | MID | `mid` | `mfg` p5 | 0x4000，18 字节 UTF-16LE | `fastboot getvar all` 里的 `modelid` 字符串，每字符 2 字节 |
-| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，4 字节 u32 LE | hboot 显示 `Software status: Modified` 时非 0（标准值 4），Official 时是 0 |
-| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，4 字节 u32 LE | S-ON 是 `03 00 00 00`，S-OFF 是 `00 00 00 00`；用 `readsecureflag` 对照 |
-| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字节 ASCII | secure flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
+| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804，4 字节 u32 LE | 值只有 0（Official）/ 4（Modified），搜索不唯一；两份 `Software status` 不同的 `pg2fs` 做差，或 S-OFF 之后写一次读回 |
+| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400，4 字节 u32 LE | 紧挨在 `bl_magic` 前面那 4 字节；值用 `readsecureflag` 对（3 ↔ `03 00 00 00`） |
+| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字节 ASCII | `HTCU` 解锁、`00000000` 锁定；解锁过之后，`oem lock` 前后各 dump 一次做差 |
 | 警告 | `bl_partition` | `hboot` p26 | 运行期，无固定偏移 | 六段已知横幅字符串，按镜像搜 |
 | 第一屏 | `splash` | `sp1` p12 | 0，W×H×2 字节 | 画面从 0 开始 |
 

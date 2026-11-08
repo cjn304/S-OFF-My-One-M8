@@ -784,8 +784,11 @@ od -An -v -tx1 backup/*.mfg.img | tr -d ' \n' \
 Run those against the M8 images and you land on exactly the offsets in
 `targets.conf` (`cid = board_info:0x14:8:ascii`, `mid = mfg:0x4000:18:utf16le`).
 Fields whose value is not unique come from **diffing two images taken in different
-states**, which also writes nothing - `tamper_flag` is only 0 or 4, and a 23 MB
-partition holds thousands of `04000000`, so searching settles nothing:
+states** - but only when that state can be changed **without already knowing the
+offset**, or the argument goes in a circle. `tamper_flag` qualifies: it is only 0
+or 4, a 23 MB partition holds thousands of `04000000`, so searching settles
+nothing; two `pg2fs` dumps whose `Software status` differs (the unlock gives you
+such a pair) show it directly when diffed:
 
 ```sh
 cmp -l backup/<before>.pg1fs.img backup/<after>.pg1fs.img | head
@@ -793,10 +796,23 @@ cmp -l backup/<before>.pg1fs.img backup/<after>.pg1fs.img | head
 # columns 2 and 3 are the two values, in octal.
 ```
 
-That is how `secure_flag` is confirmed: dump while S-ON, dump again after `soff`,
-and the four bytes that go from `03` to `00` are it; the four that change with
-them are `bl_magic` (dumping before and after `oem lock` / `unlock` shows that one
-on its own).
+`secure_flag` does not qualify: changing it is exactly what `soff` does, and
+without the offset nothing can be changed. Dumping while S-ON and again after
+`soff` therefore argues in a circle - that diff only works once the offset is
+already known, which makes it an after-the-fact check, not a way to locate it.
+
+Its offset is found in the opposite order:
+
+1. diff for `bl_magic` first. `fastboot oem lock` is hboot doing the writing:
+   dump again after locking, and the four bytes that went from `HTCU` to
+   `00000000` are that field - we wrote nothing.
+2. the flag is the four bytes immediately before `bl_magic` - the record is
+   `{u32 flag; char magic[4]}`.
+3. cross-check the value with `readsecureflag`: 3 matches `03 00 00 00`.
+
+Across generations even that structure can change, and a phone that was never
+unlocked has no before/after to diff either. In both cases the only source is
+hboot itself: it is what reads this location to decide `Security: on/off`.
 
 **A write probe belongs after writes start landing, not at the start.** On a phone
 booted normally into S-ON the bootloader protects the firmware partitions at the
@@ -812,9 +828,9 @@ step.
 |---|---|---|---|---|
 | CID | `cid` | `board_info` p3 | 0x14, 8 bytes ASCII | the `cidnum` string `fastboot getvar all` prints |
 | MID | `mid` | `mfg` p5 | 0x4000, 18 bytes UTF-16LE | the `modelid` string `fastboot getvar all` prints, 2 bytes per char |
-| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804, 4 bytes u32 LE | non-zero (normally 4) while hboot says `Software status: Modified`, 0 when Official |
-| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400, 4 bytes u32 LE | `03 00 00 00` on S-ON, `00 00 00 00` on S-OFF; confirmed by `readsecureflag` |
-| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404, 4 bytes ASCII | right after the secure flag: `HTCU` unlocked, `00000000` locked |
+| tamper flag | `tamper_flag` | `pg2fs` p6 | 0x511804, 4 bytes u32 LE | only 0 (Official) / 4 (Modified), not unique to search for; diff two `pg2fs` dumps whose `Software status` differs, or write once and read back after S-OFF |
+| secure flag | `secure_flag` | `pg1fs` p2 | 0x8400, 4 bytes u32 LE | the four bytes right before `bl_magic`; value cross-checked with `readsecureflag` (3 <-> `03 00 00 00`) |
+| BL magic | `bl_magic` | `pg1fs` p2 | 0x8404, 4 bytes ASCII | `HTCU` unlocked, `00000000` locked; once the phone has been unlocked, dump either side of `oem lock` and diff |
 | warning | `bl_partition` | `hboot` p26 | run time, no fixed offset | six known banner strings, searched per image |
 | first screen | `splash` | `sp1` p12 | 0, W x H x 2 bytes | the frame starts at 0 |
 
