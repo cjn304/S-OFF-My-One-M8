@@ -270,7 +270,7 @@ wrapper 之所以会介入，是因为顶层 Makefile 写了 `CC = $(srctree)/sc
 
 ### 5. 参数偏移
 
-`kmod/addr.h` 管的是内核符号；参数偏移也不由任何脚本生成。它们跟着分区布局走，所以放在 `targets.conf` 里。
+参数偏移不由任何脚本生成，它们跟着分区布局走，所以放在 `targets.conf` 里。
 
 选哪一项，是拿它的 `layout` 行去比设备在 `/sys/class/block/*/uevent` 里报的尺寸（`PARTNAME` 加 `size`，单位 512 字节扇区；无需 root）。用尺寸当键是有道理的：改 MID 或 CID 不会挪动任何东西，因为那两项都是分区里的内容；换了固件，装这些记录的分区尺寸就跟着变。一项都对不上时，脚本在动 eMMC 之前停下，把看到的布局原样打出来：
 
@@ -287,7 +287,7 @@ for p in board_info mfg pg1fs pg2fs hboot sp1; do
 done
 ```
 
-`backup` 只要分区名：名字和长度都读自设备，不需要 `targets.conf` 里有对应的一节——这一节正是还没写出来的东西。镜像落在 `backup/<序列号>-<时间戳>.<分区>.img`，每个都按设备报的长度校验过。脚本在这台机器上跑不起来时，再退回手工：`adb shell 'su -c "dd if=/dev/block/bootdevice/by-name/<分区> of=/sdcard/<分区>.img"'` 加 `adb pull`；`su -c` 按 Magisk 环境写，`adb shell` 本身就是 root 时去掉。
+`backup` 只要分区名：名字和长度都读自设备，镜像落在 `backup/`，每个都按设备报的长度校验过。
 
 | 字段 | 键 | M8 上的位置 | M8 上的偏移与宽度 | 怎么定位的 |
 |---|---|---|---|---|
@@ -298,8 +298,6 @@ done
 | BL magic | `bl_magic` | `pg1fs` p2 | 0x8404，4 字节 ASCII | secure flag 紧跟的四个字节：`HTCU` 解锁、`00000000` 锁定 |
 | 警告 | `bl_partition` | `hboot` p26 | 运行期，无固定偏移 | 六段已知横幅字符串，按镜像搜 |
 | 第一屏 | `splash` | `sp1` p12 | 0，W×H×2 字节 | 画面从 0 开始 |
-
-`status` 里没有版本行：固件版本（`version-main`）本工具既不读也不写，Android 的系统版本也不显示。
 
 `screen` 是唯一不带偏移的键：它给出 `splash` 默认转换成的分辨率；`bl_partition` 则是 `nowarn` 要改的那个分区（M8 上叫 `hboot`，别的机型可能叫 `aboot`），它的长度也用来校验镜像大小。
 
