@@ -133,7 +133,7 @@ scripts/stool.sh backup hboot
 
 ### `soff`
 
-`== state before ==` 先打印 `status` 开头那四行（`target`、`Security`、`BL state`、`Software status`）。之后各阶段按实际顺序排列，每一段都跟着会让它停下的故障。
+`== state before ==` 先打印一段状态：`target`、`serial`、`hboot`、`Security`、`BL state`、`Software status`、`modules`、`selinux`。之后各阶段按实际顺序排列，每一段都跟着会让它停下的故障。
 
 #### 诊断
 
@@ -164,7 +164,7 @@ adb shell 'su -c "mount -o remount,ro /data"'
 
 `== power cycle ==`：先 `OFF_DONE`，电源轨保持关断 8 秒（`PWRSQ_OFF_SEC` 可改），再 `ON_DONE`。参考构建上重扫本身的日志是 `dmesg | grep mmc_reinit_card`；32 GB 机器没有这行，只有 `runtime_error -110`，见下。
 
-32 GB 的机器上实测：只断 1.5 秒不够，重新上电后位图仍是 31 组；8 秒才真正清掉。断得越久，host 恢复越慢，`pg1fs` 节点可能在 1 到 2 分钟后才出现，期间 `dmesg` 里是 `mmc0: err: runtime_error: -110` 和 `/data` 的 `JBD2: Detected IO errors`。脚本会轮询约 2.5 分钟。
+32 GB 的机器上实测：只断 1.5 秒不够，重新上电后位图仍是 31 组；8 秒才真正清掉。断得越久，host 恢复越慢，`pg1fs` 节点可能在 1 到 2 分钟后才出现，期间 `dmesg` 里是 `mmc0: err: runtime_error: -110` 和 `/data` 的 `JBD2: Detected IO errors`。脚本按 `PWRSQ_WAIT_TRIES` 轮询 120 次、每次 1 秒，超时就是下面那句报错。
 
 `pg1fs` 这个节点没回来时，`soff` 停在 `eMMC did not come back within ~2 min`。断电失败不会造成永久损坏（flag 要到后面的阶段才写），所以：
 
@@ -188,7 +188,7 @@ adb shell 'su -c "/dev/mmc_cmd wp"'            # 有非零组 => 保护还在
 adb shell 'dmesg | grep -i "card status"'
 ```
 
-* `card status 0x400d00`（第 22 位，`WP_ERASE_SKIP`）：保护还在，说明断电实际上没发生。`dmesg` 里必须有 `pwrsq: ops->disable ret=0`。按快速开始挂载过 debugfs 的话，`/sys/kernel/debug/regulator/8941_l20/` 下有 `enable`，eMMC 消失期间它应当是 0；没挂 debugfs 时这个路径不存在，只能靠 `ops->disable ret=0` 和断电后的 I/O 错误判断。模块日志里的 `Failed to create debugfs directory` 是因为 regulator core 已经建过同名目录，无害。
+* `card status 0x400d00`：保护还在，说明断电实际上没发生（这一位的含义见[工作原理](#工作原理) 第 1 节）。`dmesg` 里必须有 `pwrsq: ops->disable ret=0`。按快速开始挂载过 debugfs 的话，`/sys/kernel/debug/regulator/8941_l20/` 下有 `enable`，eMMC 消失期间它应当是 0；没挂 debugfs 时这个路径不存在，只能靠 `ops->disable ret=0` 和断电后的 I/O 错误判断。
 * 完全没有 `card status` 报错，你读的是页缓存。验证之前永远先 `sync` + `echo 3 > /proc/sys/vm/drop_caches`。
 
 #### 写 flag
@@ -349,9 +349,13 @@ kernel      3.4.0-perf-g708019f
 tree        /d/kernel-src/kernel
 config      /.../m8.config
 addr.h      /.../kmod/addr.h
+
+next:
+  scripts/build.sh /d/kernel-src/kernel
+  adb push kmod/pwrsq_diag.ko //data/local/tmp/ && adb shell 'su -c "insmod /data/local/tmp/pwrsq_diag.ko; dmesg | grep pwrsq"'
 ```
 
-第 2 步的符号数来自手机内核自己的配置，不是树的；`localversion` 那串是从 `uname -r` 推出来的。第 5、6 步没有输出就是没事。
+第 5、6 步没有输出就是没事。
 
 几处不能想当然的地方：
 
@@ -359,8 +363,8 @@ addr.h      /.../kmod/addr.h
 - 别用 RUU 里的 `boot_signed.img`：它前面多 256 字节签名头，boot header 会从错的偏移读。要的是分区 dump，`backup boot` 给的就是。
 - 内核是 zImage 时，压缩体前面还有一段自解压 stub，gzip 不在偏移 0。`extract_config.py` 按魔数找，lz4、lzo、lzma 会明确报出来让你换工具。
 - `CONFIG_LOCALVERSION` 从 `uname -r` 推：`3.4.0-perf-gXXXXXXX` 的后半截填进去，同时关掉 `LOCALVERSION_AUTO`，否则打过补丁的树会被追加 `-dirty`。它不是加载条件（下面解释），只是让 `.ko` 里的串和手机一致、便于核对。
-- `addr.h` 与源码树无关：它是手机正在跑的那个内核的属性，换哪版树都从手机重读，所以它在这一步，而不是编译前手工做。树已经配好、只想刷新这几个数时，单独跑 `scripts/gen_addr.sh` 就够了——它就是这一步。`crc` 那行和五个地址一样随构建变，别照抄；要看文件本身 `cat kmod/addr.h`：五个地址都不能是 0，`Kernel:` 那行必须是手机**当前**跑的内核（`adb shell cat /proc/version`）。
-- 第 4 步两行必须逐字一致；不一致说明这份配置不是这台机内核的，脚本直接停。出现 `symbol '...' unavailable` 说明 `kptr_restrict` 没归零——脚本会先自己试两种写法（直接写、`su -c`），都不行才由 `gen_addr.sh` 报错。
+- `addr.h` 放在这一步而不是编译前，是因为它描述的是手机正在跑的那个内核，换哪版树都从手机重读。树已经配好、只想刷新这几个数时，单独跑 `scripts/gen_addr.sh` 就够了——它就是这一步。`crc` 那行和五个地址一样随构建变，别照抄；要看文件本身 `cat kmod/addr.h`：五个地址都不能是 0，`Kernel:` 那行必须是手机**当前**跑的内核（`adb shell cat /proc/version`）。
+- 出现 `symbol '...' unavailable` 说明 `kptr_restrict` 没归零——脚本会先自己试两种写法（直接写、`su -c`），都不行才由 `gen_addr.sh` 报错。
 - 手机要在正常启动的状态下跑。boot 分区在上次开机之后被刷过的话，取到的配置和正在跑的符号不是同一个内核。
 
 `--force` 只放开第 5 步的阈值。`ADB`、`CROSS`、`MAKE` 三个环境变量分别指定 adb、工具链前缀和 make 程序。MSYS2 上先做完 [Windows 工具链](#windows-工具链) 那两条 patch 再跑，`oldconfig` 会先编 `fixdep`。
@@ -377,7 +381,7 @@ addr.h      /.../kmod/addr.h
 
 第一行脚本已经变成一次编译前的比较：第 4 步从 `.config` 算出那串标志位，和手机上的原厂模块逐字对。对不上就停，不会让你等一次二十分钟的编译再发现 `insmod` 拒。理由是 `same_magic()` 只比这半截：模块带 `__versions` 时，第一个空格之前的 `UTS_RELEASE` 被跳过。
 
-第二行脚本只能给间接信号：第 5 步数出来的 `(NEW)` 个数。0 个说明两边符号表对得上，结构体多半没问题；刷出一大片就是树差得远，超过 20 个要 `--force` 才继续。
+第二行脚本只能给间接信号：第 5 步数出来的 `(NEW)` 个数。0 个说明两边符号表对得上，结构体多半没问题；刷出一大片就是树差得远。
 
 第三行每次重读，永远和当前内核一致——`addr.h` 在 `.gitignore` 里，本来就不该跨设备提交。`A_MODULE_LAYOUT_CRC` 读自原厂模块的 `__versions`（`scripts/get_module_layout_crc.py`），那是 genksyms 给 `module_layout` 算的 crc，猜不出来。
 
@@ -385,7 +389,7 @@ addr.h      /.../kmod/addr.h
 
 失败就换树，不要凑合：树差得远时 `oldconfig` 给新符号塞默认值，编出来的结构体可能少字段，这种错 `insmod` 阶段看不出来，要到 `regulator_get` 或写 `ops` 时才崩。诊断模块是断电前最后一次便宜的检查。
 
-`prepare.sh` 第 6 步会顺带核 `UTS_RELEASE` 和 `uname -r` 是否一致。不一致也不影响加载（同上，那半截被跳过），但说明 `CONFIG_LOCALVERSION` 没落进配置。
+第 6 步的 `UTS_RELEASE` 核对失败只告警，不影响加载（那半截被跳过），但说明 `CONFIG_LOCALVERSION` 没落进配置。
 
 ### 3. 编译
 

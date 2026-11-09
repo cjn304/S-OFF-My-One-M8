@@ -210,9 +210,10 @@ about to change.
 
 ### `soff`
 
-`== state before ==` repeats the first four lines of `status` (`target`,
-`Security`, `BL state`, `Software status`). The stages follow in the
-order they print, each with the failure that stops it.
+`== state before ==` prints the same block `status` opens with: `target`,
+`serial`, `hboot`, `Security`, `BL state`, `Software status`, `modules`,
+`selinux`. The stages follow in the order they print, each with the failure that
+stops it.
 
 #### Diagnostic
 
@@ -263,7 +264,8 @@ Measured on the 32 GB phone: 1.5 s was not enough, the bitmap still listed 31
 groups after the rail came back; 8 s cleared it. The longer the rail stays down,
 the slower the host recovers - `pg1fs` can take one to two minutes to appear,
 with `mmc0: err: runtime_error: -110` and `JBD2: Detected IO errors` on `/data`
-in between. The script polls for about 2.5 minutes.
+in between. The script polls `PWRSQ_WAIT_TRIES` times (120) with a one-second
+sleep between tries, and times out with the message below.
 
 If the node never comes back the run stops with
 `eMMC did not come back within ~2 min`. Nothing is permanently damaged - the
@@ -296,14 +298,13 @@ adb shell 'su -c "/dev/mmc_cmd wp"'            # any non-zero group => still pro
 adb shell 'dmesg | grep -i "card status"'
 ```
 
-* `card status 0x400d00` (bit 22, `WP_ERASE_SKIP`) - protection still active,
-  the power cycle did not actually happen. `pwrsq: ops->disable ret=0` must
-  appear in `dmesg`. With debugfs mounted as in the quick start,
+* `card status 0x400d00` - protection still active, the power cycle did not
+  actually happen (what the bit means is in section 1 of
+  [How it works](#how-it-works)). `pwrsq: ops->disable ret=0` must appear in
+  `dmesg`. With debugfs mounted as in the quick start,
   `/sys/kernel/debug/regulator/8941_l20/enable` exists and must read 0 while the
   eMMC is gone; without debugfs that path does not exist, and
-  `ops->disable ret=0` plus the I/O errors are what you have. The module's
-  `Failed to create debugfs directory` only means regulator core created that
-  directory first.
+  `ops->disable ret=0` plus the I/O errors are what you have.
 * no `card status` error at all - you read back from the page cache. Always
   `sync` + `echo 3 > /proc/sys/vm/drop_caches` before verifying.
 
@@ -584,11 +585,13 @@ kernel      3.4.0-perf-g708019f
 tree        /d/kernel-src/kernel
 config      /.../m8.config
 addr.h      /.../kmod/addr.h
+
+next:
+  scripts/build.sh /d/kernel-src/kernel
+  adb push kmod/pwrsq_diag.ko //data/local/tmp/ && adb shell 'su -c "insmod /data/local/tmp/pwrsq_diag.ko; dmesg | grep pwrsq"'
 ```
 
-The symbol count in step 2 comes from the phone's own config, not the tree's; the
-`localversion` string is derived from `uname -r`.  Steps 5 and 6 print nothing when
-they work.
+Steps 5 and 6 print nothing when they work.
 
 Things that are easy to get wrong:
 
@@ -607,24 +610,24 @@ Things that are easy to get wrong:
   dash onwards goes in, and `LOCALVERSION_AUTO` is turned off - a patched tree would otherwise pick
   up a `-dirty` suffix. It is not a load condition (next subsection), only a way
   to make the string inside the `.ko` match the phone when you read it.
-- `addr.h` has nothing to do with the tree: it describes the kernel the phone is
-  running right now, so it is re-read from the device whichever tree you use.
-  That is why it happens here instead of by hand before the build.  When the tree
-  is already configured and you only want the numbers refreshed, `scripts/gen_addr.sh`
-  on its own is enough - it is exactly this step.  The crc changes with the build
+- `addr.h` happens here rather than by hand before the build because it describes
+  the kernel the phone is running right now, so it is re-read from the device
+  whichever tree you use.  When the tree is already configured and you only want
+  the numbers refreshed, `scripts/gen_addr.sh` on its own is enough - it is
+  exactly this step.  The crc changes with the build
   like the five addresses do, so do not copy it; to see the file itself,
   `cat kmod/addr.h`: all five addresses must be non-zero, and the `Kernel:` line
   must be the build the phone runs now (`adb shell cat /proc/version`).
-- The two lines in step 4 have to match exactly; if they do not, the config is not
-  from this phone's kernel and the script stops.  A `symbol '...' unavailable`
-  means `kptr_restrict` was not zeroed - the script tries both ways first (plain
-  write, then `su -c`) and leaves it to `gen_addr.sh` when neither works.
+- A `symbol '...' unavailable` means `kptr_restrict` was not zeroed - the script
+  tries both ways first (plain write, then `su -c`) and leaves it to `gen_addr.sh`
+  when neither works.
 - Run it while the phone boots normally. If boot was flashed after the last
   boot, the config you get and the symbols you read belong to different kernels.
 
 `--force` only relaxes the step 5 threshold. The `ADB`, `CROSS` and `MAKE`
 environment variables pick adb, the toolchain prefix and the make program. On
-MSYS2 apply the two patches from [Windows toolchain](#windows-toolchain) first:/n`oldconfig` builds `fixdep` before it does anything else.
+MSYS2 apply the two patches from [Windows toolchain](#windows-toolchain) first:
+`oldconfig` builds `fixdep` before it does anything else.
 
 #### When the tree is not the build the phone runs
 
@@ -648,8 +651,7 @@ everything before the first space - `UTS_RELEASE` - is skipped.
 
 The second row only gets an indirect signal: the `(NEW)` count from step 5. Zero
 means the two symbol tables agree, so the structs probably do too; a wall of them
-means the tree is far off, and over 20 the script wants `--force` before it
-continues.
+means the tree is far off.
 
 The third row is re-read every run, so it always describes the current kernel -
 `addr.h` is in `.gitignore` and should never travel between devices.
@@ -666,8 +668,8 @@ missing fields. That failure is invisible at `insmod` and surfaces at
 `regulator_get` or when writing through `ops`. The diagnostic run is the last
 cheap check before the power cycle.
 
-Step 6 also prints whether `UTS_RELEASE` lines up with `uname -r`. A mismatch
-does not stop the load (that half is skipped, as above), but it means
+Step 6 warns when `UTS_RELEASE` does not line up with `uname -r`. A mismatch does
+not stop the load (that half is skipped, as above), but it means
 `CONFIG_LOCALVERSION` never made it into the config.
 
 ### 3. Build
