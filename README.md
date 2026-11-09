@@ -210,10 +210,8 @@ about to change.
 
 ### `soff`
 
-`== state before ==` prints the same block `status` opens with: `target`,
-`serial`, `hboot`, `Security`, `BL state`, `Software status`, `modules`,
-`selinux`. The stages follow in the order they print, each with the failure that
-stops it.
+`== state before ==` prints the first block `status` prints. The stages follow
+in the order they print, each with the failure that stops it.
 
 #### Diagnostic
 

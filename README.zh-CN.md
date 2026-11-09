@@ -133,7 +133,7 @@ scripts/stool.sh backup hboot
 
 ### `soff`
 
-`== state before ==` 先打印一段状态：`target`、`serial`、`hboot`、`Security`、`BL state`、`Software status`、`modules`、`selinux`。之后各阶段按实际顺序排列，每一段都跟着会让它停下的故障。
+`== state before ==` 打印 `status` 的第一段。之后各阶段按实际顺序排列，每一段都跟着会让它停下的故障。
 
 #### 诊断
 
